@@ -7,7 +7,7 @@ import {NodeProtocol,type NodeEnvelope} from "../control-plane/node-protocol.js"
 import {handleNodeControl} from "../control-plane/node-control.js";
 import type {captureNodeRegistry} from "./node-registry.js";
 import type {InfrastructureController} from "./node-controller.js";
-import {InfrastructureNodeTransport} from "./node-transport.js";
+import {InfrastructureNodeTransport,WorkerBoundaryVerificationError} from "./node-transport.js";
 
 type Registry=ReturnType<typeof captureNodeRegistry>;
 interface InfrastructureSetupController {
@@ -90,14 +90,16 @@ export function startNodeGateway(child:ChildProcess,registry:Registry,protocol:N
       infrastructureActive++;
       try{const result=await controller.request(input.operation,input.nodeId,input.generation);child.send({channel:"infrastructure-response",requestId:input.requestId,ok:true,result});}
       catch(error){
+        const boundaryFailure=error instanceof WorkerBoundaryVerificationError?error:undefined;
         const category=error instanceof InfrastructureRequestError||error instanceof WorkerProvisioningError?error.category:"verification";
-        const http=error instanceof InfrastructureRequestError?error.status:0;
+        const http=error instanceof InfrastructureRequestError?error.status:boundaryFailure?.status??0;
         const stage=error instanceof InfrastructureRequestError?error.operation:"verification";
+        if(boundaryFailure)process.stdout.write("[InfrastructureBoundary] worker_boundary_failed node="+input.nodeId+" generation="+input.generation+" check="+boundaryFailure.check+" status="+boundaryFailure.status+"\n");
         const reasons=new Map([["Trial project volume capacity exhausted","project-volume-capacity"],["Worker must have exactly one volume","multiple-worker-volumes"],["Node volume ownership mismatch","volume-ownership"],["Worker volume is not verified dedicated 500MB storage","volume-size-or-mount"],["Worker volume activation pending; retry reconciliation","volume-activation-pending"],["Railway resource mutation was rejected","mutation-returned-false"]]);
         const reason=error instanceof Error?reasons.get(error.message):undefined;
         if(reason)process.stdout.write(`[InfrastructureBoundary] worker_verification_failed reason=${reason}\n`);
         process.stdout.write(`[InfrastructureBoundary] worker_operation_failed stage=${stage} category=${category} http=${http}\n`);
-        child.send({channel:"infrastructure-response",requestId:input.requestId,ok:false,errorCode:category,httpStatus:http});
+        child.send({channel:"infrastructure-response",requestId:input.requestId,ok:false,errorCode:category,httpStatus:http,...(boundaryFailure?{errorReason:"boundary_"+boundaryFailure.check+"_http_"+boundaryFailure.status}:{})});
       }
       finally{infrastructureActive--;}
       return;

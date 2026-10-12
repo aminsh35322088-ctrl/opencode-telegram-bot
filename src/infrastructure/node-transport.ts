@@ -4,6 +4,10 @@ import {NodeProtocol} from "../control-plane/node-protocol.js";
 import type {captureNodeRegistry} from "./node-registry.js";
 import type {InfrastructureNodeIdentity} from "./node-registry.js";
 
+export type WorkerBoundaryCheck="replay"|"foreign-topic"|"stale-generation";
+export class WorkerBoundaryVerificationError extends Error{
+ constructor(readonly check:WorkerBoundaryCheck,readonly status:number){super("Worker boundary verification failed");}
+}
 const operations=new Set(["health","status","sync-global","session.create","session.get","session.status","session.query","session.messages","session.events","session.delete","question.list","question.reply","run.prepare","run","pause","resume","stop","retire"]);
 export class InfrastructureNodeTransport {
  constructor(private readonly registry:ReturnType<typeof captureNodeRegistry>,private readonly protocol:NodeProtocol,private readonly persist:()=>Promise<void>,private readonly fetcher:typeof fetch=fetch,private readonly wait:(milliseconds:number)=>Promise<void>=milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds))){}
@@ -59,16 +63,17 @@ export class InfrastructureNodeTransport {
   const reply=await this.protocol.verify(await boundedBody(first,64*1024),first.headers.get("x-node-signature")??"",{nodeId,generation,chatId:0,threadId:0},identity.secret);
   const result=reply.payload as {ok?:boolean;result?:{ready?:boolean}};
   if(reply.operation!=="health"||reply.sessionId!==undefined||result.ok!==true||result.result?.ready!==true)throw new Error("Worker boundary health denied");
-  const rejected=async(request:{body:string;signature:string})=>{
+  const rejected=async(check:WorkerBoundaryCheck,request:{body:string;signature:string})=>{
    const response=await send(request);
    // A proxy failure/timeout is not evidence of authentication enforcement.
    const denied=response.status===401||response.status===403;
+   const status=response.status;
    await response.body?.cancel();
-   if(!denied)throw new Error("Worker boundary rejection not proven");
+   if(!denied)throw new WorkerBoundaryVerificationError(check,status);
   };
-  await rejected(signed);
-  await rejected(this.protocol.sign({...envelope,chatId:1,threadId:2,nonce:randomUUID().replaceAll("-","")},identity.secret));
-  await rejected(this.protocol.sign({...envelope,generation:generation+1,nonce:randomUUID().replaceAll("-","")},identity.secret));
+  await rejected("replay",signed);
+  await rejected("foreign-topic",this.protocol.sign({...envelope,chatId:1,threadId:2,nonce:randomUUID().replaceAll("-","")},identity.secret));
+  await rejected("stale-generation",this.protocol.sign({...envelope,generation:generation+1,nonce:randomUUID().replaceAll("-","")},identity.secret));
   return {health:true,replayRejected:true,foreignTopicRejected:true,staleGenerationRejected:true};
  }
  /** Only the root retirement controller retains the previous identity after fencing. */

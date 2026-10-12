@@ -63,6 +63,7 @@ test("Railway bootstrap retry classification only loops recoverable failures", a
   assert.equal(isRetryableRailwayBootstrapError(new Error("Infrastructure operation failed (rate_limit, HTTP 429)")),true);
   assert.equal(isRetryableRailwayBootstrapError(new WorkerProvisioningError("provisioning_pending")),true);
   assert.equal(isRetryableRailwayBootstrapError(new WorkerProvisioningError("project_unavailable")),true);
+  assert.equal(isRetryableRailwayBootstrapError(new Error("Infrastructure operation failed (verification, HTTP 0): boundary_replay_http_200")),false);
   for(const category of ["capacity_exhausted","image_unavailable","reconciliation_required","image_mismatch"] as const){
     assert.equal(isRetryableRailwayBootstrapError(new WorkerProvisioningError(category)),false,category);
   }

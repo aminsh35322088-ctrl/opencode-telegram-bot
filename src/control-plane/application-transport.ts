@@ -29,14 +29,14 @@ export function installInfrastructureTransport():void{
  const streams=new Map<string,{events:NodeEnvelope[];ended:boolean;error?:Error;wake?:()=>void;onReady?:()=>void}>();
  process.on("message",(message:unknown)=>{
   if(!message||typeof message!=="object")return;
-  const response=message as {channel?:string;requestId?:string;ok?:boolean;result?:unknown;event?:NodeEnvelope;errorCode?:string;httpStatus?:number};
+  const response=message as {channel?:string;requestId?:string;ok?:boolean;result?:unknown;event?:NodeEnvelope;errorCode?:string;httpStatus?:number;errorReason?:string};
   if(!response.requestId)return;
   if(response.channel==="worker-response" || response.channel==="infrastructure-response" || response.channel==="infrastructure-configure-response"){
    const wait=waits.get(response.requestId);if(!wait)return;waits.delete(response.requestId);
    if(response.ok)wait.resolve(response.result);
    else if(response.channel==="infrastructure-response"&&["capacity_exhausted","project_unavailable","provisioning_pending","image_unavailable","reconciliation_required","image_mismatch"].includes(response.errorCode??""))wait.reject(new WorkerProvisioningError(response.errorCode as ConstructorParameters<typeof WorkerProvisioningError>[0]));
    else if(response.channel==="infrastructure-configure-response")wait.reject(new Error("Infrastructure setup failed"));
-   else wait.reject(new Error(response.channel==="infrastructure-response" && ["schema","resource_limit","rate_limit","transport","rejected","verification","capacity_exhausted","project_unavailable","provisioning_pending","image_unavailable","reconciliation_required"].includes(response.errorCode??"")?`Infrastructure operation failed (${response.errorCode}, HTTP ${Number.isSafeInteger(response.httpStatus)?response.httpStatus:0})`:"Node transport failed"));
+   else wait.reject(new Error(response.channel==="infrastructure-response" && ["schema","resource_limit","rate_limit","transport","rejected","verification","capacity_exhausted","project_unavailable","provisioning_pending","image_unavailable","reconciliation_required"].includes(response.errorCode??"")?`Infrastructure operation failed (${response.errorCode}, HTTP ${Number.isSafeInteger(response.httpStatus)?response.httpStatus:0})${typeof response.errorReason==="string"&&/^boundary_(?:replay|foreign-topic|stale-generation)_http_\d{3}$/.test(response.errorReason)?`: ${response.errorReason}`:""}`:"Node transport failed"));
   }else if(response.channel==="worker-stream-ready"){
    streams.get(response.requestId)?.onReady?.();
   }else if(response.channel==="worker-event" || response.channel==="worker-stream-end"){

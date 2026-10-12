@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {captureNodeRegistry} from '../src/infrastructure/node-registry.js';
 import {NodeProtocol,type NodeEnvelope} from '../src/control-plane/node-protocol.js';
-import {InfrastructureNodeTransport} from '../src/infrastructure/node-transport.js';
+import {InfrastructureNodeTransport,WorkerBoundaryVerificationError} from '../src/infrastructure/node-transport.js';
 
 async function fixture(acceptReplay=false){
  const dir=await mkdtemp(path.join(tmpdir(),'node-proof-'));
@@ -35,7 +35,7 @@ test('unbound root probe proves real replay and identity rejection with bounded 
 });
 test('root probe fails closed if a server accepts a replay',async()=>{
  const f=await fixture(true);
- await assert.rejects(f.transport.probeUnboundBoundary('slot',1),/boundary/);
+ await assert.rejects(f.transport.probeUnboundBoundary('slot',1),error=>error instanceof WorkerBoundaryVerificationError&&error.check==='replay'&&error.status===200);
  assert.equal(f.calls(),2);
 });
 test('root probe cannot target a bound Topic or superseded generation',async()=>{

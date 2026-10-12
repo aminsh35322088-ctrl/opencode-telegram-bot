@@ -34,6 +34,13 @@ export function isRetryableRailwayBootstrapError(error:unknown):boolean{
  return /Node transport failed|Topic node readiness timed out|Infrastructure operation failed \((?:transport|rate_limit|provisioning_pending|project_unavailable),/iu.test(message);
 }
 
+function blockedVerificationDetail(error:unknown):string|undefined{
+ const message=error instanceof Error?error.message:String(error);
+ const match=/boundary_(replay|foreign-topic|stale-generation)_http_(\\d{3})/u.exec(message);
+ if(!match)return undefined;
+ const checks:Record<string,string>={replay:"replay protection","foreign-topic":"foreign Topic isolation","stale-generation":"generation fencing"};
+ return "Worker security verification failed: "+(checks[match[1]!]??"boundary check")+", HTTP "+match[2]+".";
+}
 function setupAvailable():boolean{return process.env.CONTROL_APPLICATION_IPC==="1";}
 function rootThread(ctx:Context):boolean{
  const threadId=ctx.message?.message_thread_id??(ctx.callbackQuery?.message&&"message_thread_id" in ctx.callbackQuery.message?ctx.callbackQuery.message.message_thread_id:undefined);
@@ -124,7 +131,9 @@ async function startRailwayBootstrap(ctx:Context,settingsInput:RailwayWorkerSett
    if(failure&&!isRetryableRailwayBootstrapError(failure)){
     logger.error("[RailwayOnboarding] Initial Worker bootstrap blocked by non-retryable error",failure);
     const retryKeyboard=new InlineKeyboard().text("Retry →","railway:retry");
-    await ctx.api.editMessageText(chatId,targetMessageId,`${renderRailwayBootstrapProgress(progress)}\n\n❌ Setup is blocked by a non-retryable Railway condition. Fix the Railway resource/configuration issue, then press Retry.`,{parse_mode:"HTML",reply_markup:retryKeyboard}).catch(()=>{});
+    const detail=blockedVerificationDetail(failure);
+    const blockedText=renderRailwayBootstrapProgress(progress)+"\\n\\n❌ Setup is blocked by a non-retryable Railway condition. Fix the Railway resource/configuration issue, then press Retry."+(detail?"\\n\\n🔎 "+detail:"");
+    await ctx.api.editMessageText(chatId,targetMessageId,blockedText,{parse_mode:"HTML",reply_markup:retryKeyboard}).catch(()=>{});
     return;
    }
    retry++;
