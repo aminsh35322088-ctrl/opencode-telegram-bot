@@ -186,69 +186,72 @@ function createDeps() {
   };
 }
 
-describe("bot/commands/new", () => {
-  beforeEach(() => {
-    foregroundSessionState.__resetForTests();
-    mocked.sessionCreateMock.mockReset();
-    mocked.getCurrentProjectMock.mockReset();
-    mocked.getCurrentProjectMock.mockReturnValue({ id: "project-1", worktree: "/repo" });
-    mocked.attachToSessionMock.mockReset();
-    mocked.ensureMcpRuntimeForDirectoryMock.mockReset().mockResolvedValue({ restored: 1, failed: 0 });
-    mocked.attachToSessionMock.mockResolvedValue({
-      busy: false,
-      alreadyAttached: false,
-      restoredQuestion: false,
-      restoredPermissions: 0,
-    });
-    mocked.ensureEventSubscriptionMock.mockReset();
-    mocked.isForegroundBusyMock.mockReset();
-    mocked.isForegroundBusyMock.mockReturnValue(false);
-    mocked.replyBusyBlockedMock.mockReset();
-    mocked.runInTopicRuntimeContextMock.mockReset();
-    mocked.runInTopicRuntimeContextMock.mockImplementation(
-      (_ctx: unknown, fn: () => unknown) => fn(),
-    );
-    mocked.getTopicDefaultsMock.mockReset();
-    mocked.getTopicDefaultsMock.mockReturnValue({
-      compactOutputMode: false,
-      showThinkingContent: true,
-      responseStreamingMode: "edit",
-      messageFormatMode: "markdown",
-      showAssistantRunFooter: true,
-      sendDiffFileAttachments: true,
-      promptQueueEnabled: false,
-    });
-    mocked.createTelegramTopicWorkspaceMock.mockReset();
-    mocked.createTelegramTopicWorkspaceMock.mockResolvedValue("/repo");
-    mocked.openSessionInTelegramTopicMock.mockReset();
-    mocked.openSessionInTelegramTopicMock.mockResolvedValue({
-      chatId: 123,
-      threadId: 42,
-      sessionId: "session-2",
-      directory: "/repo",
-      createdAt: "",
-      updatedAt: "",
-      title: "Chat #01",
-    });
-    mocked.resolveCoreTopicBindingMock.mockReset().mockReturnValue({
-      bindingId: "123:42",
-      chatId: 123,
-      threadId: 42,
-      sessionId: "session-2",
-      normalizedDirectory: path.resolve("/repo"),
-      bindingGeneration: 1,
-    });
-    mocked.isCurrentCoreSessionRouteMock.mockReset().mockReturnValue(true);
-    mocked.assertCurrentSessionTopicRouteMock.mockReset().mockResolvedValue(undefined);
-    mocked.deleteTelegramTopicSessionMock.mockReset().mockResolvedValue(undefined);
-    mocked.ingestSessionInfoForCacheMock.mockReset();
-    mocked.ingestSessionInfoForCacheMock.mockResolvedValue(undefined);
-    mocked.createTopicKeyboardMock.mockReset();
-    mocked.createTopicKeyboardMock.mockReturnValue({ keyboard: true });
-    mocked.buildModelRoutingSummaryMock.mockReset();
-    mocked.buildModelRoutingSummaryMock.mockResolvedValue("🧠 GPT 5 · OpenAI\n\n💬 Chat ✅");
+// Shared New Chat fixtures. The command reads them on both the local and the
+// distributed Worker path, so this lives at file scope: a describe without them
+// under-seeds the command and turns a fixture gap into a false product failure.
+beforeEach(() => {
+  foregroundSessionState.__resetForTests();
+  mocked.sessionCreateMock.mockReset();
+  mocked.getCurrentProjectMock.mockReset();
+  mocked.getCurrentProjectMock.mockReturnValue({ id: "project-1", worktree: "/repo" });
+  mocked.attachToSessionMock.mockReset();
+  mocked.ensureMcpRuntimeForDirectoryMock.mockReset().mockResolvedValue({ restored: 1, failed: 0 });
+  mocked.attachToSessionMock.mockResolvedValue({
+    busy: false,
+    alreadyAttached: false,
+    restoredQuestion: false,
+    restoredPermissions: 0,
   });
+  mocked.ensureEventSubscriptionMock.mockReset();
+  mocked.isForegroundBusyMock.mockReset();
+  mocked.isForegroundBusyMock.mockReturnValue(false);
+  mocked.replyBusyBlockedMock.mockReset();
+  mocked.runInTopicRuntimeContextMock.mockReset();
+  mocked.runInTopicRuntimeContextMock.mockImplementation(
+    (_ctx: unknown, fn: () => unknown) => fn(),
+  );
+  mocked.getTopicDefaultsMock.mockReset();
+  mocked.getTopicDefaultsMock.mockReturnValue({
+    compactOutputMode: false,
+    showThinkingContent: true,
+    responseStreamingMode: "edit",
+    messageFormatMode: "markdown",
+    showAssistantRunFooter: true,
+    sendDiffFileAttachments: true,
+    promptQueueEnabled: false,
+  });
+  mocked.createTelegramTopicWorkspaceMock.mockReset();
+  mocked.createTelegramTopicWorkspaceMock.mockResolvedValue("/repo");
+  mocked.openSessionInTelegramTopicMock.mockReset();
+  mocked.openSessionInTelegramTopicMock.mockResolvedValue({
+    chatId: 123,
+    threadId: 42,
+    sessionId: "session-2",
+    directory: "/repo",
+    createdAt: "",
+    updatedAt: "",
+    title: "Chat #01",
+  });
+  mocked.resolveCoreTopicBindingMock.mockReset().mockReturnValue({
+    bindingId: "123:42",
+    chatId: 123,
+    threadId: 42,
+    sessionId: "session-2",
+    normalizedDirectory: path.resolve("/repo"),
+    bindingGeneration: 1,
+  });
+  mocked.isCurrentCoreSessionRouteMock.mockReset().mockReturnValue(true);
+  mocked.assertCurrentSessionTopicRouteMock.mockReset().mockResolvedValue(undefined);
+  mocked.deleteTelegramTopicSessionMock.mockReset().mockResolvedValue(undefined);
+  mocked.ingestSessionInfoForCacheMock.mockReset();
+  mocked.ingestSessionInfoForCacheMock.mockResolvedValue(undefined);
+  mocked.createTopicKeyboardMock.mockReset();
+  mocked.createTopicKeyboardMock.mockReturnValue({ keyboard: true });
+  mocked.buildModelRoutingSummaryMock.mockReset();
+  mocked.buildModelRoutingSummaryMock.mockResolvedValue("ðŸ§  GPT 5 Â· OpenAI\n\nðŸ’¬ Chat âœ…");
+});
 
+describe("bot/commands/new", () => {
   it("creates a new session even while the foreground session is busy", async () => {
     mocked.isForegroundBusyMock.mockReturnValue(true);
     mocked.sessionCreateMock.mockResolvedValueOnce({
