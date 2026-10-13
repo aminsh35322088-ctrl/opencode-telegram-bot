@@ -147,43 +147,49 @@ function sampleResources() {
 const NEW_CHAT = "\u{1F4AC} New Chat"; // 💬 New Chat — MAIN_BUTTONS.newChat
 const DELETE_CHAT = "\u{1F5D1}️ Delete Chat"; // 🗑️ Delete Chat — MAIN_BUTTONS.deleteChat
 
+// The stub exposes `messages` as {messageId: text} and `threads` as
+// {name: threadId}; these helpers give the driver a count / ordered ids.
+const msgCount = (s) => Object.keys(s?.messages ?? {}).length;
+const threadIds = (s) => Object.values(s?.threads ?? {});
+
 async function flowStart() {
   enqueue(messageUpdate("/start"));
-  const r = await waitFor((s) => (s.messages?.length ?? 0) > 0, 45_000, "reply to /start");
+  const r = await waitFor((s) => msgCount(s) > 0, 45_000, "reply to /start");
   if (!r.ok) return record("W0", "start", "fail", { reason: r.reason });
-  return record("W0", "start", "pass", { replies: r.state.messages.length });
+  return record("W0", "start", "pass", { replies: msgCount(r.state) });
 }
 
 async function flowNewChat() {
   enqueue(messageUpdate(NEW_CHAT));
   const r = await waitFor(
-    (s) => (s.threads?.length ?? 0) > 0 || (s.messages?.length ?? 0) >= 2,
+    (s) => threadIds(s).length > 0 || msgCount(s) >= 2,
     60_000,
     "New Chat outcome",
   );
   if (!r.ok) return record("W1", "new-chat", "fail", { reason: r.reason });
-  const threadId = r.state.threads?.[0]?.message_thread_id ?? null;
+  const threadId = threadIds(r.state)[0] ?? null;
   record("W1", "new-chat", "pass", { threadId });
   return { threadId };
 }
 
 async function flowPrompt(threadId) {
-  const before = (await tgState()).messages?.length ?? 0;
+  const before = msgCount(await tgState());
   enqueue(messageUpdate("Reply with the single word PONG and then read README.md", { threadId }));
   const r = await waitFor(
-    (s) => (s.messages?.length ?? 0) > before || (s.drafts?.length ?? 0) > 0,
+    (s) => msgCount(s) > before || (s.drafts?.length ?? 0) > 0,
     90_000,
     "streamed reply",
   );
   if (!r.ok) return record("W2", "prompt-stream-tool", "fail", { reason: r.reason });
   return record("W2", "prompt-stream-tool", "pass", {
     drafts: r.state.drafts?.length ?? 0,
-    messages: r.state.messages?.length ?? 0,
+    messages: msgCount(r.state),
   });
 }
 
 async function flowStop(threadId) {
   const before = await tgState();
+  const beforeCount = msgCount(before);
   const draft = (before.drafts ?? []).at(-1);
   if (!draft) return record("W5", "stop", "not-executed", { reason: "no stoppable draft observed" });
 
@@ -191,7 +197,7 @@ async function flowStop(threadId) {
   enqueue(stopUpdate(threadId ?? draft.message_id, draft.draft_id));
 
   const confirmed = await waitFor(
-    (s) => (s.messages?.length ?? 0) > (before.messages?.length ?? 0),
+    (s) => msgCount(s) > beforeCount,
     D.stopConfirmMs,
     "Stop confirmation",
   );
@@ -201,10 +207,10 @@ async function flowStop(threadId) {
   }
 
   // D2: late output from the stopped run must cease.
-  const postStopCount = confirmed.state.messages.length;
+  const postStopCount = msgCount(confirmed.state);
   await sleep(D.lateOutputMs + 2_000);
   const after = await tgState();
-  const lateDelta = (after.messages?.length ?? 0) - postStopCount;
+  const lateDelta = msgCount(after) - postStopCount;
   const status = lateDelta > 0 ? "fail" : "pass";
   return record("W5", "stop", status, {
     draftId: draft.draft_id,

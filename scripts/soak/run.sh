@@ -18,6 +18,13 @@ TELEGRAM_PORT="${SOAK_TELEGRAM_PORT:-8081}"
 MODEL_PORT="${SOAK_MODEL_PORT:-8090}"
 SOAK_USER_ID="${SOAK_USER_ID:-987654321}"
 SOAK_TOKEN="${SOAK_TOKEN:-123:soak}"
+# OPENCODE_TELEGRAM_HOME must NOT live inside the repository. The Bot refuses to
+# create a topic workspace under its source root and throws
+# "Refusing to create topic workspace inside source root"
+# (src/app/services/telegram-topic-workspace-service.ts), which silently failed
+# session creation on the first smoke run. The run directory stays in the repo so
+# evidence collection (and the CI artifact path) keeps working.
+SOAK_HOME="${SOAK_HOME:-${XDG_STATE_HOME:-$HOME/.local/state}/opencode-telegram-soak/$STAMP-$STAGE}"
 
 mkdir -p "$RUN_DIR/evidence"
 UPDATES="$RUN_DIR/updates.jsonl"
@@ -79,14 +86,24 @@ if [ ! -f "$ROOT/dist/index.js" ]; then
 fi
 
 # --- start the Bot ----------------------------------------------------------
+# The pinned OpenCode runtime must be on PATH: the Bot spawns `opencode serve`,
+# and without it every session fails with `spawn opencode ENOENT`.
+if [ -x "$ROOT/.core/bin/opencode" ]; then
+  export PATH="$ROOT/.core/bin:$PATH"
+  log "opencode on PATH: $(command -v opencode)"
+else
+  log "ERROR: $ROOT/.core/bin/opencode missing (run scripts/materialize-core-release.mjs)"
+  exit 1
+fi
+
 # Local mode: CONTROL_APPLICATION_IPC is deliberately unset, so no Control Plane
-# and no Railway are consulted. OPENCODE_TELEGRAM_HOME keeps all state inside
-# the run directory. Do NOT set OPENCODE_TELEGRAM_CONTAINER: container mode turns
+# and no Railway are consulted. OPENCODE_TELEGRAM_HOME keeps all state outside
+# the source tree. Do NOT set OPENCODE_TELEGRAM_CONTAINER: container mode turns
 # recovery failure into process.exit(75).
 export TELEGRAM_BOT_TOKEN="$SOAK_TOKEN"
 export TELEGRAM_USER_ID="$SOAK_USER_ID"
 export TELEGRAM_API_ROOT="http://127.0.0.1:$TELEGRAM_PORT"
-export OPENCODE_TELEGRAM_HOME="$RUN_DIR/home"
+export OPENCODE_TELEGRAM_HOME="$SOAK_HOME"
 export OPENCODE_MODEL_PROVIDER="opencode"
 export OPENCODE_MODEL_ID="big-pickle"
 export LOG_LEVEL="${SOAK_LOG_LEVEL:-info}"
@@ -140,11 +157,14 @@ node "$SOAK/driver.mjs" --stage "$STAGE" \
 DRIVER_RC=$?
 
 # --- capture post-state -----------------------------------------------------
-ps -o pid,ppid,rss,etime,cmd --ppid "$BOT_PID" >"$RUN_DIR/evidence/processes.txt" 2>/dev/null
-ps -o pid,rss,etime,cmd -p "$BOT_PID" >>"$RUN_DIR/evidence/processes.txt" 2>/dev/null
+# GNU procps rejects `ps -o ... --ppid` ("unsupported SysV option"), so select
+# the bot and its children from the full process list instead.
+ps -eo pid,ppid,rss,etime,cmd 2>/dev/null | awk -v p="$BOT_PID" 'NR==1 || $1==p || $2==p' \
+  >"$RUN_DIR/evidence/processes.txt"
 curl -fsS -m 5 "http://127.0.0.1:$TELEGRAM_PORT/__state" >"$RUN_DIR/evidence/telegram-state.json" 2>/dev/null
 curl -fsS -m 5 "http://127.0.0.1:$MODEL_PORT/__state" >"$RUN_DIR/evidence/model-state.json" 2>/dev/null
 cp "$RUN_DIR/bot.log" "$RUN_DIR/evidence/bot.log" 2>/dev/null
+cp "$OPENCODE_TELEGRAM_HOME/app-state.json" "$RUN_DIR/evidence/app-state.json" 2>/dev/null
 
 [ -n "${PERSIST_PID:-}" ] && kill "$PERSIST_PID" 2>/dev/null
 if [ "${SOAK_PERSIST:-1}" = "1" ]; then
