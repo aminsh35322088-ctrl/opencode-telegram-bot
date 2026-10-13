@@ -1,0 +1,6 @@
+{"ts":"2026-10-13T10:40:58.717Z","flow":"W0","step":"start","status":"pass","replies":2}
+{"ts":"2026-10-13T10:41:05.664Z","flow":"W1","step":"new-chat","status":"pass","threadId":10000}
+{"ts":"2026-10-13T10:41:07.781Z","flow":"W2","step":"prompt-stream-tool","status":"pass","drafts":1,"messages":4,"modelRequests":2,"modelStreams":2,"modelToolCalls":0}
+{"ts":"2026-10-13T10:42:21.065Z","flow":"W7","step":"restart","status":"fail","answered":true,"pidChanged":true,"withinD5":true,"pass":true,"reason":"the Topic that existed before the restart was not served afterwards","beforePid":2339,"afterPid":2514,"readyMs":13029,"threadId":10000}
+{"ts":"2026-10-13T10:42:26.881Z","flow":"W5","step":"stop","status":"pass","draftId":1,"source":"stub-draft","confirmMs":302,"confirmedBy":"bot-log","outputsBefore":11,"outputsAtConfirm":13,"lateDelta":0,"streamCalls":4,"withinD1":true,"withinD2":true}
+{"ts":"2026-10-13T10:42:37.522Z","flow":"W6","step":"delete-chat","status":"pass","elapsed":303,"withinD4":true,"confirmationId":10,"liveDraft":2,"deletedTopic":10000,"reuseThreadId":10001,"reuseMs":2110,"lateStreams":0,"requested":true,"completed":true}
