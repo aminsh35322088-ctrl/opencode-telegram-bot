@@ -190,6 +190,12 @@ function sampleResources() {
 const NEW_CHAT = "\u{1F4AC} New Chat"; // 💬 New Chat — MAIN_BUTTONS.newChat
 const DELETE_CHAT = "\u{1F5D1}️ Delete Chat"; // 🗑️ Delete Chat — MAIN_BUTTONS.deleteChat
 
+// W5 presses Stop and W6 presses Delete *while a run is live*, and the stub
+// model streams this prompt for ~16 s instead of ~0.4 s, so that precondition
+// is owned by the workload rather than won by a race. Keep the wording in sync
+// with stub-model.mjs's LONG_PROMPT_PATTERN.
+const LONG_PROMPT = "Write a long explanation of the repository layout.";
+
 // The stub exposes `messages` as {messageId: text} and `threads` as
 // {name: threadId}; these helpers give the driver a count / ordered ids.
 const msgCount = (s) => Object.keys(s?.messages ?? {}).length;
@@ -263,7 +269,7 @@ async function flowStop(threadId) {
   // not-executed. Start a fresh long-running turn and stop it mid-flight.
   const pre = await tgState().catch(() => ({}));
   const base = snapshot(pre);
-  enqueue(messageUpdate("Write a long explanation of the repository layout.", { threadId }));
+  enqueue(messageUpdate(LONG_PROMPT, { threadId }));
 
   // The Bot registers the draft (attributing it to the current run) before it
   // sends it, so the stub having recorded a *new* draft is the proof that a
@@ -376,7 +382,7 @@ async function flowDeleteChat(threadId) {
   // cancel-then-cleanup path at all, so it is not the registered workload.
   const pre = await tgState().catch(() => ({}));
   const base = snapshot(pre);
-  enqueue(messageUpdate("Write a long explanation of the repository layout.", { threadId }));
+  enqueue(messageUpdate(LONG_PROMPT, { threadId }));
   const live = await waitFor((s) => draftIssued(s, base), 30_000, "issued generation draft");
   if (!live.ok) return record("W6", "delete-chat", "not-executed", { reason: live.reason });
   const liveDraft = (live.state.drafts ?? []).at(-1)?.draft_id ?? null;

@@ -234,12 +234,27 @@ const TOOL_CALL_CHUNK = {
   function: { name: "read_file", arguments: '{"path":"README.md"}' },
 };
 
-async function streamCompletion(res, model, text, requestNo) {
+// W5 and W6 press their control *while the run is live*, and the workload has
+// to own that timing instead of racing it: at 120 tokens / 8 per piece / 25 ms
+// a run ends in under half a second, so "the run was still active when the
+// control arrived" was a coin flip — the very ambiguity that let a refused Stop
+// look like a confirmed one. A prompt asking for a long explanation stretches
+// to this many milliseconds, and it keeps streaming until something cancels it,
+// which is what makes D2 and W6's active-run precondition real: a stream that
+// stops after the press is only evidence that the Bot cancelled it.
+const LONG_STREAM_TARGET_MS = 16_000;
+const LONG_PROMPT_PATTERN = /long explanation/i;
+
+async function streamCompletion(res, model, text, requestNo, longRun = false) {
   const pieces = splitPieces(text, PIECE_TOKENS);
   const emitTool = toolCallEvery > 0 && requestNo % toolCallEvery === 0;
   const toolAt = Math.max(0, Math.floor(pieces.length / 3) - 1);
   // Long delays must still fit the hard 30 s ceiling, so the per-piece delay shrinks first.
-  const delay = Math.min(delayMs, Math.floor(MAX_STREAM_MS / (pieces.length + 4)));
+  // A long run works the other way round: it stretches the delay so the run is
+  // still live when the driver presses Stop or Delete.
+  const delay = longRun
+    ? Math.max(delayMs, Math.floor(LONG_STREAM_TARGET_MS / (pieces.length + 4)))
+    : Math.min(delayMs, Math.floor(MAX_STREAM_MS / (pieces.length + 4)));
   const deadline = Date.now() + MAX_STREAM_MS;
   const id = `chatcmpl-${crypto.randomUUID()}`;
   const created = Math.floor(Date.now() / 1000);
@@ -369,10 +384,11 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    const longRun = LONG_PROMPT_PATTERN.test(raw);
     state.streams += 1;
     try {
-      const emittedTool = await streamCompletion(res, model, text, requestNo);
-      logRequest({ kind: "chat", stream: true, toolProbe: false, tokens: tokenCount, tool: emittedTool });
+      const emittedTool = await streamCompletion(res, model, text, requestNo, longRun);
+      logRequest({ kind: "chat", stream: true, toolProbe: false, tokens: tokenCount, tool: emittedTool, long: longRun });
     } catch (err) {
       console.error(`[stub-model] stream failed: ${err.message}`);
       logRequest({ kind: "chat", stream: true, toolProbe: false, tokens: tokenCount, tool: false });
