@@ -8,11 +8,14 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { createUpdateBuilders } from "./updates.mjs";
 import {
+  cputimeSeconds,
   deleteOutcome,
   draftIssued,
   growthObserved,
   newThreadId,
   outputCalls,
+  parseMeminfo,
+  phaseFor,
   restartOutcome,
   snapshot,
   stopConfirmed,
@@ -27,6 +30,10 @@ for (let i = 2; i < process.argv.length; i += 2) {
 
 const STAGE = args.get("stage") ?? "smoke";
 const DURATION_S = Number(args.get("duration") ?? 0);
+// RC soak phase plan (SOAK_GATES.md §2): contiguous active/idle windows in
+// seconds. 0/0 means "no plan", which keeps a stress stage continuous.
+const ACTIVE_S = Number(args.get("active") ?? 0);
+const IDLE_S = Number(args.get("idle") ?? 0);
 const RUN_DIR = args.get("run-dir");
 const UPDATES = args.get("updates");
 const RESTART_SCRIPT = args.get("restart-script");
@@ -142,13 +149,21 @@ function sampleResources() {
   // not always a direct child, which reported childCount=0 while the runtime
   // watchdog saw `childKinds={"opencode-server":1}`. Walk the whole descendant
   // tree so process counts and RSS cover every governed child.
-  const parsed = out("ps", ["-eo", "pid=,ppid=,rss=,cmd="])
+  // `cputime` is cumulative CPU per process ([[dd-]hh:]mm:ss, no whitespace),
+  // so the positional split stays stable and `cmd` keeps its spaces.
+  const parsed = out("ps", ["-eo", "pid=,ppid=,rss=,cputime=,cmd="])
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean)
     .map((l) => {
       const parts = l.split(/\s+/);
-      return { pid: parts[0], ppid: parts[1], rss: Number(parts[2]) || 0, cmd: parts.slice(3).join(" ") };
+      return {
+        pid: parts[0],
+        ppid: parts[1],
+        rss: Number(parts[2]) || 0,
+        cputime: parts[3] ?? "",
+        cmd: parts.slice(4).join(" "),
+      };
     });
   const byParent = new Map();
   for (const row of parsed) {
@@ -168,6 +183,25 @@ function sampleResources() {
   }
   const selfRssKb = Number(out("ps", ["-o", "rss=", "-p", String(pid)])) || 0;
   const childRssKb = descendants.reduce((sum, row) => sum + row.rss, 0);
+  // §8's CPU-time column: cumulative CPU across the Bot and every governed
+  // descendant, exactly as `ps` accounts it. If any selected row cannot be
+  // parsed the whole figure is null — a partial sum would read as a
+  // measurement while quietly dropping a process.
+  const selfRow = parsed.find((row) => row.pid === String(pid));
+  const cpuRows = selfRow ? [selfRow, ...descendants] : [];
+  let cpuTimeS = null;
+  if (cpuRows.length > 0) {
+    cpuTimeS = 0;
+    for (const row of cpuRows) {
+      const seconds = cputimeSeconds(row.cputime);
+      if (seconds === null) {
+        cpuTimeS = null;
+        break;
+      }
+      cpuTimeS += seconds;
+    }
+  }
+  const { memTotalKb, memAvailableKb } = parseMeminfo(out("cat", ["/proc/meminfo"]));
   return {
     pid,
     selfRssKb,
@@ -179,6 +213,9 @@ function sampleResources() {
       rssKb: row.rss,
       cmd: row.cmd.slice(0, 120),
     })),
+    cpuTimeS,
+    memTotalKb,
+    memAvailableKb,
     loadavg: out("cat", ["/proc/loadavg"]).split(" ").slice(0, 3).join(" "),
     cpus: Number(out("nproc", [])) || 0,
   };
@@ -671,7 +708,7 @@ async function cycle(index) {
 }
 
 async function main() {
-  console.log(`stage=${STAGE} duration=${DURATION_S}s runDir=${RUN_DIR}`);
+  console.log(`stage=${STAGE} duration=${DURATION_S}s active=${ACTIVE_S}s idle=${IDLE_S}s runDir=${RUN_DIR}`);
   const summaries = [];
 
   if (STAGE === "smoke") {
@@ -682,16 +719,35 @@ async function main() {
     writeFileSync(join(EVIDENCE, "smoke-state.json"), JSON.stringify(state, null, 2));
   } else if (STAGE === "cycle") {
     summaries.push(await cycle(1));
-  } else if (STAGE === "stress") {
-    const deadline = Date.now() + DURATION_S * 1000;
+  } else if (STAGE === "stress" || STAGE === "soak") {
+    // A soak without phases is not the registered RC soak, so it fails closed
+    // before a single cycle runs rather than producing evidence labelled
+    // "soak" for a continuous stage.
+    if (STAGE === "soak" && (!(ACTIVE_S > 0) || !(IDLE_S > 0))) {
+      console.error("stage=soak requires a phase plan: --active and --idle must both be > 0 seconds");
+      process.exit(2);
+    }
+    const startedAt = Date.now();
+    const deadline = startedAt + DURATION_S * 1000;
     let i = 0;
     while (Date.now() < deadline) {
+      if (phaseFor((Date.now() - startedAt) / 1000, ACTIVE_S, IDLE_S) === "idle") {
+        // Idle phase: no cycle may start, but the rest state must still be
+        // measured — that is the entire point of the phase for §8 (RSS,
+        // cumulative CPU and headroom while nothing is running). No record
+        // goes to cycles.jsonl: nothing was executed.
+        appendFileSync(
+          join(EVIDENCE, "resource-samples.jsonl"),
+          `${JSON.stringify({ ts: now(), phase: "idle", samples: sampleResources() })}\n`,
+        );
+        await sleep(5_000);
+        continue;
+      }
       i += 1;
       const summary = await cycle(i);
       summaries.push(summary);
-      // Active/idle phasing: keep the active phase dense, then a short idle gap.
-      const idle = i % 3 === 0;
-      await sleep(idle ? 15_000 : 3_000);
+      // Dense during the active phase, with a short breathing gap.
+      await sleep(i % 3 === 0 ? 15_000 : 3_000);
     }
   } else {
     console.error(`unknown stage: ${STAGE}`);

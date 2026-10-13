@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Soak orchestrator: brings up the real Bot against local stubs and runs a stage.
 #
-# Usage: run.sh [smoke|cycle|stress] [duration-seconds]
+# Usage: run.sh [smoke|cycle|stress|soak] [duration-seconds]
+#
+# SOAK_ACTIVE_S / SOAK_IDLE_S set the RC soak's phase plan in seconds
+# (stage=soak requires both > 0; other stages default to continuous).
 #
 # Everything this script produces lands in one run directory, so a run can be
 # inspected or pushed to durable storage afterwards.
@@ -205,6 +208,8 @@ log "bot up (pid $BOT_PID)"
 # --- run the stage ----------------------------------------------------------
 node "$SOAK/driver.mjs" --stage "$STAGE" \
   --duration "$DURATION" \
+  --active "${SOAK_ACTIVE_S:-0}" \
+  --idle "${SOAK_IDLE_S:-0}" \
   --run-dir "$RUN_DIR" \
   --updates "$UPDATES" \
   --telegram-port "$TELEGRAM_PORT" \

@@ -19,10 +19,19 @@ on:
           - smoke
           - cycle
           - stress
+          - soak
       duration:
-        description: "Stress duration in seconds (stage=stress only)"
+        description: "Stage duration in seconds (stage=stress/soak)"
         required: false
         default: "7200"
+      active:
+        description: "Active phase length in seconds (stage=soak)"
+        required: false
+        default: "2700"
+      idle:
+        description: "Idle phase length in seconds (stage=soak)"
+        required: false
+        default: "900"
       ref:
         description: "Bot ref to test"
         required: false
@@ -83,6 +92,8 @@ jobs:
         shell: bash
         env:
           SOAK_SEED_VERIFIED: ${{ inputs.seed_verified }}
+          SOAK_ACTIVE_S: ${{ inputs.active }}
+          SOAK_IDLE_S: ${{ inputs.idle }}
           SOAK_PERSIST: "1"
           SOAK_PERSIST_INTERVAL: "300"
         run: |

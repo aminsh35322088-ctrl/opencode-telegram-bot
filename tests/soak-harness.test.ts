@@ -445,3 +445,69 @@ test("D2 counts streaming output only, because finalising the stopped draft is l
     "publishing the stopped draft as a message is the confirmation itself; a run still streaming after the stop is the violation",
   );
 });
+
+test("the RC soak alternates long active and idle phases, and continuous stages stay continuous", async () => {
+  const { phaseFor } = await loadScript<{
+    phaseFor: (elapsedS: number, activeS: number, idleS: number) => "active" | "idle";
+  }>("scripts/soak/signals.mjs");
+
+  // Registered as "cycles spread over 24 h with active and idle phases"
+  // (SOAK_GATES.md §2): a phase must be a contiguous window, not the 15 s gap
+  // between two back-to-back cycles.
+  assert.equal(phaseFor(0, 2700, 900), "active");
+  assert.equal(phaseFor(2699.9, 2700, 900), "active", "the active window closes at activeS");
+  assert.equal(phaseFor(2700, 2700, 900), "idle", "elapsed == activeS is already idle");
+  assert.equal(phaseFor(3599, 2700, 900), "idle", "the idle window closes at activeS+idleS");
+  assert.equal(phaseFor(3600, 2700, 900), "active", "the next window restarts the cycle");
+  assert.equal(phaseFor(6300, 2700, 900), "idle", "phase windows repeat");
+  assert.equal(phaseFor(4500, 2700, 900), "active", "window arithmetic is modulo, not cumulative");
+
+  // A stress stage registers no phase plan and must keep running back-to-back
+  // cycles: no idle window may ever appear from an absent or incomplete plan.
+  assert.equal(phaseFor(5000, 0, 0), "active");
+  assert.equal(phaseFor(5000, 2700, 0), "active", "an idle length of 0 leaves nothing idle");
+  assert.equal(phaseFor(5000, 0, 900), "active", "an active length of 0 would leave no work at all, so it is not a plan");
+});
+
+test("system memory is read as measured facts, with absence reported as absence", async () => {
+  const { parseMeminfo } = await loadScript<{
+    parseMeminfo: (text: string) => { memTotalKb: number | null; memAvailableKb: number | null };
+  }>("scripts/soak/signals.mjs");
+
+  assert.deepEqual(
+    parseMeminfo(
+      "MemTotal:       16331288 kB\nMemFree:         1472044 kB\nMemAvailable:    8234560 kB\nBuffers:          409824 kB\n",
+    ),
+    { memTotalKb: 16331288, memAvailableKb: 8234560 },
+    "the two §8 columns (headroom ceiling and headroom now) come straight from /proc/meminfo",
+  );
+  assert.deepEqual(
+    parseMeminfo("MemTotal:       16331288 kB\n"),
+    { memTotalKb: 16331288, memAvailableKb: null },
+    "a host without MemAvailable must yield an unknown headroom, never a zero",
+  );
+  assert.deepEqual(
+    parseMeminfo(""),
+    { memTotalKb: null, memAvailableKb: null },
+    "an unreadable file is recorded as not measured",
+  );
+  assert.deepEqual(
+    parseMeminfo("MemAvailable:   not-a-number kB"),
+    { memTotalKb: null, memAvailableKb: null },
+    "garbage is absence, not a plausible-looking figure",
+  );
+});
+
+test("cumulative CPU time parses every ps TIME shape and refuses to invent one", async () => {
+  const { cputimeSeconds } = await loadScript<{
+    cputimeSeconds: (text: string) => number | null;
+  }>("scripts/soak/signals.mjs");
+
+  assert.equal(cputimeSeconds("0:05"), 5, "mm:ss");
+  assert.equal(cputimeSeconds("1:02:03"), 3723, "hh:mm:ss");
+  assert.equal(cputimeSeconds("01:02:03.45"), 3723.45, "hh:mm:ss.cc as BSD time renders it");
+  assert.equal(cputimeSeconds("2-03:04:05"), 183845, "dd-hh:mm:ss on a long-lived process");
+  assert.equal(cputimeSeconds("0:00"), 0, "an idle process has consumed nothing, which is a measurement");
+  assert.equal(cputimeSeconds(""), null, "absent is not zero");
+  assert.equal(cputimeSeconds("running"), null, "unparseable is not a plausible figure");
+});

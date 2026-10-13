@@ -162,3 +162,42 @@ export function streamCalls(state) {
   }
   return total;
 }
+
+// RC soak phasing (SOAK_GATES.md §2: "cycles spread over 24 h with active and
+// idle phases"). A phase is a contiguous window measured from the stage's own
+// start — not the 15 s gap between two back-to-back cycles, which is a pause,
+// not an idle phase: nothing observably happens at rest in 15 s, so RSS, CPU
+// and headroom would never be seen un-stressed. An absent or incomplete plan
+// (a stress stage registers none) keeps the stage continuous, so adding this
+// signal cannot silently turn a stress run into a phased soak.
+export function phaseFor(elapsedS, activeS, idleS) {
+  if (!(activeS > 0) || !(idleS > 0)) return "active";
+  const windowS = activeS + idleS;
+  return elapsedS % windowS < activeS ? "active" : "idle";
+}
+
+// §8's Headroom column must be a measurement. /proc/meminfo gives both facts
+// directly: MemTotal is the ceiling and MemAvailable the headroom now. Missing
+// keys, unreadable files and garbage stay null so the table reports "not
+// measured" instead of a zero that would read as a fully idle host.
+export function parseMeminfo(text) {
+  const read = (key) => {
+    const match = new RegExp(`^${key}:\\s+(\\d+)\\s*(?:kB)?\\s*$`, "m").exec(text ?? "");
+    return match ? Number(match[1]) : null;
+  };
+  return { memTotalKb: read("MemTotal"), memAvailableKb: read("MemAvailable") };
+}
+
+// Cumulative CPU time exactly as `ps` renders it (`cputime`): [[dd-]hh:]mm:ss
+// with an optional fractional part. Unparseable input returns null rather than
+// 0 — a missing measurement written down as zero would read as a process that
+// consumed nothing.
+export function cputimeSeconds(text) {
+  const match = /^(\d+-)?(\d+:)?(\d+):(\d+)(\.\d+)?$/.exec((text ?? "").trim());
+  if (!match) return null;
+  const days = match[1] ? Number(match[1].slice(0, -1)) : 0;
+  const hours = match[2] ? Number(match[2].slice(0, -1)) : 0;
+  const minutes = Number(match[3]);
+  const seconds = Number(match[4]) + (match[5] ? Number(match[5]) : 0);
+  return days * 86400 + hours * 3600 + minutes * 60 + seconds;
+}
