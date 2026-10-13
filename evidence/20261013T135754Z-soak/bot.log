@@ -760,3 +760,14 @@
     at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
 [2026-10-13T14:01:01.003Z] [INFO] [LLM Usage] session=ses_eca6f55a6ffeuKynphSfHLWamU model=soak/soak-model promptChars=55 elapsedMs=25016 input=0 output=0 reasoning=0 cost=0
 [2026-10-13T14:01:05.484Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked directory=/home/runner/work/opencode-telegram-bot/opencode-telegram-bot type=server.heartbeat
+[2026-10-13T14:01:11.024Z] [INFO] [App] Received SIGTERM, shutting down...
+[2026-10-13T14:01:11.024Z] [INFO] [RuntimeWatchdog] stopped
+[2026-10-13T14:01:11.024Z] [INFO] [TopicTelemetry] event=subscription_removed directory=/home/runner/work/opencode-telegram-bot/opencode-telegram-bot subscriberCount=3
+[2026-10-13T14:01:11.025Z] [INFO] [TopicTelemetry] event=subscription_removed session=ses_eca712e5fffeW3su97HEkyHOlq directory=/home/runner/.local/state/opencode-telegram-soak/20261013T135754Z-soak/opencode/topic-workspaces/987654321/56bac938-0e40-47e2-b9e4-10b15bc649af subscriberCount=2
+[2026-10-13T14:01:11.025Z] [INFO] [TopicTelemetry] event=subscription_removed session=ses_eca7041b8ffe1cSukhJ6DhS5U3 directory=/home/runner/.local/state/opencode-telegram-soak/20261013T135754Z-soak/opencode/topic-workspaces/987654321/c3bc8175-0421-4950-bb13-67fa6acfd866 subscriberCount=1
+[2026-10-13T14:01:11.025Z] [INFO] [TopicTelemetry] event=subscription_removed session=ses_eca6f55a6ffeuKynphSfHLWamU directory=/home/runner/.local/state/opencode-telegram-soak/20261013T135754Z-soak/opencode/topic-workspaces/987654321/840382b8-988e-402a-9838-096fa0213520 subscriberCount=0
+[2026-10-13T14:01:11.026Z] [INFO] [SessionTrace] phase=topic_event_bus_stopped
+[2026-10-13T14:01:11.026Z] [INFO] [TopicTelemetry] event=global_stream_stopped previousSubscriberCount=0
+[2026-10-13T14:01:11.029Z] [INFO] [RuntimeWatchdog] stopped
+[2026-10-13T14:01:11.029Z] [INFO] [SessionTrace] phase=topic_event_bus_stopped
+[2026-10-13T14:01:11.029Z] [INFO] [TopicTelemetry] event=global_stream_stopped previousSubscriberCount=0
