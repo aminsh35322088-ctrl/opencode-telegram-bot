@@ -73,3 +73,6 @@
 {"ts":"2026-10-13T13:14:43.986Z","method":"sendChatAction","ok":false,"note":"unsupported"}
 {"ts":"2026-10-13T13:14:44.537Z","method":"sendChatAction","ok":false,"note":"unsupported"}
 {"ts":"2026-10-13T13:14:46.234Z","method":"sendRichMessageDraft","ok":true,"note":"draft:3"}
+{"ts":"2026-10-13T13:14:47.287Z","method":"sendRichMessageDraft","ok":true,"note":"draft:3"}
+{"ts":"2026-10-13T13:14:47.985Z","method":"sendChatAction","ok":false,"note":"unsupported"}
+{"ts":"2026-10-13T13:14:48.338Z","method":"sendRichMessageDraft","ok":true,"note":"draft:3"}
