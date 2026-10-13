@@ -491,6 +491,7 @@ async function flowDeleteChat(threadId) {
       elapsed,
       confirmationId,
       liveDraft,
+      topicGone: gone,
       lateStreams,
       reuseThreadId,
       ...outcome,
@@ -510,6 +511,7 @@ async function flowDeleteChat(threadId) {
       elapsed,
       confirmationId,
       liveDraft,
+      topicGone: gone,
       lateStreams,
       reuseThreadId,
       ...outcome,
@@ -522,6 +524,11 @@ async function flowDeleteChat(threadId) {
     confirmationId,
     liveDraft,
     deletedTopic: threadId,
+    // The Telegram side of the cleanup: the Topic is actually gone from the
+    // stub, not merely reported deleted. The loop above only leaves with both
+    // `completed` and `gone` true, but a reviewer of cycles.jsonl must be able
+    // to read that observation rather than infer it from status=pass.
+    topicGone: gone,
     reuseThreadId,
     reuseMs,
     lateStreams,
