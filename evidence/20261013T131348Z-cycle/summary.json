@@ -1,0 +1,25 @@
+{
+  "stage": "cycle",
+  "startedAt": "2026-10-13T13:13:58.880Z",
+  "finishedAt": "2026-10-13T13:14:46.354Z",
+  "elapsedS": 47,
+  "counts": {
+    "pass": 5,
+    "fail": 0,
+    "not-executed": 0
+  },
+  "cycles": 1,
+  "resources": {
+    "pid": 2696,
+    "selfRssKb": 157944,
+    "childRssKb": 0,
+    "totalRssKb": 157944,
+    "childCount": 0,
+    "children": [],
+    "cpuTimeS": 3,
+    "memTotalKb": 16373452,
+    "memAvailableKb": 14508424,
+    "loadavg": "0.90 0.35 0.12",
+    "cpus": 4
+  }
+}
