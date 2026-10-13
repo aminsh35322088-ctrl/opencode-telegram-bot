@@ -71,7 +71,7 @@ Topic deletion and Worker reuse are lifecycle operations: work is stopped, owned
 
 ### What happens when the user presses New Chat
 
-The New Chat command (src/bot/commands/new-command.ts) performs one ordered lifecycle:
+The New Chat action (src/bot/commands/new-command.ts, reached from the persistent keyboard) performs one ordered lifecycle:
 
 1. Verify that Railway infrastructure setup is available.
 2. Create a candidate workspace and submit an idempotent remote-session request keyed to the Telegram update.
@@ -106,7 +106,7 @@ Provisioning is journaled and reconciled. Service/volume partial work resumes fr
 
 - New Chat creates a Topic-bound coding session.
 - History lists recent sessions and offers a bounded preview and continue action.
-- /sessions, /messages, /rename, /detach, /abort, and /status operate on the current authorized context.
+- /messages, /session, /rename, /detach, and /status operate on the current authorized context.
 - Topic settings are kept separate from Main settings where the choice is context-specific.
 - Duplicate Telegram updates are idempotent; asynchronous OpenCode events are sent only to their owning session and Topic.
 
@@ -133,11 +133,10 @@ The bot exposes OpenCode skills, MCP servers, custom commands, project/directory
 | Command | Purpose |
 |---|---|
 | /start, /help | Start the bot and show help |
-| /new | Create a Topic and OpenCode session |
+| New Chat (persistent keyboard) | Create a Topic and OpenCode session |
 | /status | Show server/runtime and current session state |
-| /abort | Cancel the current run |
+| /session | Open the session dashboard for the current chat |
 | /detach | Stop delivering to the current chat without deleting the session |
-| /sessions | Browse recent sessions |
 | /messages | Browse session messages and supported history actions |
 | /open, /ls | Select project folders and browse/download files |
 | /worktree | Select or manage Git worktrees |
@@ -148,6 +147,19 @@ The bot exposes OpenCode skills, MCP servers, custom commands, project/directory
 | /opencode_start, /opencode_stop | Control a local-mode OpenCode server where enabled |
 
 The persistent keyboard exposes the most common actions; Settings contains less frequent controls.
+
+### Execution control: Telegram Stop only
+
+The bot exposes exactly one execution control, and it is the Stop button Telegram itself renders on a message the bot is generating. There are no Pause, Resume, or Abort commands, buttons, or keyboard entries, and none may be reintroduced: the product owner removed them, and internal cancellation/cleanup primitives do not authorise a user-facing control.
+
+Telegram Stop cancels the generation draft the user actually stopped:
+
+- It cancels the model execution and the work that depends on it for that exact run, stops late output from it, and releases that run's resources per the Core contract.
+- It never cancels another Topic's run, and it never cancels a newer run of the same Topic: a Stop is attributed to the stopped draft first and is refused as a stale draft when the draft does not belong to the run that is still active.
+- It never deletes the session or its history, and it never detaches the Worker from the Topic.
+- The same Topic stays usable for the next message once the Stop completes.
+
+Telegram Stop is not a pause. A stopped run cannot be resumed; send a new message to start a new run. A Stop is also never acknowledged as success unless cancellation was actually confirmed.
 
 ## Configuration
 
@@ -215,7 +227,7 @@ This section describes the expected user-visible result, not just the current im
 | Main chat and panel | Main chat owns root navigation, setup, settings, and Worker-pool controls. Coding work is sent in a bound Topic; never pick an arbitrary Worker when no Topic binding exists. Once normal or limited setup is explicitly completed, the root panel remains usable to create/manage Topics and change settings. | Keep setup incomplete when the user has not chosen Continue. If no verified Worker exists, do not open a coding Topic or claim the panel has usable execution capacity. | src/bot/commands/railway-onboarding-command.ts; src/bot/routers; tests/railway-limited-continue.test.ts; .github/ci-tests/tests/bot/commands/new.test.ts |
 | New Chat | One Telegram update creates or reuses one operation receipt, one Forum Topic, one exact Worker generation, one workspace/session binding, and a working delivery route. Send the ready message inside that Topic only after its session route is usable. | If creation is ambiguous, reconcile/reuse the receipt; do not create duplicate Topics. If a later step fails, clean resources owned by that attempt or leave uncertain resources fenced for reconciliation. Reply with a truthful, user-safe error. | src/bot/commands/new-command.ts; src/control-plane/topic-node-lifecycle.ts; .github/ci-tests/tests/bot/commands/new.test.ts; tests/core-topic-node-lifecycle.test.ts |
 | Topic routing and settings | Every prompt, callback, permission/question response, event, keyboard, and file action resolves the current chat/thread/session binding. Topic settings and interaction state must not bleed into Main or another Topic. | Reject stale, missing, or ambiguous bindings; never guess a destination or fall back to another Topic's session. | docs/TOPIC_ISOLATION_ARCHITECTURE.md; .github/ci-tests/tests/app/services/topic-runtime-context.isolation.test.ts; .github/ci-tests/tests/bot/routers/private-main-topic-routing.test.ts |
-| Run, question, permission, abort, and detach | Controls target the exact active session/run. Abort stops that run; detach stops delivery without deleting its session. Questions and permission prompts resume only the owning run after a valid answer. | A timeout or lost acknowledgment is not success. Reconcile status or report uncertainty; do not silently target a newer run. | src/app/managers; src/app/services/run-control-service.ts; .github/ci-tests/tests/app/services/session-error-recovery-service.test.ts |
+| Run, question, permission, Telegram Stop, and detach | Controls target the exact active session/run. Telegram Stop cancels only the run that produced the stopped draft and is refused when that draft belongs to another generation; detach stops delivery without deleting its session. Questions and permission prompts resume only the owning run after a valid answer. | A timeout or lost acknowledgment is not success. Reconcile status or report uncertainty; do not silently target a newer run. | src/app/managers; src/app/services/current-run-cancellation-service.ts; tests/native-stop-attribution.test.ts; .github/ci-tests/tests/app/services/session-error-recovery-service.test.ts |
 | Session deletion and Worker reuse | Delete removes the Topic's binding and owned session/workspace state, then permits reuse only after cleanup and generation rotation are proven complete. | Partial/uncertain cleanup stays unavailable and is reported/reconciled. Never erase another Topic's state or recycle a Worker based only on HTTP liveness. | src/app/services/telegram-topic-delete-service.ts; .github/ci-tests/tests/app/services/telegram-topic-delete-service.test.ts; docs/DISTRIBUTED_TOPIC_DELIVERY.md |
 | Models and providers | Model Center is the single model-selection interface. Route only to models that satisfy the selected capability. A fallback is visible to the user. Custom provider secrets remain private; custom-model tool calling stays disabled until that exact model passes a real probe. | Do not claim tool support based on a different model/provider or silently keep an unavailable selection. Preserve credentials and report a clear setup/eligibility error. | docs/CUSTOM_PROVIDERS.md; .github/ci-tests/tests/app/services/model-capability-routing-service.test.ts; .github/ci-tests/tests/app/services/model-selection-custom-provider-verification.test.ts |
 | MCP, extensions, GitHub, and SSH | Each operation uses the active Topic's authorization and workspace. Secrets are leased only for the operation that needs them. SSH approval is bound to the Topic and stable server/user/port identity. | Do not copy credentials into prompts/config/logs, reuse another Topic's lease/workspace, or broaden a capability after a failed check. | AGENTS.md; docs/CONTROL_PLANE_SECURITY.md; .github/ci-tests/tests/app/services/mcp-credential-store.test.ts; .github/ci-tests/tests/app/services/ssh-service.test.ts |

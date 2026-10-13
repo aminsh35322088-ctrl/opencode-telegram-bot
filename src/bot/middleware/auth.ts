@@ -170,7 +170,10 @@ async function handleSessionContinueCallback(ctx: Context): Promise<boolean> {
 async function cancelStoppedGeneration(ctx: Context): Promise<void> {
   const stopped = ctx.stoppedMessageGeneration;
   if (!stopped) return;
-  const result = await cancelCurrentRun({ reason: "telegram_native_stop" });
+  const result = await cancelCurrentRun({
+    reason: "telegram_native_stop",
+    stopAttribution: { chatId: stopped.chat.id, draftId: stopped.draft_id },
+  });
   logger.info(
     `[Bot] Native generation stop handled: chat=${stopped.chat.id}, thread=${stopped.message_thread_id}, draft=${stopped.draft_id}, result=${result}`,
   );

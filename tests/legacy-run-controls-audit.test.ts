@@ -61,3 +61,40 @@ test("user-facing source no longer advertises slash abort pause resume or custom
   assert.doesNotMatch(sources, /\/(?:abort|pause|resume)\b/);
   assert.doesNotMatch(sources, /Alias for \/abort/);
 });
+
+test("user-facing docs do not present removed pause resume abort controls as current behavior", () => {
+  // Command surfaces: these files are read as "what the product does today".
+  const commandSurfaces = [
+    "README.md",
+    "PRODUCT.md",
+    "CONCEPT.md",
+    "docs/RAILWAY.md",
+  ];
+  for (const surface of commandSurfaces) {
+    const body = text(surface).toLowerCase();
+    for (const legacy of ["/pause", "/resume", "/abort"]) {
+      assert.equal(body.includes(legacy), false, `${surface} still documents ${legacy}`);
+    }
+  }
+
+  // Release notes for the version currently shipped are served as current notes,
+  // so they may not describe pause/resume as live product behavior.
+  const currentNotes = text("docs/release-notes/v0.26.2.md").toLowerCase();
+  for (const legacy of ["/pause", "/resume", "/abort", "a topic is paused"]) {
+    assert.equal(currentNotes.includes(legacy), false, `docs/release-notes/v0.26.2.md still claims: ${legacy}`);
+  }
+});
+
+test("README documents Telegram native Stop as the only execution control", () => {
+  const readme = text("README.md");
+  assert.match(
+    readme,
+    /Telegram (?:native )?Stop/i,
+    "README must document the Telegram native Stop control",
+  );
+  assert.doesNotMatch(
+    readme,
+    /\b(?:pause|resume|abort)\s+button\b/i,
+    "README must not advertise removed execution-control buttons",
+  );
+});

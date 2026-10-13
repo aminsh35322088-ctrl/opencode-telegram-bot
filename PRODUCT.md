@@ -105,12 +105,10 @@ No public inbound ports are required for normal usage.
 Current command set:
 
 - `/status` - server, project, and session status
-- `/new` - create a new session
-- `/abort` - stop the current task
+- New Chat (persistent keyboard) - create a new session
 - `/detach` - detach the bot from the current session without stopping it
-- `/sessions` - show and switch recent sessions
+- `/session` - show and switch sessions for the current chat
 - `/messages` - browse user messages in the current session
-- `/projects` - show and switch projects
 - `/worktree` - show and switch existing git worktrees for the current repository
 - `/settings` - change bot settings
 - `/task` - create a scheduled task
@@ -125,15 +123,17 @@ Current command set:
 
 Model, agent, variant, and context actions are available from the persistent bottom keyboard.
 
+Execution control: the only user-facing execution control is the Stop button Telegram renders for a message the bot is generating. Pause, Resume, and Abort commands, buttons, and keyboard entries are removed and must not return; internal cancellation primitives are implementation detail, not a product control. Telegram Stop cancels only the run that produced the stopped draft, never another Topic's run and never a newer run, never deletes session history, and never detaches the Worker from its Topic. It is not a pause: a stopped run cannot be resumed, and the same Topic is immediately usable for the next message.
+
 Text messages (non-commands) are treated as prompts for OpenCode only when no blocking interaction is active. Voice/audio messages are transcribed and then sent as prompts when STT is configured.
 
 Interaction routing rules:
 
 - Only one interactive flow can be active at a time (inline menu, permission, question, rename, commands, skills, messages)
 - While an interaction is active, unrelated input is blocked with a contextual hint
-- Allowed utility commands during active interactions: `/help`, `/status`, `/abort`, `/detach`, `/opencode_stop`
+- Allowed utility commands during active interactions: `/help`, `/status`, `/detach`, `/opencode_stop`
 - Unknown slash commands return an explicit fallback message
-- Interaction flows do not expire automatically and wait for explicit completion (`answer`, `cancel`, `/abort`, `/detach`, reset/cleanup)
+- Interaction flows do not expire automatically and wait for explicit completion (`answer`, `cancel`, Telegram Stop, `/detach`, reset/cleanup)
 
 Model picker behavior:
 
@@ -148,9 +148,9 @@ Model picker behavior:
 
 - [x] Single-user access control by allowed Telegram user ID
 - [x] OpenCode server control from Telegram (`/status`, `/opencode_start`, `/opencode_stop`)
-- [x] Project and session management from Telegram (`/projects`, `/worktree`, `/sessions`, `/new`)
+- [x] Project and session management from Telegram (New Chat, `/session`, `/worktree`)
 - [x] Automatic tracking of the current OpenCode CLI session, including continuing it from Telegram, live updates, and external text input notifications
-- [x] Remote task execution, interruption, and local detachment support (`/abort`, `/detach`)
+- [x] Remote task execution, interruption, and local detachment support (Telegram Stop, `/detach`)
 - [x] Background notifications for detached/non-current sessions in the currently selected project/worktree
 - [x] Telegram-friendly result delivery, including sending generated code/files when needed
 - [x] Interactive question and permission handling directly in chat (buttons + custom answers)

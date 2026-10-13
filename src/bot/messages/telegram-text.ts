@@ -99,7 +99,22 @@ const IMPLICIT_THINKING_DRAFT_MIN = 1_500_000_000;
 const IMPLICIT_THINKING_DRAFT_MAX = 2_000_000_000;
 const THINKING_DRAFT_TTL_MS = 5 * 60 * 1000;
 let nextImplicitThinkingDraftId = IMPLICIT_THINKING_DRAFT_MIN;
-const activeThinkingDrafts = new Map<string, number>();
+
+/**
+ * Registry of Bot-issued generation drafts that Telegram lets the user stop.
+ *
+ * A draft id alone does not identify which run produced it: the response-stream
+ * draft counter resets whenever its session stream is cleared, so ids can repeat
+ * across generations. Recording the creation instant lets the native Stop path
+ * prove that a stopped draft belongs to the run that is still active before it
+ * cancels anything (see `cancelCurrentRun({ stopAttribution })`).
+ */
+interface GenerationDraftRecord {
+  createdAt: number;
+  expiresAt: number;
+}
+
+const activeThinkingDrafts = new Map<string, GenerationDraftRecord>();
 
 function resolveParseMode(format: TelegramTextFormat | undefined): "MarkdownV2" | undefined {
   if (format === "markdown_v2") {
@@ -190,8 +205,8 @@ function thinkingDraftKey(chatId: number, draftId: number): string {
 }
 
 function cleanupExpiredThinkingDrafts(now = Date.now()): void {
-  for (const [key, expiresAt] of activeThinkingDrafts) {
-    if (expiresAt <= now) activeThinkingDrafts.delete(key);
+  for (const [key, record] of activeThinkingDrafts) {
+    if (record.expiresAt <= now) activeThinkingDrafts.delete(key);
   }
 }
 
@@ -204,9 +219,15 @@ function allocateThinkingDraftId(): number {
   return draftId;
 }
 
-function markThinkingDraft(chatId: number, draftId: number): void {
+function markThinkingDraft(chatId: number, draftId: number, createdAt = Date.now()): void {
   cleanupExpiredThinkingDrafts();
-  activeThinkingDrafts.set(thinkingDraftKey(chatId, draftId), Date.now() + THINKING_DRAFT_TTL_MS);
+  const key = thinkingDraftKey(chatId, draftId);
+  const existing = activeThinkingDrafts.get(key);
+  activeThinkingDrafts.set(key, {
+    // Re-sending an existing draft must not make a stale draft look recent.
+    createdAt: existing ? Math.min(existing.createdAt, createdAt) : createdAt,
+    expiresAt: createdAt + THINKING_DRAFT_TTL_MS,
+  });
 }
 
 function consumeThinkingDraft(chatId: number, draftId: number): boolean {
@@ -217,6 +238,25 @@ function consumeThinkingDraft(chatId: number, draftId: number): boolean {
 function isActiveThinkingDraft(chatId: number, draftId: number): boolean {
   cleanupExpiredThinkingDrafts();
   return activeThinkingDrafts.has(thinkingDraftKey(chatId, draftId));
+}
+
+/**
+ * Record a Bot-issued generation draft so a later native Stop can be attributed
+ * to the run that produced it. `createdAt` is overridable for tests only.
+ */
+export function registerGenerationDraft(chatId: number, draftId: number, createdAt = Date.now()): void {
+  markThinkingDraft(chatId, draftId, createdAt);
+}
+
+/** Look up a Bot-issued generation draft. Returns `null` when unknown or expired. */
+export function resolveGenerationDraft(
+  chatId: number,
+  draftId: number,
+  now = Date.now(),
+): { createdAt: number } | null {
+  cleanupExpiredThinkingDrafts(now);
+  const record = activeThinkingDrafts.get(thinkingDraftKey(chatId, draftId));
+  return record ? { createdAt: record.createdAt } : null;
 }
 
 const GENERATION_DRAFT_OPTIONS = {
@@ -515,6 +555,9 @@ export async function sendDraftBotPart({
     source: part.source,
     blockCount: part.blocks.length,
   });
+
+  // Telegram exposes Stop on this draft, so it must be attributable to its run.
+  registerGenerationDraft(chatId, draftId);
 
   if (isPlainPart(part)) {
     await api.sendMessageDraft(chatId, draftId, part.fallbackText, GENERATION_DRAFT_OPTIONS);

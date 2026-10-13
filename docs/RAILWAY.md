@@ -103,12 +103,10 @@ Runtime caches and OpenCode state should live on the attached volume when persis
 The upstream bot already provides commands such as:
 
 - `/status`
-- `/new`
-- `/abort`
+- New Chat (persistent keyboard)
 - `/detach`
-- `/sessions`
+- `/session`
 - `/messages`
-- `/projects`
 - `/worktree`
 - `/open`
 - `/ls`

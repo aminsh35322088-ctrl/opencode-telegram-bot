@@ -10,6 +10,7 @@ import { stopSessionStallWatchdog } from "./session-stall-watchdog.js";
 import { getTopicRuntimeContext } from "./topic-runtime-context.js";
 import { updateTopicRuntimeStateSync } from "../stores/topic-runtime-state-store.js";
 import { opencodeClient } from "../../opencode/client.js";
+import { resolveGenerationDraft } from "../../bot/messages/telegram-text.js";
 import { logger } from "../../utils/logger.js";
 
 export type CancelCurrentRunResult =
@@ -17,6 +18,7 @@ export type CancelCurrentRunResult =
   | "unconfirmed"
   | "maybe-finished"
   | "timeout"
+  | "stale-draft"
   | "error"
   | "no-session";
 
@@ -25,6 +27,30 @@ export interface CancelCurrentRunOptions {
   directory?: string;
   reason: string;
   timeoutMs?: number;
+  /**
+   * Telegram native Stop attribution: the generation draft the user actually
+   * stopped. When present, cancellation is refused (`stale-draft`) unless that
+   * draft is attributable to the run that is still active, so stopping an old
+   * draft can never cancel a newer run.
+   */
+  stopAttribution?: { chatId: number; draftId: number };
+}
+
+/**
+ * A native Stop may only cancel the run that produced the stopped draft.
+ * Attribution fails when the draft is unknown/expired, when no run is active,
+ * or when the active run started after the draft was issued (a newer run).
+ */
+function isStopAttributable(
+  sessionId: string,
+  attribution: { chatId: number; draftId: number },
+  now = Date.now(),
+): boolean {
+  const draft = resolveGenerationDraft(attribution.chatId, attribution.draftId, now);
+  if (!draft) return false;
+  const run = assistantRunState.getRun(sessionId);
+  if (!run) return false;
+  return run.startedAt <= draft.createdAt;
 }
 
 type SessionState = "idle" | "busy" | "retry" | "not-found";
@@ -85,6 +111,15 @@ export async function cancelCurrentRun(
   try {
     const target = await resolveTarget(options);
     if (!target) return "no-session";
+
+    // Refuse before touching any local state: an unattributable Stop must not
+    // clear the interaction state of a run it does not own.
+    if (options.stopAttribution && !isStopAttributable(target.id, options.stopAttribution)) {
+      logger.warn(
+        `[Cancellation] Refused unattributable native Stop: session=${target.id}, chat=${options.stopAttribution.chatId}, draft=${options.stopAttribution.draftId}`,
+      );
+      return "stale-draft";
+    }
 
     clearAllInteractionState(options.reason);
     promptQueue.clear(options.reason, target.id);
