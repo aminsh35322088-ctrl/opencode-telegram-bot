@@ -64,6 +64,6 @@ test('bound Root transport admits Worker-supported provider catalog and permissi
   const request=JSON.parse(options!.body as string);seen.push(request.operation);const result=request.operation==='models.list'?{providers:[]}:[];
   const reply=protocol.sign({...request,nonce:`reply-${seen.length}`.padEnd(32,'a'),timestamp:Date.now(),payload:{ok:true,result}},identity.secret);return new Response(reply.body,{status:200,headers:{'x-node-signature':reply.signature}});
  });
- for(const operation of ['models.list','permission.list']){const result=await transport.request({version:1,...identity.binding,operation,payload:{},timestamp:Date.now(),nonce:operation.replaceAll('.','').padEnd(32,'a')});assert.equal((result as {ok?:boolean}).ok,true);}
- assert.deepEqual(seen,['models.list','permission.list']);
+ for(const operation of ['models.list','permission.list','session.compact']){const result=await transport.request({version:1,...identity.binding,operation,payload:{},timestamp:Date.now(),nonce:operation.replaceAll('.','').padEnd(32,'a')});assert.equal((result as {ok?:boolean}).ok,true);}
+ assert.deepEqual(seen,['models.list','permission.list','session.compact']);
 });

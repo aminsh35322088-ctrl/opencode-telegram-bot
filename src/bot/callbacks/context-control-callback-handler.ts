@@ -8,84 +8,71 @@ import { alert, failure } from "./feedback.js";
 import { clearActiveInlineMenu, ensureActiveInlineMenu } from "../menus/inline-menu.js";
 import { runCoreSessionTask } from "../../core/native-core-service.js";
 
-/**
- * Handle compact confirmation callback
- * Calls OpenCode API to compact the session
- * @param ctx grammY context
- */
-export async function handleCompactConfirm(ctx: Context): Promise<boolean> {
-  const callbackQuery = ctx.callbackQuery;
+function callbackThreadId(ctx: Context): number | undefined {
+  const message = ctx.callbackQuery?.message;
+  if (!message || !("message_thread_id" in message)) return undefined;
+  const value = (message as { message_thread_id?: number }).message_thread_id;
+  return typeof value === "number" && value > 1 ? value : undefined;
+}
 
-  if (!callbackQuery?.data || callbackQuery.data !== "compact:confirm") {
-    return false;
-  }
-
-  const isActiveMenu = await ensureActiveInlineMenu(ctx, "context");
-  if (!isActiveMenu) {
-    return true;
-  }
-
-  logger.debug("[ContextHandler] Compact confirmed");
-
+export async function runContextCompaction(ctx: Context): Promise<void> {
   try {
     const session = getCurrentSession();
-
     if (!session) {
       clearActiveInlineMenu("context_session_missing");
       await alert(ctx, "context.no_active_session");
       await ctx.deleteMessage().catch(() => {});
-      return true;
+      return;
     }
 
-    // Answer callback query and delete menu immediately
     await ctx.answerCallbackQuery({ text: t("context.callback_compacting") });
     clearActiveInlineMenu("context_compact_confirmed");
     await ctx.deleteMessage().catch(() => {});
-
-    // Send progress message
     const progressMessage = await ctx.reply(t("context.progress"));
-
-    // Show typing indicator
-    await ctx.api.sendChatAction(ctx.chat!.id, "typing");
+    const threadId = callbackThreadId(ctx);
+    if (threadId) await ctx.api.sendChatAction(ctx.chat!.id, "typing", { message_thread_id: threadId });
+    else await ctx.api.sendChatAction(ctx.chat!.id, "typing");
 
     const storedModel = getStoredModel();
-
     logger.debug(
       `[ContextHandler] Calling summarize with sessionID=${session.id}, directory=${session.directory}, model=${storedModel.providerID}/${storedModel.modelID}`,
     );
 
-    // Call summarize API (AI compaction)
-    const { error } = await runCoreSessionTask(session.id, session.directory, "session_summarize", ({ signal }) =>
-      opencodeClient.session.summarize({
+    const { error } = await runCoreSessionTask(
+      session.id,
+      session.directory,
+      "session_summarize",
+      ({ signal }) => opencodeClient.session.summarize({
         sessionID: session.id,
         directory: session.directory,
         providerID: storedModel.providerID,
         modelID: storedModel.modelID,
       }, { signal }),
-      { timeoutMs: 120 * 60_000 },
+      { timeoutMs: 15 * 60_000 },
     );
 
     if (error) {
       logger.error("[ContextHandler] Compact failed:", error);
-      // Update progress message to show error
-      await ctx.api
-        .editMessageText(ctx.chat!.id, progressMessage.message_id, t("context.error"))
-        .catch(() => {});
-      return true;
+      await ctx.api.editMessageText(ctx.chat!.id, progressMessage.message_id, t("context.error")).catch(() => {});
+      return;
     }
 
     logger.info(`[ContextHandler] Session compacted: ${session.id}`);
-    // Update progress message to show success
-    await ctx.api
-      .editMessageText(ctx.chat!.id, progressMessage.message_id, t("context.success"))
-      .catch(() => {});
-
-    return true;
+    await ctx.api.editMessageText(ctx.chat!.id, progressMessage.message_id, t("context.success")).catch(() => {});
   } catch (err) {
     clearActiveInlineMenu("context_compact_error");
     logger.error("[ContextHandler] Compact exception:", err);
     await failure(ctx, "context.error");
     await ctx.deleteMessage().catch(() => {});
-    return true;
   }
+}
+
+/** Handle legacy Context confirmation callbacks. */
+export async function handleCompactConfirm(ctx: Context): Promise<boolean> {
+  const callbackQuery = ctx.callbackQuery;
+  if (!callbackQuery?.data || callbackQuery.data !== "compact:confirm") return false;
+  if (!(await ensureActiveInlineMenu(ctx, "context"))) return true;
+  logger.debug("[ContextHandler] Compact confirmed");
+  await runContextCompaction(ctx);
+  return true;
 }

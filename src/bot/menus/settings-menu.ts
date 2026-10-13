@@ -20,6 +20,7 @@ export const SETTINGS_TOPIC_MODELS_CALLBACK = SETTINGS_CALLBACK_PREFIX + "models
 export const SETTINGS_APPEARANCE_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}appearance`;
 export const SETTINGS_NOTIFICATIONS_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}notifications`;
 export const SETTINGS_CONTEXT_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}context`;
+export const SETTINGS_CONTEXT_COMPACT_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}context_compact`;
 export const SETTINGS_EXPERIMENTAL_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}experimental`;
 export const SETTINGS_FREE_DETECTION_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}free_detection`;
 export const SETTINGS_ADVANCED_CALLBACK = `${SETTINGS_CALLBACK_PREFIX}advanced`;
@@ -62,8 +63,8 @@ export function formatResponseStreamingModeValue(mode: ResponseStreamingMode): s
 export function formatMessageFormatModeValue(mode: MessageFormatMode): string { return mode === "raw" ? "Raw" : "Markdown"; }
 
 function settingButton(label: string, value: string): string { return `${label}: ${value}`; }
-function backButton(callback = SETTINGS_BACK_CALLBACK): InlineKeyboard { return new InlineKeyboard().text("← Back", callback); }
 function appendSettingsBackButton(keyboard: InlineKeyboard): InlineKeyboard { return keyboard.row().text("← Back", SETTINGS_BACK_CALLBACK); }
+function contextSettingsKeyboard(): InlineKeyboard { return new InlineKeyboard().text("🧠 Compact Context", SETTINGS_CONTEXT_COMPACT_CALLBACK).row().text("← Back", SETTINGS_BACK_CALLBACK); }
 function formatTopicModel(): string {
   const model = getCurrentTopicSettings()?.model;
   return model ? `${model.providerID}/${model.modelID}` : "Inherited default";
@@ -279,7 +280,7 @@ export function buildContextSettingsView(): { text: string; keyboard: InlineKeyb
         "⚪ <b>No usage observed yet.</b>",
         "Start a model run and return here to see the latest context-window estimate.",
       ].join("\n"),
-      keyboard: backButton(),
+      keyboard: contextSettingsKeyboard(),
     };
   }
   const percent = Math.max(0, Math.round((info.tokensUsed / info.tokensLimit) * 100));
@@ -297,8 +298,9 @@ export function buildContextSettingsView(): { text: string; keyboard: InlineKeyb
       "📌 <b>Tokens used</b> · latest observed input context.",
       "📐 <b>Model window</b> · provider metadata when available.",
       "💡 A high percentage can increase trimming or compaction pressure.",
+      "🧠 Compact Context summarizes older history while preserving the recent working set.",
     ].join("\n"),
-    keyboard: backButton(),
+    keyboard: contextSettingsKeyboard(),
   };
 }
 

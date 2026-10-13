@@ -66,3 +66,10 @@
 - [x] Run lint, build, diff-check, targeted suites, and the full test suite.
 - [x] Review diff for final-answer regressions, secrets, and unbounded presentation growth.
 - [x] Commit, push feature branch, open PR against `main` with test evidence and scope notes.
+
+## Compact Context
+
+- expose manual Compact Context from Topic Context Health
+- route SDK `session.summarize` to Worker/Core `session.compact` with the exact governed run identity
+- keep Core run ownership until the real `session.compacted` event arrives; fail on session error/idle/abort
+- refresh existing context state from the native compaction event; do not synthesize summaries in Bot

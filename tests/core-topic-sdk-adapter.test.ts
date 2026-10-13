@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { nodeBindings, type NodeBinding } from "../src/control-plane/node-bindings.js";
 import { installSecureNodeTransport } from "../src/control-plane/topic-node-client.js";
-import { invokeTopicSdk } from "../src/control-plane/topic-sdk-adapter.js";
+import { buildRemoteCompactionPayload, classifyRemoteCompactionEvent, invokeTopicSdk } from "../src/control-plane/topic-sdk-adapter.js";
 const binding:NodeBinding={nodeId:'adapter-node',generation:1,chatId:-100,threadId:2,sessionId:'owned',currentRevision:2,status:'ready',createdAt:'now',updatedAt:'now'};
 nodeBindings.find=async()=>structuredClone(binding);
 nodeBindings.list=async()=>[];
@@ -42,4 +42,14 @@ test('remote Topic routes provider catalog and pending permission reads through 
  const agents=await invokeTopicSdk(topic,'app.agents',[{directory:topic.directory}]);assert.deepEqual(agents,{handled:true,result:{data:[{name:'build',mode:'primary'}]}});
  const permissions=await invokeTopicSdk(topic,'permission.list',[{directory:topic.directory}]);assert.deepEqual(permissions,{handled:true,result:{data:[{id:'perm',sessionID:'owned'}]}});
  assert.deepEqual(calls.slice(-3),[{operation:'models.list',payload:{}},{operation:'agents.list',payload:{}},{operation:'permission.list',payload:{}}]);
+});
+
+
+test('remote compaction payload and terminal events preserve synchronous SDK semantics',()=>{
+ const payload=buildRemoteCompactionPayload('run_123',{providerID:'opencode',modelID:'big-pickle'});
+ assert.deepEqual(payload,{runId:'run_123',model:{providerID:'opencode',modelID:'big-pickle'},events:true});
+ assert.throws(()=>buildRemoteCompactionPayload('',{providerID:'opencode',modelID:'big-pickle'}),/run identity/);
+ assert.deepEqual(classifyRemoteCompactionEvent({type:'session.compacted',properties:{sessionID:'owned'}}),{state:'completed'});
+ assert.deepEqual(classifyRemoteCompactionEvent({type:'session.error',properties:{message:'provider failed'}}),{state:'failed',message:'provider failed'});
+ assert.equal(classifyRemoteCompactionEvent({type:'message.part.updated',properties:{}}),null);
 });

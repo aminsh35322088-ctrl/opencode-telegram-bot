@@ -196,7 +196,7 @@ export function setTopicEventBusIdleTimeoutForTests(timeoutMs: number): void { s
 
 const remoteRunStreams = new Map<string,AbortController>();
 /** Active-run stream feeds existing subscribers under authenticated Topic context. No idle reconnect loop. */
-export async function startRemoteTopicRunEvents(topic: TopicRuntimeContext, sessionId: string, directory: string, runId: string, onEnd:()=>void, mode:"prepare"|"resume"="prepare"): Promise<()=>void> {
+export async function startRemoteTopicRunEvents(topic: TopicRuntimeContext, sessionId: string, directory: string, runId: string, onEnd:()=>void, mode:"prepare"|"resume"="prepare", onEvent?:(event:Event)=>void|Promise<void>): Promise<()=>void> {
   const client = await resolveTopicNodeClient(topic.chatId,topic.threadId);
   if (!client) throw new Error("Remote Topic missing node binding");
   if(remoteRunStreams.has(sessionId)) throw new Error("Remote Topic stream already active");
@@ -224,6 +224,7 @@ export async function startRemoteTopicRunEvents(topic: TopicRuntimeContext, sess
         if(!isEventLike(raw)) throw new Error("Invalid native Topic event");
         const eventSession=getSessionId(raw);
         if(eventSession && eventSession!==sessionId) throw new Error("Foreign remote session event");
+        if(onEvent)await onEvent(raw as unknown as Event);
         const targets=[...subscribers.values()].filter(subscriber=>normalizeDirectory(subscriber.directory)===normalized && (!subscriber.sessionId || subscriber.sessionId===sessionId));
         for(const target of targets) {
           if(controller.signal.aborted || generation!==busGeneration || ![...subscribers.values()].includes(target)) break;

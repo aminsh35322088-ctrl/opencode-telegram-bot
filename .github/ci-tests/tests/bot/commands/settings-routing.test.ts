@@ -7,6 +7,7 @@ import {
   buildSettingsMenuView,
   buildMoreSettingsView,
   SETTINGS_BACK_CALLBACK,
+  SETTINGS_CONTEXT_COMPACT_CALLBACK,
   SETTINGS_DEFAULT_MODELS_CALLBACK,
   SETTINGS_TOPIC_DEFAULTS_CALLBACK,
   SETTINGS_ADVANCED_CALLBACK,
@@ -55,8 +56,14 @@ describe("settings top-level routing contracts", () => {
     expect(modelButtons.length).toBeGreaterThan(0);
   });
 
-  it("keeps Context read-only and gives every Settings subview a return path", () => {
-    expect(buildContextSettingsView().keyboard.inline_keyboard.flat()).toHaveLength(1);
+  it("exposes manual Context compaction and gives every Settings subview a return path", () => {
+    const contextCallbacks = buildContextSettingsView().keyboard.inline_keyboard.flatMap((row) =>
+      row.flatMap((button) =>
+        "callback_data" in button && typeof button.callback_data === "string" ? [button.callback_data] : [],
+      ),
+    );
+    expect(contextCallbacks).toContain(SETTINGS_CONTEXT_COMPACT_CALLBACK);
+    expect(contextCallbacks).toContain(SETTINGS_BACK_CALLBACK);
     for (const view of [buildAppearanceSettingsView(), buildNotificationsSettingsView(), buildAdvancedSettingsView()]) {
       const callbacks = view.keyboard.inline_keyboard.flatMap((row) =>
         row.flatMap((button) =>
