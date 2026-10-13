@@ -7,7 +7,7 @@ import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, 
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { createUpdateBuilders } from "./updates.mjs";
-import { growthObserved, outputCalls, snapshot, stopConfirmed, streamCalls } from "./signals.mjs";
+import { draftIssued, growthObserved, outputCalls, snapshot, stopConfirmed, streamCalls } from "./signals.mjs";
 
 const args = new Map();
 for (let i = 2; i < process.argv.length; i += 2) {
@@ -253,45 +253,56 @@ async function flowStop(threadId) {
   const base = snapshot(pre);
   enqueue(messageUpdate("Write a long explanation of the repository layout.", { threadId }));
 
+  // The Bot registers the draft (attributing it to the current run) before it
+  // sends it, so the stub having recorded a *new* draft is the proof that a
+  // Stop will resolve. Waiting on a published message instead fired before the
+  // run had streamed anything: cycle run 38368783928 pressed Stop on the id of
+  // an unrelated finished message and the Bot refused it as `unknown-draft`.
   const started = await waitFor(
-    (s) => growthObserved(s, base),
+    (s) => draftIssued(s, base),
     30_000,
-    "in-flight draft or streamed message",
+    "issued generation draft",
   );
   if (!started.ok) return record("W5", "stop", "not-executed", { reason: started.reason });
 
-  // The draft the Bot registered for this run is the identity Stop must be
-  // attributed to. A real Telegram client learns the same value from the draft
-  // it was shown; the stub records it whenever `sendMessageDraft` is used, so
-  // prefer that and fall back to the id of the published message.
   const recordedDraft = (started.state.drafts ?? []).at(-1);
-  const draftId = recordedDraft?.draft_id ?? latestMessageId(started.state);
+  const draftId = recordedDraft?.draft_id ?? null;
+  if (draftId == null) return record("W5", "stop", "not-executed", { reason: "no draft_id recorded" });
   const confirmBase = snapshot(started.state);
   const outputsBefore = outputCalls(started.state);
 
   const t0 = Date.now();
   enqueue(stopUpdate(threadId ?? draftId, draftId));
 
-  // Confirmation is only ever *observed*, never assumed: a reply published by
-  // the Bot, or the Bot's own `result=confirmed` attribution for this exact
-  // draft. A refusal (unknown-draft, stale-draft, …) matches neither and the
-  // deadline expires as a failure — exactly what §3 requires of a Stop.
-  let confirmed = { confirmed: false, by: null };
+  // Confirmation is only ever *observed*, never inferred from the absence of
+  // traffic: the Bot's own attribution line for this exact draft. A message
+  // published after the press would be equally consistent with the run having
+  // finished on its own, so it confirms nothing. A refusal (stale-draft,
+  // unknown-draft, …) fails the flow immediately, with the reason the Bot gave.
+  let confirmed = { confirmed: false, by: null, refusal: null };
   let confirmState = started.state;
   const deadline = Date.now() + D.stopConfirmMs;
   while (Date.now() < deadline && !confirmed.confirmed) {
     confirmState = (await tgState().catch(() => null)) ?? confirmState;
     confirmed = stopConfirmed(confirmState, confirmBase, readBotLogTail(), draftId);
-    if (!confirmed.confirmed) await sleep(300);
+    if (!confirmed.confirmed && !confirmed.refusal) await sleep(300);
   }
   const confirmMs = Date.now() - t0;
-  const source = recordedDraft ? "stub-draft" : "published-message";
+  if (confirmed.refusal) {
+    return record("W5", "stop", "fail", {
+      reason: `Stop refused by the Bot: ${confirmed.refusal}`,
+      confirmMs,
+      draftId,
+      source: "stub-draft",
+      outputsBefore,
+    });
+  }
   if (!confirmed.confirmed) {
     return record("W5", "stop", "fail", {
       reason: `Stop confirmation timed out after ${D.stopConfirmMs}ms`,
       confirmMs,
       draftId,
-      source,
+      source: "stub-draft",
       outputsBefore,
     });
   }
@@ -308,7 +319,7 @@ async function flowStop(threadId) {
   const status = lateDelta > 0 ? "fail" : "pass";
   return record("W5", "stop", status, {
     draftId,
-    source,
+    source: "stub-draft",
     confirmMs,
     confirmedBy: confirmed.by,
     outputsBefore,

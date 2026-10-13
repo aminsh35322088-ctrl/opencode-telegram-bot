@@ -99,7 +99,7 @@ test("growth is observed as a new draft or a new message, never by a stale basel
   );
 });
 
-test("a Stop is confirmed by a new message or by the Bot's own confirmed attribution", async () => {
+test("a Stop is confirmed only by the Bot's confirmed attribution of that exact draft", async () => {
   const { snapshot, stopConfirmed } = await loadScript<{
     snapshot: (state: Record<string, unknown>) => { messages: number; drafts: number };
     stopConfirmed: (
@@ -107,41 +107,67 @@ test("a Stop is confirmed by a new message or by the Bot's own confirmed attribu
       base: { messages: number; drafts: number },
       logText: string,
       draftId: number | null,
-    ) => { confirmed: boolean; by: string | null };
+    ) => { confirmed: boolean; by: string | null; refusal: string | null };
   }>("scripts/soak/signals.mjs");
 
-  const base = snapshot({ messages: { 1: "welcome" }, drafts: [{ draft_id: 7 }] });
+  const base = snapshot({ messages: { 1: "welcome" }, drafts: [{ draft_id: 1 }] });
 
   const confirmedLog =
-    "[2026-10-13T07:38:28.513Z] [INFO] [Bot] Native generation stop handled: chat=987654321, thread=10000, draft=7, result=confirmed";
-  assert.deepEqual(stopConfirmed({ messages: { 1: "welcome" }, drafts: [{ draft_id: 7 }] }, base, confirmedLog, 7), {
+    "[2026-10-13T08:22:52.033Z] [INFO] [Bot] Native generation stop handled: chat=987654321, thread=10000, draft=1, result=confirmed";
+  assert.deepEqual(stopConfirmed({ messages: { 1: "welcome" }, drafts: [{ draft_id: 1 }] }, base, confirmedLog, 1), {
     confirmed: true,
     by: "bot-log",
+    refusal: null,
   });
 
   assert.deepEqual(
-    stopConfirmed({ messages: { 1: "welcome", 2: "stopped" }, drafts: [] }, base, "", 7),
-    { confirmed: true, by: "message" },
-    "publishing the stopped draft as a real message is the other observable confirmation",
+    stopConfirmed(
+      { messages: { 1: "welcome", 2: "ran to completion anyway" }, drafts: [{ draft_id: 1 }] },
+      base,
+      "",
+      1,
+    ),
+    { confirmed: false, by: null, refusal: null },
+    "a message published after the press is ambiguous: the run may simply have finished, which is exactly what a refused Stop looked like in run 38368783928",
   );
 
   const refusedLog =
-    "[2026-10-13T07:38:28.513Z] [WARN] [Cancellation] Refused unattributable native Stop: draft=7, reason=unknown-draft";
+    "[2026-10-13T08:22:52.033Z] [INFO] [Bot] Native generation stop handled: chat=987654321, thread=10000, draft=4, result=stale-draft";
   assert.deepEqual(
-    stopConfirmed({ messages: { 1: "welcome" }, drafts: [{ draft_id: 7 }] }, base, refusedLog, 7),
-    { confirmed: false, by: null },
-    "a refused Stop must never be reported as confirmation",
+    stopConfirmed({ messages: { 1: "welcome" }, drafts: [{ draft_id: 1 }] }, base, refusedLog, 4),
+    { confirmed: false, by: null, refusal: "stale-draft" },
+    "a refusal must surface as a refusal so the run reports a failing Stop instead of waiting for the deadline",
   );
 
   assert.deepEqual(
     stopConfirmed(
-      { messages: { 1: "welcome", 2: "partial draft" }, drafts: [{ draft_id: 7 }, { draft_id: 8 }] },
+      { messages: { 1: "welcome", 2: "partial draft" }, drafts: [{ draft_id: 1 }, { draft_id: 2 }] },
       base,
       "",
-      7,
+      1,
     ),
-    { confirmed: false, by: null },
+    { confirmed: false, by: null, refusal: null },
     "another draft from a generation that is still streaming is late output, never a confirmation",
+  );
+});
+
+test("Stop is only issued against a draft the Bot actually registered", async () => {
+  const { snapshot, draftIssued } = await loadScript<{
+    snapshot: (state: Record<string, unknown>) => { messages: number; drafts: number };
+    draftIssued: (state: Record<string, unknown>, base: { messages: number; drafts: number }) => boolean;
+  }>("scripts/soak/signals.mjs");
+
+  const base = snapshot({ messages: { 1: "welcome" }, drafts: [] });
+
+  assert.equal(
+    draftIssued({ messages: { 1: "welcome" }, drafts: [{ draft_id: 1, method: "sendRichMessageDraft" }] }, base),
+    true,
+    "the Bot registers the draft before it sends it, so the recorded draft_id is Stop's attribution key",
+  );
+  assert.equal(
+    draftIssued({ messages: { 1: "welcome", 2: "published reply" }, drafts: [] }, base),
+    false,
+    "a published message is not a draft: stopping it produced `unknown-draft` in run 38368783928",
   );
 });
 

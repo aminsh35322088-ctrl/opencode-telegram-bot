@@ -21,21 +21,28 @@ export function growthObserved(state, base) {
   return now.drafts > base.drafts || now.messages > base.messages;
 }
 
-// A Stop counts as confirmed only when something observable proves the
-// cancellation: the Bot publishes the stopped draft as a message, or the
-// Bot's own attribution log records `result=confirmed` for that exact draft.
-// A refused Stop (`stale-draft`, `unknown-draft`, …) is never a confirmation.
+// Stop must be aimed at a draft the Bot actually registered: the Bot records
+// the draft (attributing it to the current run) *before* it sends it, so the
+// stub having seen the draft is the proof that the Stop will resolve. Waiting
+// on a published message instead produced `unknown-draft`, because the run had
+// not streamed anything yet when the message arrived.
+export function draftIssued(state, base) {
+  return snapshot(state).drafts > base.drafts;
+}
+
+// A Stop counts as confirmed only when the Bot itself says so, for that exact
+// draft. Nothing weaker is admissible: a message published after the press is
+// equally consistent with the run having finished on its own — which is
+// precisely what a refused Stop looked like in cycle run 38368783928
+// (`result=stale-draft`), where the run's own completion was recorded as
+// confirmation. A refusal is surfaced as such so the gate reports a failing
+// Stop immediately instead of waiting out the deadline.
 export function stopConfirmed(state, base, logText, draftId) {
-  const now = snapshot(state);
-  // The stub stores every draft as a message too, so only growth in
-  // *non-draft* messages is a published reply; a fresh draft from the
-  // generation that is still streaming would otherwise confirm its own Stop.
-  const published = (s) => s.messages - s.drafts;
-  if (published(now) > published(base)) return { confirmed: true, by: "message" };
-  if (draftId != null && new RegExp(`draft=${draftId}, result=confirmed`).test(logText ?? "")) {
-    return { confirmed: true, by: "bot-log" };
-  }
-  return { confirmed: false, by: null };
+  if (draftId == null) return { confirmed: false, by: null, refusal: null };
+  const match = new RegExp(`draft=${draftId}, result=([a-z-]+)`).exec(logText ?? "");
+  if (!match) return { confirmed: false, by: null, refusal: null };
+  if (match[1] === "confirmed") return { confirmed: true, by: "bot-log", refusal: null };
+  return { confirmed: false, by: null, refusal: match[1] };
 }
 
 // Telegram output calls that a stopped run must stop producing. Polling
