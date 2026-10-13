@@ -1,0 +1,123 @@
+name: Soak
+
+# Isolated soak harness. It boots the real Bot against a local Bot API stub and
+# a local OpenAI-compatible stub, with no Telegram credentials, no Railway and
+# no network egress. It therefore cannot reach the production Worker or any of
+# the operator's active Topics, and it consumes no paid resources.
+#
+# Manual only: there is deliberately no push/PR/schedule trigger.
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: "Stage to run"
+        required: true
+        default: "smoke"
+        type: choice
+        options:
+          - smoke
+          - cycle
+          - stress
+      duration:
+        description: "Stress duration in seconds (stage=stress only)"
+        required: false
+        default: "7200"
+      ref:
+        description: "Bot ref to test"
+        required: false
+        default: "main"
+      seed_verified:
+        description: "Seed toolCallVerified (true) or let the Bot probe the stub (false)"
+        required: false
+        default: "true"
+
+permissions:
+  contents: write
+
+# One soak at a time; never cancel an in-flight run.
+concurrency:
+  group: soak-evidence
+  cancel-in-progress: false
+
+jobs:
+  soak:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify pinned Core runtime
+        run: node scripts/verify-core-install.mjs
+
+      - name: Materialize pinned Core runtime binary
+        run: |
+          node scripts/materialize-core-release.mjs
+          node scripts/verify-core-install.mjs --runtime
+
+      - name: Put the pinned OpenCode runtime on PATH
+        shell: bash
+        run: |
+          if [ -x "$PWD/.core/bin/opencode" ]; then
+            echo "$PWD/.core/bin" >> "$GITHUB_PATH"
+          else
+            echo "::warning::.core/bin/opencode is missing; opencode will not resolve"
+          fi
+
+      - name: Build
+        run: npm run build
+
+      - name: Run soak stage
+        shell: bash
+        env:
+          SOAK_SEED_VERIFIED: ${{ inputs.seed_verified }}
+          SOAK_PERSIST: "1"
+          SOAK_PERSIST_INTERVAL: "300"
+        run: |
+          chmod +x scripts/soak/run.sh scripts/soak/persist-evidence.sh
+          scripts/soak/run.sh "${{ inputs.stage }}" "${{ inputs.duration }}"
+
+      - name: Record runner identity
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "stage=${{ inputs.stage }}"
+            echo "duration=${{ inputs.duration }}"
+            echo "ref=${{ inputs.ref }}"
+            echo "sha=$(git rev-parse HEAD)"
+            echo "started_at=${{ github.run_started_at }}"
+            echo "runner=$(hostname) $(date -u +%FT%TZ)"
+            echo "cpus=$(nproc)"
+            echo "memory_kb=$(awk '/MemTotal/{print $2}' /proc/meminfo)"
+          } > soak-runs/runner-identity.txt 2>/dev/null || true
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soak-${{ inputs.stage }}-${{ github.run_id }}
+          path: soak-runs/
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Push durable evidence
+        if: always()
+        shell: bash
+        run: |
+          chmod +x scripts/soak/persist-evidence.sh
+          for d in soak-runs/*/; do
+            [ -d "$d" ] && scripts/soak/persist-evidence.sh "$d" "$PWD" || true
+          done

@@ -44,6 +44,9 @@ session-export-*
 # Packaging artifacts
 *.tgz
 
+# Soak harness output
+soak-runs/
+
 .boardown/
 manager/
 
