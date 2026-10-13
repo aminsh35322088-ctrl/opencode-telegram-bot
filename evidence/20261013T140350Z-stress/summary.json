@@ -1,0 +1,26 @@
+{
+  "stage": "stress",
+  "startedAt": "2026-10-13T14:04:00.881Z",
+  "finishedAt": "2026-10-13T16:04:05.637Z",
+  "elapsedS": 7205,
+  "counts": {
+    "pass": 434,
+    "fail": 7,
+    "not-executed": 8
+  },
+  "unrecognized": 0,
+  "cycles": 89,
+  "resources": {
+    "pid": 6799,
+    "selfRssKb": 151972,
+    "childRssKb": 0,
+    "totalRssKb": 151972,
+    "childCount": 0,
+    "children": [],
+    "cpuTimeS": 25,
+    "memTotalKb": 16372440,
+    "memAvailableKb": 10520792,
+    "loadavg": "0.14 0.14 0.33",
+    "cpus": 4
+  }
+}
