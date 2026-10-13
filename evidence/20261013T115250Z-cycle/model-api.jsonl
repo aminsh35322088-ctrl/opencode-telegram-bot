@@ -1,0 +1,7 @@
+{"ts":"2026-10-13T11:52:51.930Z","kind":"health","stream":false,"toolProbe":false,"tokens":0}
+{"ts":"2026-10-13T11:52:53.465Z","kind":"models","stream":false,"toolProbe":false,"tokens":0}
+{"ts":"2026-10-13T11:53:23.940Z","kind":"chat","stream":true,"toolProbe":false,"tokens":600,"tool":false,"long":false}
+{"ts":"2026-10-13T11:53:24.545Z","kind":"chat","stream":true,"toolProbe":false,"tokens":600,"tool":false,"long":false}
+{"ts":"2026-10-13T11:53:28.051Z","kind":"models","stream":false,"toolProbe":false,"tokens":0}
+{"ts":"2026-10-13T11:53:29.667Z","kind":"chat","stream":true,"toolProbe":false,"tokens":600,"tool":false,"long":false}
+{"ts":"2026-10-13T11:53:35.900Z","kind":"chat","stream":true,"toolProbe":false,"tokens":600,"tool":false,"long":true}
