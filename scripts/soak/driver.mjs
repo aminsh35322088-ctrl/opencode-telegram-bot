@@ -7,7 +7,16 @@ import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, 
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { createUpdateBuilders } from "./updates.mjs";
-import { draftIssued, growthObserved, outputCalls, snapshot, stopConfirmed, streamCalls } from "./signals.mjs";
+import {
+  deleteOutcome,
+  draftIssued,
+  growthObserved,
+  outputCalls,
+  snapshot,
+  stopConfirmed,
+  streamCalls,
+  topicGone,
+} from "./signals.mjs";
 
 const args = new Map();
 for (let i = 2; i < process.argv.length; i += 2) {
@@ -358,35 +367,124 @@ function readBotLogTail(maxBytes = 512 * 1024) {
 }
 
 async function flowDeleteChat(threadId) {
-  const before = await tgState().catch(() => ({}));
-  const beforeCount = msgCount(before);
-  const deletionCount = (s) =>
-    Number(s?.counters?.deleteMessage ?? 0) + Number(s?.counters?.deleteForumTopic ?? 0);
-  const beforeDeletions = deletionCount(before);
+  // W6 is registered as "Delete a Chat while its run is active … then create a
+  // new Topic and assert it is served by the same Worker and works normally".
+  // Deleting an idle Topic — what this flow did — cannot exercise the
+  // cancel-then-cleanup path at all, so it is not the registered workload.
+  const pre = await tgState().catch(() => ({}));
+  const base = snapshot(pre);
+  enqueue(messageUpdate("Write a long explanation of the repository layout.", { threadId }));
+  const live = await waitFor((s) => draftIssued(s, base), 30_000, "issued generation draft");
+  if (!live.ok) return record("W6", "delete-chat", "not-executed", { reason: live.reason });
+  const liveDraft = (live.state.drafts ?? []).at(-1)?.draft_id ?? null;
 
+  const beforeCount = msgCount(live.state);
   enqueue(messageUpdate(DELETE_CHAT, { threadId }));
+
   // Delete Chat does not delete anything on its own: the Bot answers with an
   // inline confirmation (`telegram-topic:delete:confirm`) and only then runs
   // the cleanup. Waiting straight for a deletion timed out after 60 s for a
   // deletion that had never been requested.
   const confirm = await waitFor((s) => msgCount(s) > beforeCount, 30_000, "delete confirmation prompt");
-  if (!confirm.ok) return record("W6", "delete-chat", "fail", { reason: confirm.reason });
+  if (!confirm.ok) return record("W6", "delete-chat", "fail", { reason: confirm.reason, liveDraft });
 
   const confirmationId = latestMessageId(confirm.state);
   enqueue(callbackUpdate("telegram-topic:delete:confirm", confirmationId, threadId));
 
+  // Cleanup is asserted from two directions: the Bot's own record — it must
+  // report deleting a Topic that had an active run, must report completion, and
+  // must never have stopped at a retry-safe boundary — and the topic actually
+  // disappearing from the Telegram side. An answered callback is not evidence.
   const t0 = Date.now();
-  const r = await waitFor(
-    (s) => deletionCount(s) > beforeDeletions || threadIds(s).length === 0,
-    D.deleteCleanupMs,
-    "topic cleanup",
-  );
+  let outcome = { requested: false, completed: false, interrupted: false };
+  let gone = false;
+  const deadline = Date.now() + D.deleteCleanupMs;
+  while (Date.now() < deadline && !(outcome.completed && gone)) {
+    const s = (await tgState().catch(() => null)) ?? {};
+    outcome = deleteOutcome(readBotLogTail(), threadId);
+    gone = topicGone(s, threadId);
+    if (!(outcome.completed && gone)) await sleep(300);
+  }
   const elapsed = Date.now() - t0;
-  if (!r.ok) return record("W6", "delete-chat", "fail", { reason: r.reason, confirmationId });
-  return record("W6", "delete-chat", "pass", {
+  if (!outcome.requested) {
+    return record("W6", "delete-chat", "fail", {
+      reason: "the Bot did not report deleting a Topic with an active run",
+      elapsed,
+      confirmationId,
+      liveDraft,
+      topicGone: gone,
+      ...outcome,
+    });
+  }
+  if (!outcome.completed || outcome.interrupted || !gone) {
+    return record("W6", "delete-chat", "fail", {
+      reason: `cleanup not fully observed within ${D.deleteCleanupMs}ms`,
+      elapsed,
+      confirmationId,
+      liveDraft,
+      topicGone: gone,
+      ...outcome,
+    });
+  }
+
+  // The run that was in flight must stop producing output once the delete has
+  // cancelled it: the Bot cancels the run before the destructive cleanup starts.
+  const streamsAtCleanup = streamCalls(await tgState().catch(() => ({})));
+  await sleep(D.lateOutputMs + 2_000);
+  const lateStreams = streamCalls(await tgState()) - streamsAtCleanup;
+
+  // Same Worker: with one Bot process this is trivially the same worker; what
+  // has to be proven is that it still serves a Topic created *after* the
+  // delete, and that this Topic is genuinely new — the stub reuses an id for a
+  // reused topic name, so a reused id would mean a stale binding was revived.
+  const reuseBase = snapshot(await tgState());
+  enqueue(messageUpdate(NEW_CHAT));
+  const created = await waitFor((s) => growthObserved(s, reuseBase), 30_000, "topic after delete");
+  const reuseThreadId = created.ok ? (threadIds(created.state).at(-1) ?? null) : null;
+  if (!reuseThreadId || reuseThreadId === threadId) {
+    return record("W6", "delete-chat", "fail", {
+      reason: reuseThreadId
+        ? "the deleted Topic was reused instead of recreated"
+        : "no Topic was created after the delete",
+      elapsed,
+      confirmationId,
+      liveDraft,
+      lateStreams,
+      reuseThreadId,
+      ...outcome,
+    });
+  }
+
+  const answerBase = snapshot(await tgState());
+  const t1 = Date.now();
+  enqueue(
+    messageUpdate("Reply with the single word PONG and then read README.md", { threadId: reuseThreadId }),
+  );
+  const answered = await waitFor((s) => growthObserved(s, answerBase), 60_000, "reply in the recreated Topic");
+  const reuseMs = Date.now() - t1;
+  if (!answered.ok) {
+    return record("W6", "delete-chat", "fail", {
+      reason: `the recreated Topic did not answer: ${answered.reason}`,
+      elapsed,
+      confirmationId,
+      liveDraft,
+      lateStreams,
+      reuseThreadId,
+      ...outcome,
+    });
+  }
+
+  return record("W6", "delete-chat", lateStreams > 0 ? "fail" : "pass", {
     elapsed,
     withinD4: elapsed <= D.deleteCleanupMs,
     confirmationId,
+    liveDraft,
+    deletedTopic: threadId,
+    reuseThreadId,
+    reuseMs,
+    lateStreams,
+    requested: outcome.requested,
+    completed: outcome.completed,
   });
 }
 

@@ -340,6 +340,25 @@ const handlers = {
   },
   editMessageReplyMarkup: () => ({ value: true }),
   deleteMessage: () => ({ value: true }),
+  // Real Telegram deletes the topic and the next one created gets a new id.
+  // Without this the stub only counted the attempt, so "cleanup happened" could
+  // never be asserted — G4 asks for a resource inventory before/after.
+  deleteForumTopic: (params) => {
+    const wanted = numberOr(params.message_thread_id, 0);
+    let removed = null;
+    for (const [name, id] of state.threads) {
+      if (id === wanted) {
+        removed = name;
+        state.threads.delete(name);
+        break;
+      }
+    }
+    if (removed !== null) persistTopics();
+    return {
+      value: true,
+      note: removed !== null ? `topic-deleted:${wanted}` : `topic-deleted:${wanted}:absent`,
+    }
+  },
   answerCallbackQuery: () => ({ value: true }),
   pinChatMessage: () => ({ value: true }),
   unpinAllChatMessages: () => ({ value: true }),

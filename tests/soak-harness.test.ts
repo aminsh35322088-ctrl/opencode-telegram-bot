@@ -194,6 +194,51 @@ test("late output is measured by Telegram output calls, not by message count alo
   assert.equal(outputCalls({ counters: {} }), 0);
 });
 
+test("W6 evidence separates a delete of a live Topic from an idle or foreign one", async () => {
+  const { deleteOutcome } = await loadScript<{
+    deleteOutcome: (
+      logText: string,
+      threadId: number | string,
+    ) => { requested: boolean; completed: boolean; interrupted: boolean };
+  }>("scripts/soak/signals.mjs");
+
+  const liveLog = [
+    "[2026-10-13T08:35:31.100Z] [INFO] [TelegramTopics] Delete requested during active run; cancelling current run first: session=ses_a, thread=10000",
+    "[2026-10-13T08:35:32.200Z] [INFO] [TelegramTopics] Delete confirmation completed: session=ses_a, thread=10000",
+  ].join("\n");
+
+  assert.deepEqual(deleteOutcome(liveLog, 10000), {
+    requested: true,
+    completed: true,
+    interrupted: false,
+  });
+  assert.deepEqual(
+    deleteOutcome(liveLog, 20000),
+    { requested: false, completed: false, interrupted: false },
+    "another Topic's delete must never satisfy this Topic's evidence",
+  );
+
+  assert.equal(
+    deleteOutcome("[..] Delete confirmation completed: session=ses_a, thread=10000", 10000).requested,
+    false,
+    "W6 is registered as Delete Chat *while its run is active*; deleting an idle Topic is a different workload and must be reported as such",
+  );
+
+  const interruptedLog = `${liveLog}\n[..] [ERROR] [TelegramTopics] Topic deletion stopped at a retry-safe cleanup boundary: session=ses_a, thread=10000`;
+  assert.equal(deleteOutcome(interruptedLog, 10000).interrupted, true);
+});
+
+test("a deleted Topic is observed as gone, so cleanup is asserted rather than inferred", async () => {
+  const { topicGone } = await loadScript<{
+    topicGone: (state: Record<string, unknown>, threadId: number | string) => boolean;
+  }>("scripts/soak/signals.mjs");
+
+  assert.equal(topicGone({ threads: { "New Chat": 10000 } }, 10000), false);
+  assert.equal(topicGone({ threads: {} }, 10000), true);
+  assert.equal(topicGone({ threads: { "New Chat": 20000 } }, 10000), true);
+  assert.equal(topicGone({}, 10000), true);
+});
+
 test("persist-evidence pushes to GitHub with the checkout's credentials and never hides the reason", async () => {
   const { readFileSync } = await import("node:fs");
   const script = readFileSync(new URL("../scripts/soak/persist-evidence.sh", import.meta.url), "utf8");

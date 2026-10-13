@@ -69,6 +69,29 @@ export function outputCalls(state) {
   return total;
 }
 
+// W6 is registered as "Delete a Chat while its run is active … then create a
+// new Topic and assert it is served by the same Worker". The Bot records both
+// halves of that precondition in its own log, so the claim is read from
+// evidence instead of inferred from a callback having been answered.
+export function deleteOutcome(logText, threadId) {
+  const text = logText ?? "";
+  const wanted = String(threadId);
+  const saw = (marker) => new RegExp(`${marker}[^\\n]*thread=${wanted}\\b`).test(text);
+  return {
+    requested: saw("Delete requested during active run; cancelling current run first:"),
+    completed: saw("Delete confirmation completed:"),
+    interrupted: saw("Topic deletion stopped at a retry-safe cleanup boundary:"),
+  };
+}
+
+// The stub keys forum topics by name; a deleted topic loses its mapping, so
+// "the topic is gone" is an observed fact of the Telegram side of the cleanup,
+// not an inference from `deleteForumTopic` having been attempted.
+export function topicGone(state, threadId) {
+  const wanted = String(threadId);
+  return !Object.values(state?.threads ?? {}).some((id) => String(id) === wanted);
+}
+
 // D2 baseline: how much of that output is the run still streaming. Finalising
 // the stopped draft into a real message is the confirmation itself, so
 // `sendMessage`/`sendRichMessage` are deliberately excluded.
