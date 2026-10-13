@@ -155,6 +155,23 @@ node "$SOAK/seed-state.mjs" || exit 1
 
 unset CONTROL_APPLICATION_IPC RAILWAY_API_TOKEN 2>/dev/null || true
 
+# Materialise the environment the Bot boots with, so a controlled restart
+# (W7/G7) reuses the exact same one instead of reconstructing it: one
+# definition, used by the first boot and by every restart.
+cat >"$RUN_DIR/bot-env.sh" <<ENVEOF
+export TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN"
+export TELEGRAM_USER_ID="$TELEGRAM_USER_ID"
+export TELEGRAM_API_ROOT="$TELEGRAM_API_ROOT"
+export OPENCODE_TELEGRAM_HOME="$OPENCODE_TELEGRAM_HOME"
+export OPENCODE_MODEL_PROVIDER="$OPENCODE_MODEL_PROVIDER"
+export OPENCODE_MODEL_ID="$OPENCODE_MODEL_ID"
+export LOG_LEVEL="$LOG_LEVEL"
+export BOT_LOCALE="$BOT_LOCALE"
+export SOAK_MODEL_PORT="$SOAK_MODEL_PORT"
+export PATH="$ROOT/.core/bin:\$PATH"
+unset CONTROL_APPLICATION_IPC RAILWAY_API_TOKEN 2>/dev/null || true
+ENVEOF
+
 log "starting bot"
 node "$ROOT/dist/index.js" >"$RUN_DIR/bot.log" 2>&1 &
 PIDS+=($!)
@@ -192,7 +209,9 @@ node "$SOAK/driver.mjs" --stage "$STAGE" \
   --updates "$UPDATES" \
   --telegram-port "$TELEGRAM_PORT" \
   --token "$SOAK_TOKEN" \
-  --user-id "$SOAK_USER_ID"
+  --user-id "$SOAK_USER_ID" \
+  --restart-script "$SOAK/bot-restart.sh" \
+  --repo-dir "$ROOT"
 DRIVER_RC=$?
 
 # --- capture post-state -----------------------------------------------------

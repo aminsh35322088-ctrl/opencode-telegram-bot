@@ -92,6 +92,17 @@ export function topicGone(state, threadId) {
   return !Object.values(state?.threads ?? {}).some((id) => String(id) === wanted);
 }
 
+// W7/G7 is a controlled restart: stop the Bot, start it again, and prove the
+// environment came back. "It answered" alone is not enough — the same pid means
+// the old process never died and nothing was restarted, and an answer past D5
+// is F8 even when it eventually arrives.
+export function restartOutcome({ base, state, beforePid, afterPid, elapsedMs, limitMs }) {
+  const answered = growthObserved(state, base);
+  const pidChanged = beforePid != null && afterPid != null && beforePid !== afterPid;
+  const withinD5 = elapsedMs <= limitMs;
+  return { answered, pidChanged, withinD5, pass: answered && pidChanged && withinD5 };
+}
+
 // D2 baseline: how much of that output is the run still streaming. Finalising
 // the stopped draft into a real message is the confirmation itself, so
 // `sendMessage`/`sendRichMessage` are deliberately excluded.

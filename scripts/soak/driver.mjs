@@ -12,6 +12,7 @@ import {
   draftIssued,
   growthObserved,
   outputCalls,
+  restartOutcome,
   snapshot,
   stopConfirmed,
   streamCalls,
@@ -27,6 +28,8 @@ const STAGE = args.get("stage") ?? "smoke";
 const DURATION_S = Number(args.get("duration") ?? 0);
 const RUN_DIR = args.get("run-dir");
 const UPDATES = args.get("updates");
+const RESTART_SCRIPT = args.get("restart-script");
+const REPO_DIR = args.get("repo-dir");
 const TG_PORT = args.get("telegram-port") ?? "8081";
 const TOKEN = args.get("token") ?? "123:soak";
 const USER_ID = Number(args.get("user-id") ?? 987654321);
@@ -488,6 +491,80 @@ async function flowDeleteChat(threadId) {
   });
 }
 
+async function flowRestart(threadId) {
+  // W7/G7: one controlled restart of the environment. The Bot is stopped and
+  // started again from the environment run.sh materialised, and nothing is
+  // reseeded — whatever survives was persisted by the Bot itself. It runs while
+  // the Topic still exists, so "the same Topic is served afterwards" is checked
+  // rather than asserted.
+  if (!RESTART_SCRIPT || !REPO_DIR) {
+    return record("W7", "restart", "not-executed", {
+      reason: "harness was not given --restart-script/--repo-dir",
+    });
+  }
+
+  const beforePid = readBotPid();
+  const t0 = Date.now();
+  try {
+    execFileSync("bash", [RESTART_SCRIPT, RUN_DIR, REPO_DIR], { stdio: "pipe" });
+  } catch (error) {
+    return record("W7", "restart", "fail", {
+      reason: `restart command failed: ${String(error?.stderr ?? error?.message ?? error).slice(0, 300)}`,
+      beforePid,
+    });
+  }
+
+  // D5 measures restart -> environment ready and answering, so the clock runs
+  // from the stop through the first answer, not merely through the spawn.
+  const base = snapshot(await tgState().catch(() => ({})));
+  enqueue(messageUpdate("/start"));
+  const answered = await waitFor((s) => growthObserved(s, base), D.restartReadyMs, "answer after restart");
+  const readyMs = Date.now() - t0;
+  const afterPid = readBotPid();
+  const outcome = restartOutcome({
+    base,
+    state: answered.ok ? answered.state : (await tgState().catch(() => ({}))),
+    beforePid,
+    afterPid,
+    elapsedMs: readyMs,
+    limitMs: D.restartReadyMs,
+  });
+  if (!outcome.pass) {
+    return record("W7", "restart", "fail", {
+      ...outcome,
+      reason: !outcome.answered
+        ? `no answer within D5 (${D.restartReadyMs}ms)`
+        : !outcome.pidChanged
+          ? `pid did not change (${beforePid} -> ${afterPid}): the Bot was never stopped`
+          : `restart exceeded D5 (${readyMs}ms > ${D.restartReadyMs}ms)`,
+      beforePid,
+      afterPid,
+      readyMs,
+    });
+  }
+
+  // The environment is only "back" if the Topic that existed before the restart
+  // is still served. A Bot that returns without its bindings answers /start and
+  // looks healthy while every existing Topic is dead.
+  if (threadId) {
+    const reuseBase = snapshot(await tgState());
+    enqueue(messageUpdate("Reply with the single word PONG and then read README.md", { threadId }));
+    const served = await waitFor((s) => growthObserved(s, reuseBase), 60_000, "existing Topic after restart");
+    if (!served.ok) {
+      return record("W7", "restart", "fail", {
+        ...outcome,
+        reason: "the Topic that existed before the restart was not served afterwards",
+        beforePid,
+        afterPid,
+        readyMs,
+        threadId,
+      });
+    }
+  }
+
+  return record("W7", "restart", "pass", { ...outcome, beforePid, afterPid, readyMs, threadId });
+}
+
 async function cycle(index) {
   const resources = [sampleResources()];
   const results = [];
@@ -495,6 +572,9 @@ async function cycle(index) {
   const chat = await flowNewChat();
   const threadId = chat?.threadId ?? null;
   if (threadId) results.push(await flowPrompt(threadId));
+  // W7/G7: a controlled restart — every run of the single-cycle stage, and every
+  // tenth cycle under stress — deliberately while the Topic still exists.
+  if (STAGE === "cycle" || index % 10 === 0) results.push(await flowRestart(threadId));
   results.push(await flowStop(threadId));
   results.push(await flowDeleteChat(threadId));
   resources.push(sampleResources());

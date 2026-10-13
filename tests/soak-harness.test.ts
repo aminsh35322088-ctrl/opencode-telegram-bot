@@ -239,6 +239,71 @@ test("a deleted Topic is observed as gone, so cleanup is asserted rather than in
   assert.equal(topicGone({}, 10000), true);
 });
 
+test("a controlled restart counts only when the Bot answers again within D5 and its pid changed", async () => {
+  const { restartOutcome } = await loadScript<{
+    restartOutcome: (input: {
+      base: { messages: number; drafts: number };
+      state: Record<string, unknown>;
+      beforePid: number | null;
+      afterPid: number | null;
+      elapsedMs: number;
+      limitMs: number;
+    }) => { answered: boolean; pidChanged: boolean; withinD5: boolean; pass: boolean };
+  }>("scripts/soak/signals.mjs");
+
+  const base = { messages: 1, drafts: 0 };
+  assert.deepEqual(
+    restartOutcome({
+      base,
+      state: { messages: { 1: "welcome", 2: "restarted" }, drafts: [] },
+      beforePid: 111,
+      afterPid: 222,
+      elapsedMs: 9_000,
+      limitMs: 120_000,
+    }),
+    { answered: true, pidChanged: true, withinD5: true, pass: true },
+  );
+
+  assert.deepEqual(
+    restartOutcome({
+      base,
+      state: { messages: { 1: "welcome" }, drafts: [] },
+      beforePid: 111,
+      afterPid: 222,
+      elapsedMs: 9_000,
+      limitMs: 120_000,
+    }),
+    { answered: false, pidChanged: true, withinD5: true, pass: false },
+    "a Bot that came back but answers nothing is not a successful restart",
+  );
+
+  assert.deepEqual(
+    restartOutcome({
+      base,
+      state: { messages: { 1: "welcome", 2: "restarted" }, drafts: [] },
+      beforePid: 111,
+      afterPid: 111,
+      elapsedMs: 9_000,
+      limitMs: 120_000,
+    }),
+    { answered: true, pidChanged: false, withinD5: true, pass: false },
+    "an unchanged pid means the old process never died, so nothing was restarted",
+  );
+
+  assert.deepEqual(
+    restartOutcome({
+      base,
+      state: { messages: { 1: "welcome", 2: "restarted" }, drafts: [] },
+      beforePid: 111,
+      afterPid: 222,
+      elapsedMs: 150_000,
+      limitMs: 120_000,
+    }),
+    { answered: true, pidChanged: true, withinD5: false, pass: false },
+    "D5 is a registered deadline: missing it is F8 even when the answer eventually arrives",
+  );
+});
+
 test("persist-evidence pushes to GitHub with the checkout's credentials and never hides the reason", async () => {
   const { readFileSync } = await import("node:fs");
   const script = readFileSync(new URL("../scripts/soak/persist-evidence.sh", import.meta.url), "utf8");
