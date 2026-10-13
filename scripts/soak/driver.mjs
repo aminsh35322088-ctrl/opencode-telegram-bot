@@ -272,13 +272,27 @@ async function flowPrompt(threadId) {
 }
 
 async function flowStop(threadId) {
-  const before = await tgState();
-  const beforeCount = msgCount(before);
-  const draft = (before.drafts ?? []).at(-1);
-  if (!draft) return record("W5", "stop", "not-executed", { reason: "no stoppable draft observed" });
+  // Stop must cancel a LIVE generation. W2's prompt finishes in about a second,
+  // so waiting for a draft that already exists left W5 permanently
+  // not-executed. Start a fresh long-running turn and stop it mid-flight.
+  const pre = await tgState().catch(() => ({}));
+  const preCount = msgCount(pre);
+  enqueue(messageUpdate("Write a long explanation of the repository layout.", { threadId }));
+
+  const started = await waitFor((s) => msgCount(s) > preCount, 30_000, "in-flight streamed message");
+  if (!started.ok) return record("W5", "stop", "not-executed", { reason: started.reason });
+
+  // In this Bot the streamer publishes `messageId === draftId`, so the id the
+  // Bot just published for this run is the draft identity Stop is attributed
+  // to. A real Telegram client learns the same value from the draft it was
+  // shown; the stub records drafts when `sendMessageDraft` is used, so prefer
+  // that when it is present.
+  const recordedDraft = (started.state.drafts ?? []).at(-1);
+  const draftId = recordedDraft?.draft_id ?? latestMessageId(started.state);
+  const beforeCount = msgCount(started.state);
 
   const t0 = Date.now();
-  enqueue(stopUpdate(threadId ?? draft.message_id, draft.draft_id));
+  enqueue(stopUpdate(threadId ?? draftId, draftId));
 
   const confirmed = await waitFor(
     (s) => msgCount(s) > beforeCount,
@@ -287,7 +301,7 @@ async function flowStop(threadId) {
   );
   const confirmMs = Date.now() - t0;
   if (!confirmed.ok) {
-    return record("W5", "stop", "fail", { reason: confirmed.reason, confirmMs, draftId: draft.draft_id });
+    return record("W5", "stop", "fail", { reason: confirmed.reason, confirmMs, draftId, source: recordedDraft ? "stub-draft" : "published-message" });
   }
 
   // D2: late output from the stopped run must cease.
@@ -297,7 +311,8 @@ async function flowStop(threadId) {
   const lateDelta = msgCount(after) - postStopCount;
   const status = lateDelta > 0 ? "fail" : "pass";
   return record("W5", "stop", status, {
-    draftId: draft.draft_id,
+    draftId,
+    source: recordedDraft ? "stub-draft" : "published-message",
     confirmMs,
     lateDelta,
     withinD1: confirmMs <= D.stopConfirmMs,
@@ -305,13 +320,63 @@ async function flowStop(threadId) {
   });
 }
 
+function latestMessageId(state) {
+  const ids = Object.keys(state?.messages ?? {}).map(Number).filter(Number.isFinite);
+  return ids.length > 0 ? Math.max(...ids) : null;
+}
+
+function callbackUpdate(data, messageId, threadId) {
+  return {
+    callback_query: {
+      id: `cb-${Date.now()}`,
+      from: { id: USER_ID, is_bot: false, first_name: "Soak" },
+      chat_instance: "soak",
+      data,
+      ...(messageId !== null
+        ? {
+            message: {
+              message_id: messageId,
+              date: Math.floor(Date.now() / 1000),
+              chat: { id: USER_ID, type: "private", first_name: "Soak" },
+              ...(threadId ? { message_thread_id: threadId } : {}),
+            },
+          }
+        : {}),
+    },
+  };
+}
+
 async function flowDeleteChat(threadId) {
+  const before = await tgState().catch(() => ({}));
+  const beforeCount = msgCount(before);
+  const deletionCount = (s) =>
+    Number(s?.counters?.deleteMessage ?? 0) + Number(s?.counters?.deleteForumTopic ?? 0);
+  const beforeDeletions = deletionCount(before);
+
   enqueue(messageUpdate(DELETE_CHAT, { threadId }));
+  // Delete Chat does not delete anything on its own: the Bot answers with an
+  // inline confirmation (`telegram-topic:delete:confirm`) and only then runs
+  // the cleanup. Waiting straight for a deletion timed out after 60 s for a
+  // deletion that had never been requested.
+  const confirm = await waitFor((s) => msgCount(s) > beforeCount, 30_000, "delete confirmation prompt");
+  if (!confirm.ok) return record("W6", "delete-chat", "fail", { reason: confirm.reason });
+
+  const confirmationId = latestMessageId(confirm.state);
+  enqueue(callbackUpdate("telegram-topic:delete:confirm", confirmationId, threadId));
+
   const t0 = Date.now();
-  const r = await waitFor((s) => (s.deletes?.length ?? 0) > 0, D.deleteCleanupMs, "delete request");
+  const r = await waitFor(
+    (s) => deletionCount(s) > beforeDeletions || threadIds(s).length === 0,
+    D.deleteCleanupMs,
+    "topic cleanup",
+  );
   const elapsed = Date.now() - t0;
-  if (!r.ok) return record("W6", "delete-chat", "not-executed", { reason: r.reason });
-  return record("W6", "delete-chat", "pass", { elapsed, withinD4: elapsed <= D.deleteCleanupMs });
+  if (!r.ok) return record("W6", "delete-chat", "fail", { reason: r.reason, confirmationId });
+  return record("W6", "delete-chat", "pass", {
+    elapsed,
+    withinD4: elapsed <= D.deleteCleanupMs,
+    confirmationId,
+  });
 }
 
 async function cycle(index) {

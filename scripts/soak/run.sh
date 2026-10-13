@@ -93,7 +93,17 @@ wait_for_health() {
 log "run dir: $RUN_DIR"
 
 # --- stub model -------------------------------------------------------------
+# A default-speed model finishes a turn in ~0.5 s, so the Bot never has to show
+# a streaming draft placeholder - and without a draft there is nothing for
+# Telegram's Stop to be attributed to, which made W5 permanently
+# not-executable. Slow the stream to a realistic interactive pace and make the
+# model emit a tool call often enough for the tool-execution requirement.
+MODEL_TOKENS="${SOAK_MODEL_TOKENS:-600}"
+MODEL_DELAY_MS="${SOAK_MODEL_DELAY_MS:-150}"
+MODEL_TOOL_PROB="${SOAK_MODEL_TOOL_PROB:-0.34}"
+log "model stub: tokens=$MODEL_TOKENS delayMs=$MODEL_DELAY_MS toolProb=$MODEL_TOOL_PROB"
 node "$SOAK/stub-model.mjs" --port "$MODEL_PORT" --log "$RUN_DIR/model-api.jsonl" \
+  --tokens "$MODEL_TOKENS" --delay-ms "$MODEL_DELAY_MS" --tool-prob "$MODEL_TOOL_PROB" \
   >"$RUN_DIR/stub-model.out" 2>&1 &
 PIDS+=($!)
 wait_for_health "http://127.0.0.1:$MODEL_PORT/health" "model stub" || exit 1
