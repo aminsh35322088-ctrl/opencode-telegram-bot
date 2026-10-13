@@ -1,0 +1,2234 @@
+{
+  "version": 2,
+  "customProviders": {
+    "providers": [
+      {
+        "id": "soak",
+        "name": "Soak Stub",
+        "baseURL": "http://127.0.0.1:8090/v1",
+        "models": [
+          {
+            "id": "soak-model",
+            "name": "soak-model",
+            "toolCall": true,
+            "toolCallVerified": true
+          }
+        ],
+        "capability": "general",
+        "credentialId": "api-key",
+        "createdAt": "2026-10-13T08:35:14.084Z",
+        "updatedAt": "2026-10-13T08:35:14.888Z"
+      }
+    ]
+  },
+  "settings": {
+    "currentModel": {
+      "providerID": "soak",
+      "modelID": "soak-model",
+      "name": "Soak Stub Model",
+      "variant": "default"
+    },
+    "responseStreamingMode": "draft",
+    "topicDefaults": {
+      "compactOutputMode": false,
+      "showThinkingContent": true,
+      "responseStreamingMode": "draft",
+      "messageFormatMode": "markdown",
+      "showAssistantRunFooter": true,
+      "sendDiffFileAttachments": true,
+      "promptQueueEnabled": false
+    },
+    "scheduledTasks": [],
+    "scheduledTaskSessionIgnores": [],
+    "alwaysAllowedPermissions": [],
+    "mainNavigationMessageIds": {
+      "987654321": 2
+    },
+    "sessionDirectoryCache": {
+      "version": 1,
+      "lastSyncedUpdatedAt": 1791880529930,
+      "directories": [
+        {
+          "worktree": "/home/runner/.local/state/opencode-telegram-soak/20261013T083511Z-cycle/opencode/topic-workspaces/987654321/4ef34758-12b1-4d7e-b9ac-c6735fd3eb46",
+          "lastUpdated": 1791880529930
+        }
+      ]
+    }
+  },
+  "globalSnapshot": {
+    "version": 1,
+    "revision": 5,
+    "hash": "ac93ea3dd419a6a98c1bd41c701087a8a606bb05ea8f9b3484b2c1188e1144ba",
+    "configuration": {
+      "runtime": {
+        "$schema": "https://opencode.ai/config.json",
+        "permission": {
+          "*": "allow",
+          "actions": "allow",
+          "bot": "allow",
+          "media": "allow",
+          "telegram": "allow",
+          "github-ci": "allow",
+          "session": "allow",
+          "webfetch": "allow",
+          "websearch": "allow",
+          "lsp": "allow",
+          "browser": "allow",
+          "database-query": "allow",
+          "session-recovery": "allow",
+          "full-diagnostics": "allow",
+          "network-diagnostics": "allow",
+          "system-diagnostics": "allow",
+          "logs-observability": "allow",
+          "image-inspect": "allow",
+          "safe-download": "allow",
+          "send-file": "allow",
+          "tailscale": "allow",
+          "ssh": "allow",
+          "ssh-remote": "ask",
+          "bash": {
+            "*": "allow",
+            "*tsc *": "allow",
+            "*vitest *": "allow",
+            "*eslint *": "allow",
+            "*node_modules/.bin/tsc*": "allow",
+            "*node_modules/.bin/vitest*": "allow",
+            "*node_modules/.bin/eslint*": "allow",
+            "*npx*": "deny",
+            "*corepack*": "deny",
+            "*npm ci*": "deny",
+            "*npm i *": "deny",
+            "*npm install*": "deny",
+            "*npm add*": "deny",
+            "*npm uninstall*": "deny",
+            "*npm remove*": "deny",
+            "*npm update*": "deny",
+            "*npm exec*": "deny",
+            "*npm test*": "deny",
+            "*npm run*test*": "deny",
+            "*npm run*typecheck*": "deny",
+            "*npm run*lint*": "deny",
+            "*npm run*build*": "deny",
+            "*npm run*dev*": "deny",
+            "*pnpm install*": "deny",
+            "*pnpm i *": "deny",
+            "*pnpm add*": "deny",
+            "*pnpm remove*": "deny",
+            "*pnpm uninstall*": "deny",
+            "*pnpm update*": "deny",
+            "*pnpm dlx*": "deny",
+            "*pnpm test*": "deny",
+            "*pnpm run*test*": "deny",
+            "*pnpm run*typecheck*": "deny",
+            "*pnpm run*lint*": "deny",
+            "*pnpm run*build*": "deny",
+            "*pnpm run*dev*": "deny",
+            "*yarn install*": "deny",
+            "*yarn add*": "deny",
+            "*yarn remove*": "deny",
+            "*yarn uninstall*": "deny",
+            "*yarn update*": "deny",
+            "*yarn dlx*": "deny",
+            "*yarn test*": "deny",
+            "*yarn run*test*": "deny",
+            "*yarn run*typecheck*": "deny",
+            "*yarn run*lint*": "deny",
+            "*yarn run*build*": "deny",
+            "*yarn run*dev*": "deny",
+            "*bun install*": "deny",
+            "*bun i *": "deny",
+            "*bun add*": "deny",
+            "*bun remove*": "deny",
+            "*bun uninstall*": "deny",
+            "*bun update*": "deny",
+            "*bunx*": "deny",
+            "*bun test*": "deny",
+            "*bun run*test*": "deny",
+            "*bun run*typecheck*": "deny",
+            "*bun run*lint*": "deny",
+            "*bun run*build*": "deny",
+            "*bun run*dev*": "deny",
+            "*jest *": "deny",
+            "*mocha *": "deny",
+            "*pytest *": "deny",
+            "*playwright test*": "deny",
+            "*prettier *": "deny",
+            "*node_modules/.bin/jest*": "deny",
+            "*node_modules/.bin/mocha*": "deny",
+            "*node_modules/.bin/pytest*": "deny",
+            "*node_modules/.bin/prettier*": "deny"
+          },
+          "external_directory": {
+            "/data/logs/**": "allow"
+          }
+        },
+        "provider": {
+          "soak": {
+            "npm": "@ai-sdk/openai-compatible",
+            "name": "Soak Stub",
+            "options": {
+              "baseURL": "http://127.0.0.1:8090/v1",
+              "apiKey": "bot-credential-proxy:model-provider:soak:api-key"
+            },
+            "models": {
+              "soak-model": {
+                "name": "soak-model",
+                "attachment": true,
+                "tool_call": true,
+                "modalities": {
+                  "input": [
+                    "text",
+                    "image"
+                  ],
+                  "output": [
+                    "text"
+                  ]
+                }
+              }
+            }
+          },
+          "free-kilo": {
+            "npm": "@ai-sdk/openai-compatible",
+            "name": "Kilo Gateway Anonymous",
+            "options": {
+              "baseURL": "https://api.kilo.ai/api/gateway"
+            },
+            "models": {
+              "kilo-auto/free": {
+                "name": "Auto Free",
+                "attachment": false,
+                "tool_call": true,
+                "modalities": {
+                  "input": [
+                    "text"
+                  ],
+                  "output": [
+                    "text"
+                  ]
+                },
+                "reasoning": true,
+                "limit": {
+                  "context": 256000,
+                  "output": 32768
+                }
+              },
+              "stealth/space-bunny-alpha": {
+                "name": "Space Bunny Alpha",
+                "attachment": true,
+                "tool_call": true,
+                "modalities": {
+                  "input": [
+                    "text",
+                    "image",
+                    "video"
+                  ],
+                  "output": [
+                    "text"
+                  ]
+                },
+                "reasoning": true,
+                "limit": {
+                  "context": 1000000,
+                  "output": 524288
+                }
+              },
+              "poolside/laguna-s-2.1:free": {
+                "name": "Poolside: Laguna S 2.1 (free)",
+                "attachment": false,
+                "tool_call": true,
+                "modalities": {
+                  "input": [
+                    "text"
+                  ],
+                  "output": [
+                    "text"
+                  ]
+                },
+                "reasoning": true,
+                "limit": {
+                  "context": 262144,
+                  "output": 32768
+                }
+              },
+              "nvidia/nemotron-3-ultra-550b-a55b:free": {
+                "name": "NVIDIA: Nemotron 3 Ultra (free)",
+                "attachment": false,
+                "tool_call": true,
+                "modalities": {
+                  "input": [
+                    "text"
+                  ],
+                  "output": [
+                    "text"
+                  ]
+                },
+                "reasoning": true,
+                "limit": {
+                  "context": 1000000,
+                  "output": 65536
+                }
+              },
+              "dots-studio/dots-3-note-preview:free": {
+                "name": "Dots Studio: Dots3-Note Preview (free)",
+                "attachment": true,
+                "tool_call": true,
+                "modalities": {
+                  "input": [
+                    "text",
+                    "image"
+                  ],
+                  "output": [
+                    "text"
+                  ]
+                },
+                "reasoning": true,
+                "limit": {
+                  "context": 512000,
+                  "output": 460800
+                }
+              },
+              "inclusionai/ling-3.0-flash-sante:free": {
+                "name": "inclusionAI: Ling 3.0 Flash Sante (free)",
+                "attachment": false,
+                "tool_call": true,
+                "modalities": {
+                  "input": [
+                    "text"
+                  ],
+                  "output": [
+                    "text"
+                  ]
+                },
+                "reasoning": true,
+                "limit": {
+                  "context": 262144,
+                  "output": 32768
+                }
+              },
+              "qwen/qwen3.8-27b:free": {
+                "name": "Qwen: Qwen3.8 27B (free)",
+                "attachment": true,
+                "tool_call": true,
+                "modalities": {
+                  "input": [
+                    "text",
+                    "image",
+                    "video"
+                  ],
+                  "output": [
+                    "text"
+                  ]
+                },
+                "reasoning": true,
+                "limit": {
+                  "context": 262144,
+                  "output": 235929
+                }
+              },
+              "liquid/lfm-2.5-2.6b:free": {
+                "name": "LiquidAI: LFM2.5-2.6B (free)",
+                "attachment": false,
+                "tool_call": true,
+                "modalities": {
+                  "input": [
+                    "text"
+                  ],
+                  "output": [
+                    "text"
+                  ]
+                },
+                "reasoning": true,
+                "limit": {
+                  "context": 65536,
+                  "output": 8192
+                }
+              },
+              "nvidia/nemotron-3.5-lightning:free": {
+                "name": "NVIDIA: Nemotron 3.5 Lightning (free)",
+                "attachment": false,
+                "tool_call": true,
+                "modalities": {
+                  "input": [
+                    "text"
+                  ],
+                  "output": [
+                    "text"
+                  ]
+                },
+                "reasoning": true,
+                "limit": {
+                  "context": 1000000,
+                  "output": 65536
+                }
+              },
+              "thinkingmachines/inkling-small:free": {
+                "name": "Thinking Machines: Inkling Small (free)",
+                "attachment": true,
+                "tool_call": true,
+                "modalities": {
+                  "input": [
+                    "text",
+                    "image",
+                    "audio"
+                  ],
+                  "output": [
+                    "text"
+                  ]
+                },
+                "reasoning": true,
+                "limit": {
+                  "context": 1048576,
+                  "output": 262144
+                }
+              },
+              "poolside/laguna-xs-2.1:free": {
+                "name": "Poolside: Laguna XS 2.1 (free)",
+                "attachment": false,
+                "tool_call": true,
+                "modalities": {
+                  "input": [
+                    "text"
+                  ],
+                  "output": [
+                    "text"
+                  ]
+                },
+                "reasoning": true,
+                "limit": {
+                  "context": 262144,
+                  "output": 32768
+                }
+              },
+              "cohere/north-mini-code:free": {
+                "name": "Cohere: North Mini Code (free)",
+                "attachment": false,
+                "tool_call": true,
+                "modalities": {
+                  "input": [
+                    "text"
+                  ],
+                  "output": [
+                    "text"
+                  ]
+                },
+                "reasoning": true,
+                "limit": {
+                  "context": 256000,
+                  "output": 64000
+                }
+              },
+              "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free": {
+                "name": "NVIDIA: Nemotron 3 Nano Omni (free)",
+                "attachment": true,
+                "tool_call": true,
+                "modalities": {
+                  "input": [
+                    "text",
+                    "image",
+                    "audio",
+                    "video"
+                  ],
+                  "output": [
+                    "text"
+                  ]
+                },
+                "reasoning": true,
+                "limit": {
+                  "context": 256000,
+                  "output": 65536
+                }
+              },
+              "nvidia/nemotron-3-super-120b-a12b:free": {
+                "name": "NVIDIA: Nemotron 3 Super (free)",
+                "attachment": false,
+                "tool_call": true,
+                "modalities": {
+                  "input": [
+                    "text"
+                  ],
+                  "output": [
+                    "text"
+                  ]
+                },
+                "reasoning": true,
+                "limit": {
+                  "context": 262144,
+                  "output": 235929
+                }
+              },
+              "openrouter/free": {
+                "name": "OpenRouter Free Models Router",
+                "attachment": true,
+                "tool_call": true,
+                "modalities": {
+                  "input": [
+                    "text",
+                    "image"
+                  ],
+                  "output": [
+                    "text"
+                  ]
+                },
+                "reasoning": true,
+                "limit": {
+                  "context": 200000,
+                  "output": 32768
+                }
+              },
+              "stepfun/step-3.7-flash:free": {
+                "name": "StepFun: Step 3.7 Flash (free)",
+                "attachment": true,
+                "tool_call": true,
+                "modalities": {
+                  "input": [
+                    "text",
+                    "image"
+                  ],
+                  "output": [
+                    "text"
+                  ]
+                },
+                "reasoning": true,
+                "limit": {
+                  "context": 262144,
+                  "output": 262144
+                }
+              }
+            }
+          }
+        },
+        "mcp": {},
+        "plugin": [
+          "superpowers@git+https://github.com/obra/superpowers.git#v6.4.2"
+        ]
+      },
+      "settings": {
+        "responseStreamingMode": "draft"
+      },
+      "extensions": [
+        {
+          "id": "plugin:superpowers",
+          "name": "Superpowers",
+          "kind": "plugin",
+          "purpose": "Reusable planning, debugging, testing, and software-development skills for OpenCode.",
+          "authType": "none",
+          "credentialSchemas": [],
+          "resource": {
+            "kind": "plugin",
+            "specifier": "superpowers@git+https://github.com/obra/superpowers.git#v6.4.2"
+          }
+        }
+      ],
+      "mcp": [],
+      "integrations": {},
+      "providerFreePolicies": {}
+    },
+    "skills": [],
+    "actions": [],
+    "catalog": {
+      "entries": [
+        {
+          "providerID": "free-kilo",
+          "providerName": "Kilo Gateway Anonymous",
+          "modelID": "cohere/north-mini-code:free",
+          "modelName": "Cohere: North Mini Code (free)",
+          "capabilities": {
+            "modalities": {
+              "input": {
+                "text": true,
+                "image": false,
+                "audio": false,
+                "video": false,
+                "pdf": false
+              },
+              "output": {
+                "text": true,
+                "image": false,
+                "audio": false,
+                "video": false,
+                "pdf": false
+              }
+            },
+            "operations": {
+              "chat": true,
+              "imageGenerate": false,
+              "imageEdit": false,
+              "speechToText": "unknown",
+              "textToSpeech": "unknown",
+              "videoGenerate": false,
+              "embeddings": "unknown"
+            },
+            "agent": {
+              "toolCalling": true,
+              "reasoning": true,
+              "structuredOutput": "unknown"
+            },
+            "traits": {
+              "codingOptimized": "unknown"
+            }
+          },
+          "execution": {
+            "nativeAudioFileInput": "unknown",
+            "nativeAudioMimeTypes": []
+          },
+          "capabilityDetection": {
+            "source": "model-catalog",
+            "confidence": "high"
+          },
+          "origin": "opencode-runtime",
+          "agentReadiness": {
+            "state": "ready",
+            "source": "provider-metadata"
+          },
+          "availability": "available"
+        },
+        {
+          "providerID": "free-kilo",
+          "providerName": "Kilo Gateway Anonymous",
+          "modelID": "dots-studio/dots-3-note-preview:free",
+          "modelName": "Dots Studio: Dots3-Note Preview (free)",
+          "capabilities": {
+            "modalities": {
+              "input": {
+                "text": true,
+                "image": true,
+                "audio": false,
+                "video": false,
+                "pdf": false
+              },
+              "output": {
+                "text": true,
+                "image": false,
+                "audio": false,
+                "video": false,
+                "pdf": false
+              }
+            },
+            "operations": {
+              "chat": true,
+              "imageGenerate": false,
+              "imageEdit": false,
+              "speechToText": "unknown",
+              "textToSpeech": "unknown",
+              "videoGenerate": false,
+              "embeddings": "unknown"
+            },
+            "agent": {
+              "toolCalling": true,
+              "reasoning": true,
+              "structuredOutput": "unknown"
+            },
+            "traits": {
+              "codingOptimized": "unknown"
+            }
+          },
+          "execution": {
+            "nativeAudioFileInput": "unknown",
+            "nativeAudioMimeTypes": []
+          },
+          "capabilityDetection": {
+            "source": "model-catalog",
+            "confidence": "high"
+          },
+          "origin": "opencode-runtime",
+          "agentReadiness": {
+            "state": "ready",
+            "source": "provider-metadata"
+          },
+          "availability": "available"
+        },
+        {
+          "providerID": "free-kilo",
+          "providerName": "Kilo Gateway Anonymous",
+          "modelID": "inclusionai/ling-3.0-flash-sante:free",
+          "modelName": "inclusionAI: Ling 3.0 Flash Sante (free)",
+          "capabilities": {
+            "modalities": {
+              "input": {
+                "text": true,
+                "image": false,
+                "audio": false,
+                "video": false,
+                "pdf": false
+              },
+              "output": {
+                "text": true,
+                "image": false,
+                "audio": false,
+                "video": false,
+                "pdf": false
+              }
+            },
+            "operations": {
+              "chat": true,
+              "imageGenerate": false,
+              "imageEdit": false,
+              "speechToText": "unknown",
+              "textToSpeech": "unknown",
+              "videoGenerate": false,
+              "embeddings": "unknown"
+            },
+            "agent": {
+              "toolCalling": true,
+              "reasoning": true,
+              "structuredOutput": "unknown"
+            },
+            "traits": {
+              "codingOptimized": "unknown"
+            }
+          },
+          "execution": {
+            "nativeAudioFileInput": "unknown",
+            "nativeAudioMimeTypes": []
+          },
+          "capabilityDetection": {
+            "source": "model-catalog",
+            "confidence": "high"
+          },
+          "origin": "opencode-runtime",
+          "agentReadiness": {
+            "state": "ready",
+            "source": "provider-metadata"
+          },
+          "availability": "available"
+        },
+        {
+          "providerID": "free-kilo",
+          "providerName": "Kilo Gateway Anonymous",
+          "modelID": "kilo-auto/free",
+          "modelName": "Auto Free",
+          "capabilities": {
+            "modalities": {
+              "input": {
+                "text": true,
+                "image": false,
+                "audio": false,
+                "video": false,
+                "pdf": false
+              },
+              "output": {
+                "text": true,
+                "image": false,
+                "audio": false,
+                "video": false,
+                "pdf": false
+              }
+            },
+            "operations": {
+              "chat": true,
+              "imageGenerate": false,
+              "imageEdit": false,
+              "speechToText": "unknown",
+              "textToSpeech": "unknown",
+              "videoGenerate": false,
+              "embeddings": "unknown"
+            },
+            "agent": {
+              "toolCalling": true,
+              "reasoning": true,
+              "structuredOutput": "unknown"
+            },
+            "traits": {
+              "codingOptimized": "unknown"
+            }
+          },
+          "execution": {
+            "nativeAudioFileInput": "unknown",
+            "nativeAudioMimeTypes": []
+          },
+          "capabilityDetection": {
+            "source": "model-catalog",
+            "confidence": "high"
+          },
+          "origin": "opencode-runtime",
+          "agentReadiness": {
+            "state": "ready",
+            "source": "provider-metadata"
+          },
+          "availability": "available"
+        },
+        {
+          "providerID": "free-kilo",
+          "providerName": "Kilo Gateway Anonymous",
+          "modelID": "liquid/lfm-2.5-2.6b:free",
+          "modelName": "LiquidAI: LFM2.5-2.6B (free)",
+          "capabilities": {
+            "modalities": {
+              "input": {
+                "text": true,
+                "image": false,
+                "audio": false,
+                "video": false,
+                "pdf": false
+              },
+              "output": {
+                "text": true,
+                "image": false,
+                "audio": false,
+                "video": false,
+                "pdf": false
+              }
+            },
+            "operations": {
+              "chat": true,
+              "imageGenerate": false,
+              "imageEdit": false,
+              "speechToText": "unknown",
+              "textToSpeech": "unknown",
+              "videoGenerate": false,
+              "embeddings": "unknown"
+            },
+            "agent": {
+              "toolCalling": true,
+              "reasoning": true,
+              "structuredOutput": "unknown"
+            },
+            "traits": {
+              "codingOptimized": "unknown"
+            }
+          },
+          "execution": {
+            "nativeAudioFileInput": "unknown",
+            "nativeAudioMimeTypes": []
+          },
+          "capabilityDetection": {
+            "source": "model-catalog",
+            "confidence": "high"
+          },
+          "origin": "opencode-runtime",
+          "agentReadiness": {
+            "state": "ready",
+            "source": "provider-metadata"
+          },
+          "availability": "available"
+        },
+        {
+          "providerID": "free-kilo",
+          "providerName": "Kilo Gateway Anonymous",
+          "modelID": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+          "modelName": "NVIDIA: Nemotron 3 Nano Omni (free)",
+          "capabilities": {
+            "modalities": {
+              "input": {
+                "text": true,
+                "image": true,
+                "audio": true,
+                "video": true,
+                "pdf": false
+              },
+              "output": {
+                "text": true,
+                "image": false,
+                "audio": false,
+                "video": false,
+                "pdf": false
+              }
+            },
+            "operations": {
+              "chat": true,
+              "imageGenerate": false,
+              "imageEdit": false,
+              "speechToText": "unknown",
+              "textToSpeech": "unknown",
+              "videoGenerate": false,
+              "embeddings": "unknown"
+            },
+            "agent": {
+              "toolCalling": true,
+              "reasoning": true,
+              "structuredOutput": "unknown"
+            },
+            "traits": {
+              "codingOptimized": "unknown"
+            }
+          },
+          "execution": {
+            "nativeAudioFileInput": "unknown",
+            "nativeAudioMimeTypes": []
+          },
+          "capabilityDetection": {
+            "source": "model-catalog",
+            "confidence": "high"
+          },
+          "origin": "opencode-runtime",
+          "agentReadiness": {
+            "state": "ready",
+            "source": "provider-metadata"
+          },
+          "availability": "available"
+        },
+        {
+          "providerID": "free-kilo",
+          "providerName": "Kilo Gateway Anonymous",
+          "modelID": "nvidia/nemotron-3-super-120b-a12b:free",
+          "modelName": "NVIDIA: Nemotron 3 Super (free)",
+          "capabilities": {
+            "modalities": {
+              "input": {
+                "text": true,
+                "image": false,
+                "audio": false,
+                "video": false,
+                "pdf": false
+              },
+              "output": {
+                "text": true,
+                "image": false,
+                "audio": false,
+                "video": false,
+                "pdf": false
+              }
+            },
+            "operations": {
+              "chat": true,
+              "imageGenerate": false,
+              "imageEdit": false,
+              "speechToText": "unknown",
+              "textToSpeech": "unknown",
+              "videoGenerate": false,
+              "embeddings": "unknown"
+            },
+            "agent": {
+              "toolCalling": true,
+              "reasoning": true,
+              "structuredOutput": "unknown"
+            },
+            "traits": {
+              "codingOptimized": "unknown"
+            }
+          },
+          "execution": {
+            "nativeAudioFileInput": "unknown",
+            "nativeAudioMimeTypes": []
+          },
+          "capabilityDetection": {
+            "source": "model-catalog",
+            "confidence": "high"
+          },
+          "origin": "opencode-runtime",
+          "agentReadiness": {
+            "state": "ready",
+            "source": "provider-metadata"
+          },
+          "availability": "available"
+        },
+        {
+          "providerID": "free-kilo",
+          "providerName": "Kilo Gateway Anonymous",
+          "modelID": "nvidia/nemotron-3-ultra-550b-a55b:free",
+          "modelName": "NVIDIA: Nemotron 3 Ultra (free)",
+          "capabilities": {
+            "modalities": {
+              "input": {
+                "text": true,
+                "image": false,
+                "audio": false,
+                "video": false,
+                "pdf": false
+              },
+              "output": {
+                "text": true,
+                "image": false,
+                "audio": false,
+                "video": false,
+                "pdf": false
+              }
+            },
+            "operations": {
+              "chat": true,
+              "imageGenerate": false,
+              "imageEdit": false,
+              "speechToText": "unknown",
+              "textToSpeech": "unknown",
+              "videoGenerate": false,
+              "embeddings": "unknown"
+            },
+            "agent": {
+              "toolCalling": true,
+              "reasoning": true,
+              "structuredOutput": "unknown"
+            },
+            "traits": {
+              "codingOptimized": "unknown"
+            }
+          },
+          "execution": {
+            "nativeAudioFileInput": "unknown",
+            "nativeAudioMimeTypes": []
+          },
+          "capabilityDetection": {
+            "source": "model-catalog",
+            "confidence": "high"
+          },
+          "origin": "opencode-runtime",
+          "agentReadiness": {
+            "state": "ready",
+            "source": "provider-metadata"
+          },
+          "availability": "available"
+        },
+        {
+          "providerID": "free-kilo",
+          "providerName": "Kilo Gateway Anonymous",
+          "modelID": "nvidia/nemotron-3.5-lightning:free",
+          "modelName": "NVIDIA: Nemotron 3.5 Lightning (free)",
+          "capabilities": {
+            "modalities": {
+              "input": {
+                "text": true,
+                "image": false,
+                "audio": false,
+                "video": false,
+                "pdf": false
+              },
+              "output": {
+                "text": true,
+                "image": false,
+                "audio": false,
+                "video": false,
+                "pdf": false
+              }
+            },
+            "operations": {
+              "chat": true,
+              "imageGenerate": false,
+              "imageEdit": false,
+              "speechToText": "unknown",
+              "textToSpeech": "unknown",
+              "videoGenerate": false,
+              "embeddings": "unknown"
+            },
+            "agent": {
+              "toolCalling": true,
+              "reasoning": true,
+              "structuredOutput": "unknown"
+            },
+            "traits": {
+              "codingOptimized": "unknown"
+            }
+          },
+          "execution": {
+            "nativeAudioFileInput": "unknown",
+            "nativeAudioMimeTypes": []
+          },
+          "capabilityDetection": {
+            "source": "model-catalog",
+            "confidence": "high"
+          },
+          "origin": "opencode-runtime",
+          "agentReadiness": {
+            "state": "ready",
+            "source": "provider-metadata"
+          },
+          "availability": "available"
+        },
+        {
+          "providerID": "free-kilo",
+          "providerName": "Kilo Gateway Anonymous",
+          "modelID": "openrouter/free",
+          "modelName": "OpenRouter Free Models Router",
+          "capabilities": {
+            "modalities": {
+              "input": {
+                "text": true,
+                "image": true,
+                "audio": false,
+                "video": false,
+                "pdf": false
+              },
+              "output": {
+                "text": true,
+                "image": false,
+                "audio": false,
+                "video": false,
+                "pdf": false
+              }
+            },
+            "operations": {
+              "chat": true,
+              "imageGenerate": false,
+              "imageEdit": false,
+              "speechToText": "unknown",
+              "textToSpeech": "unknown",
+              "videoGenerate": false,
+              "embeddings": "unknown"
+            },
+            "agent": {
+              "toolCalling": true,
+              "reasoning": true,
+              "structuredOutput": "unknown"
+            },
+            "traits": {
+              "codingOptimized": "unknown"
+            }
+          },
+          "execution": {
+            "nativeAudioFileInput": "unknown",
+            "nativeAudioMimeTypes": []
+          },
+          "capabilityDetection": {
+            "source": "model-catalog",
+            "confidence": "high"
+          },
+          "origin": "opencode-runtime",
+          "agentReadiness": {
+            "state": "ready",
+            "source": "provider-metadata"
+          },
+          "availability": "available"
+        },
+        {
+          "providerID": "free-kilo",
+          "providerName": "Kilo Gateway Anonymous",
+          "modelID": "poolside/laguna-s-2.1:free",
+          "modelName": "Poolside: Laguna S 2.1 (free)",
+          "capabilities": {
+            "modalities": {
+              "input": {
+                "text": true,
+                "image": false,
+                "audio": false,
+                "video": false,
+                "pdf": false
+              },
+              "output": {
+                "text": true,
+                "image": false,
+                "audio": false,
+                "video": false,
+                "pdf": false
+              }
+            },
+            "operations": {
+              "chat": true,
+              "imageGenerate": false,
+              "imageEdit": false,
+              "speechToText": "unknown",
+              "textToSpeech": "unknown",
+              "videoGenerate": false,
+              "embeddings": "unknown"
+            },
+            "agent": {
+              "toolCalling": true,
+              "reasoning": true,
+              "structuredOutput": "unknown"
+            },
+            "traits": {
+              "codingOptimized": "unknown"
+            }
+          },
+          "execution": {
+            "nativeAudioFileInput": "unknown",
+            "nativeAudioMimeTypes": []
+          },
+          "capabilityDetection": {
+            "source": "model-catalog",
+            "confidence": "high"
+          },
+          "origin": "opencode-runtime",
+          "agentReadiness": {
+            "state": "ready",
+            "source": "provider-metadata"
+          },
+          "availability": "available"
+        },
+        {
+          "providerID": "free-kilo",
+          "providerName": "Kilo Gateway Anonymous",
+          "modelID": "poolside/laguna-xs-2.1:free",
+          "modelName": "Poolside: Laguna XS 2.1 (free)",
+          "capabilities": {
+            "modalities": {
+              "input": {
+                "text": true,
+                "image": false,
+                "audio": false,
+                "video": false,
+                "pdf": false
+              },
+              "output": {
+                "text": true,
+                "image": false,
+                "audio": false,
+                "video": false,
+                "pdf": false
+              }
+            },
+            "operations": {
+              "chat": true,
+              "imageGenerate": false,
+              "imageEdit": false,
+              "speechToText": "unknown",
+              "textToSpeech": "unknown",
+              "videoGenerate": false,
+              "embeddings": "unknown"
+            },
+            "agent": {
+              "toolCalling": true,
+              "reasoning": true,
+              "structuredOutput": "unknown"
+            },
+            "traits": {
+              "codingOptimized": "unknown"
+            }
+          },
+          "execution": {
+            "nativeAudioFileInput": "unknown",
+            "nativeAudioMimeTypes": []
+          },
+          "capabilityDetection": {
+            "source": "model-catalog",
+            "confidence": "high"
+          },
+          "origin": "opencode-runtime",
+          "agentReadiness": {
+            "state": "ready",
+            "source": "provider-metadata"
+          },
+          "availability": "available"
+        },
+        {
+          "providerID": "free-kilo",
+          "providerName": "Kilo Gateway Anonymous",
+          "modelID": "qwen/qwen3.8-27b:free",
+          "modelName": "Qwen: Qwen3.8 27B (free)",
+          "capabilities": {
+            "modalities": {
+              "input": {
+                "text": true,
+                "image": true,
+                "audio": false,
+                "video": true,
+                "pdf": false
+              },
+              "output": {
+                "text": true,
+                "image": false,
+                "audio": false,
+                "video": false,
+                "pdf": false
+              }
+            },
+            "operations": {
+              "chat": true,
+              "imageGenerate": false,
+              "imageEdit": false,
+              "speechToText": "unknown",
+              "textToSpeech": "unknown",
+              "videoGenerate": false,
+              "embeddings": "unknown"
+            },
+            "agent": {
+              "toolCalling": true,
+              "reasoning": true,
+              "structuredOutput": "unknown"
+            },
+            "traits": {
+              "codingOptimized": "unknown"
+            }
+          },
+          "execution": {
+            "nativeAudioFileInput": "unknown",
+            "nativeAudioMimeTypes": []
+          },
+          "capabilityDetection": {
+            "source": "model-catalog",
+            "confidence": "high"
+          },
+          "origin": "opencode-runtime",
+          "agentReadiness": {
+            "state": "ready",
+            "source": "provider-metadata"
+          },
+          "availability": "available"
+        },
+        {
+          "providerID": "free-kilo",
+          "providerName": "Kilo Gateway Anonymous",
+          "modelID": "stealth/space-bunny-alpha",
+          "modelName": "Space Bunny Alpha",
+          "capabilities": {
+            "modalities": {
+              "input": {
+                "text": true,
+                "image": true,
+                "audio": false,
+                "video": true,
+                "pdf": false
+              },
+              "output": {
+                "text": true,
+                "image": false,
+                "audio": false,
+                "video": false,
+                "pdf": false
+              }
+            },
+            "operations": {
+              "chat": true,
+              "imageGenerate": false,
+              "imageEdit": false,
+              "speechToText": "unknown",
+              "textToSpeech": "unknown",
+              "videoGenerate": false,
+              "embeddings": "unknown"
+            },
+            "agent": {
+              "toolCalling": true,
+              "reasoning": true,
+              "structuredOutput": "unknown"
+            },
+            "traits": {
+              "codingOptimized": "unknown"
+            }
+          },
+          "execution": {
+            "nativeAudioFileInput": "unknown",
+            "nativeAudioMimeTypes": []
+          },
+          "capabilityDetection": {
+            "source": "model-catalog",
+            "confidence": "high"
+          },
+          "origin": "opencode-runtime",
+          "agentReadiness": {
+            "state": "ready",
+            "source": "provider-metadata"
+          },
+          "availability": "available"
+        },
+        {
+          "providerID": "free-kilo",
+          "providerName": "Kilo Gateway Anonymous",
+          "modelID": "stepfun/step-3.7-flash:free",
+          "modelName": "StepFun: Step 3.7 Flash (free)",
+          "capabilities": {
+            "modalities": {
+              "input": {
+                "text": true,
+                "image": true,
+                "audio": false,
+                "video": false,
+                "pdf": false
+              },
+              "output": {
+                "text": true,
+                "image": false,
+                "audio": false,
+                "video": false,
+                "pdf": false
+              }
+            },
+            "operations": {
+              "chat": true,
+              "imageGenerate": false,
+              "imageEdit": false,
+              "speechToText": "unknown",
+              "textToSpeech": "unknown",
+              "videoGenerate": false,
+              "embeddings": "unknown"
+            },
+            "agent": {
+              "toolCalling": true,
+              "reasoning": true,
+              "structuredOutput": "unknown"
+            },
+            "traits": {
+              "codingOptimized": "unknown"
+            }
+          },
+          "execution": {
+            "nativeAudioFileInput": "unknown",
+            "nativeAudioMimeTypes": []
+          },
+          "capabilityDetection": {
+            "source": "model-catalog",
+            "confidence": "high"
+          },
+          "origin": "opencode-runtime",
+          "agentReadiness": {
+            "state": "ready",
+            "source": "provider-metadata"
+          },
+          "availability": "available"
+        },
+        {
+          "providerID": "free-kilo",
+          "providerName": "Kilo Gateway Anonymous",
+          "modelID": "thinkingmachines/inkling-small:free",
+          "modelName": "Thinking Machines: Inkling Small (free)",
+          "capabilities": {
+            "modalities": {
+              "input": {
+                "text": true,
+                "image": true,
+                "audio": true,
+                "video": false,
+                "pdf": false
+              },
+              "output": {
+                "text": true,
+                "image": false,
+                "audio": false,
+                "video": false,
+                "pdf": false
+              }
+            },
+            "operations": {
+              "chat": true,
+              "imageGenerate": false,
+              "imageEdit": false,
+              "speechToText": "unknown",
+              "textToSpeech": "unknown",
+              "videoGenerate": false,
+              "embeddings": "unknown"
+            },
+            "agent": {
+              "toolCalling": true,
+              "reasoning": true,
+              "structuredOutput": "unknown"
+            },
+            "traits": {
+              "codingOptimized": "unknown"
+            }
+          },
+          "execution": {
+            "nativeAudioFileInput": "unknown",
+            "nativeAudioMimeTypes": []
+          },
+          "capabilityDetection": {
+            "source": "model-catalog",
+            "confidence": "high"
+          },
+          "origin": "opencode-runtime",
+          "agentReadiness": {
+            "state": "ready",
+            "source": "provider-metadata"
+          },
+          "availability": "available"
+        },
+        {
+          "providerID": "soak",
+          "providerName": "Soak Stub",
+          "modelID": "soak-model",
+          "modelName": "soak-model",
+          "capabilities": {
+            "modalities": {
+              "input": {
+                "text": true,
+                "image": true,
+                "audio": false,
+                "video": false,
+                "pdf": false
+              },
+              "output": {
+                "text": true,
+                "image": false,
+                "audio": false,
+                "video": false,
+                "pdf": false
+              }
+            },
+            "operations": {
+              "chat": true,
+              "imageGenerate": false,
+              "imageEdit": false,
+              "speechToText": "unknown",
+              "textToSpeech": "unknown",
+              "videoGenerate": false,
+              "embeddings": "unknown"
+            },
+            "agent": {
+              "toolCalling": true,
+              "reasoning": "unknown",
+              "structuredOutput": "unknown"
+            },
+            "traits": {
+              "codingOptimized": "unknown"
+            }
+          },
+          "execution": {
+            "nativeAudioFileInput": "unknown",
+            "nativeAudioMimeTypes": []
+          },
+          "capabilityDetection": {
+            "source": "model-catalog",
+            "confidence": "high"
+          },
+          "origin": "custom-provider",
+          "agentReadiness": {
+            "state": "ready",
+            "source": "live-probe"
+          },
+          "availability": "available"
+        }
+      ],
+      "publicProviders": [
+        {
+          "id": "kilo-anonymous",
+          "runtimeId": "free-kilo",
+          "name": "Kilo Gateway Anonymous",
+          "status": "verified",
+          "integration": "direct-openai",
+          "enabledByDefault": true,
+          "auth": {
+            "mode": "none",
+            "userCredentialRequired": false
+          },
+          "models": [
+            {
+              "id": "kilo-auto/free",
+              "name": "Auto Free",
+              "context": 256000,
+              "output": 32768,
+              "toolCall": true,
+              "reasoning": true,
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            },
+            {
+              "id": "stealth/space-bunny-alpha",
+              "name": "Space Bunny Alpha",
+              "context": 1000000,
+              "output": 524288,
+              "toolCall": true,
+              "reasoning": true,
+              "modalities": {
+                "input": [
+                  "text",
+                  "image",
+                  "video"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            },
+            {
+              "id": "poolside/laguna-s-2.1:free",
+              "name": "Poolside: Laguna S 2.1 (free)",
+              "context": 262144,
+              "output": 32768,
+              "toolCall": true,
+              "reasoning": true,
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            },
+            {
+              "id": "nvidia/nemotron-3-ultra-550b-a55b:free",
+              "name": "NVIDIA: Nemotron 3 Ultra (free)",
+              "context": 1000000,
+              "output": 65536,
+              "toolCall": true,
+              "reasoning": true,
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            },
+            {
+              "id": "dots-studio/dots-3-note-preview:free",
+              "name": "Dots Studio: Dots3-Note Preview (free)",
+              "context": 512000,
+              "output": 460800,
+              "toolCall": true,
+              "reasoning": true,
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            },
+            {
+              "id": "inclusionai/ling-3.0-flash-sante:free",
+              "name": "inclusionAI: Ling 3.0 Flash Sante (free)",
+              "context": 262144,
+              "output": 32768,
+              "toolCall": true,
+              "reasoning": true,
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            },
+            {
+              "id": "qwen/qwen3.8-27b:free",
+              "name": "Qwen: Qwen3.8 27B (free)",
+              "context": 262144,
+              "output": 235929,
+              "toolCall": true,
+              "reasoning": true,
+              "modalities": {
+                "input": [
+                  "text",
+                  "image",
+                  "video"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            },
+            {
+              "id": "liquid/lfm-2.5-2.6b:free",
+              "name": "LiquidAI: LFM2.5-2.6B (free)",
+              "context": 65536,
+              "output": 8192,
+              "toolCall": true,
+              "reasoning": true,
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            },
+            {
+              "id": "nvidia/nemotron-3.5-lightning:free",
+              "name": "NVIDIA: Nemotron 3.5 Lightning (free)",
+              "context": 1000000,
+              "output": 65536,
+              "toolCall": true,
+              "reasoning": true,
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            },
+            {
+              "id": "thinkingmachines/inkling-small:free",
+              "name": "Thinking Machines: Inkling Small (free)",
+              "context": 1048576,
+              "output": 262144,
+              "toolCall": true,
+              "reasoning": true,
+              "modalities": {
+                "input": [
+                  "text",
+                  "image",
+                  "audio"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            },
+            {
+              "id": "poolside/laguna-xs-2.1:free",
+              "name": "Poolside: Laguna XS 2.1 (free)",
+              "context": 262144,
+              "output": 32768,
+              "toolCall": true,
+              "reasoning": true,
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            },
+            {
+              "id": "cohere/north-mini-code:free",
+              "name": "Cohere: North Mini Code (free)",
+              "context": 256000,
+              "output": 64000,
+              "toolCall": true,
+              "reasoning": true,
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            },
+            {
+              "id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+              "name": "NVIDIA: Nemotron 3 Nano Omni (free)",
+              "context": 256000,
+              "output": 65536,
+              "toolCall": true,
+              "reasoning": true,
+              "modalities": {
+                "input": [
+                  "text",
+                  "image",
+                  "audio",
+                  "video"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            },
+            {
+              "id": "nvidia/nemotron-3-super-120b-a12b:free",
+              "name": "NVIDIA: Nemotron 3 Super (free)",
+              "context": 262144,
+              "output": 235929,
+              "toolCall": true,
+              "reasoning": true,
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            },
+            {
+              "id": "openrouter/free",
+              "name": "OpenRouter Free Models Router",
+              "context": 200000,
+              "output": 32768,
+              "toolCall": true,
+              "reasoning": true,
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            },
+            {
+              "id": "stepfun/step-3.7-flash:free",
+              "name": "StepFun: Step 3.7 Flash (free)",
+              "context": 262144,
+              "output": 262144,
+              "toolCall": true,
+              "reasoning": true,
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "ovh-anonymous",
+          "runtimeId": "free-ovh",
+          "name": "OVHcloud AI Endpoints (Anonymous)",
+          "status": "disabled",
+          "integration": "direct-openai",
+          "enabledByDefault": false,
+          "auth": {
+            "mode": "none",
+            "userCredentialRequired": false
+          },
+          "models": [
+            {
+              "id": "Qwen3.8-27B",
+              "name": "Qwen3.8 27B",
+              "context": 262144,
+              "output": 262144,
+              "toolCall": true,
+              "reasoning": true,
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            },
+            {
+              "id": "Qwen3.6-27B",
+              "name": "Qwen3.6 27B",
+              "context": 262144,
+              "output": 262144,
+              "toolCall": true,
+              "reasoning": true,
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            },
+            {
+              "id": "Qwen3.5-397B-A17B",
+              "name": "Qwen3.5 397B A17B",
+              "context": 262144,
+              "output": 262144,
+              "toolCall": true,
+              "reasoning": true,
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            },
+            {
+              "id": "Qwen3.5-9B",
+              "name": "Qwen3.5 9B",
+              "context": 262144,
+              "output": 262144,
+              "toolCall": true,
+              "reasoning": true,
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            },
+            {
+              "id": "Qwen3-Coder-30B-A3B-Instruct",
+              "name": "Qwen3 Coder 30B A3B Instruct",
+              "context": 262144,
+              "output": 262144,
+              "toolCall": true,
+              "reasoning": true,
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            },
+            {
+              "id": "Meta-Llama-3_3-70B-Instruct",
+              "name": "Llama 3.3 70B Instruct",
+              "context": 131072,
+              "output": 131072,
+              "toolCall": true,
+              "reasoning": false,
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            },
+            {
+              "id": "Mistral-Small-3.2-24B-Instruct-2506",
+              "name": "Mistral Small 3.2 24B Instruct",
+              "context": 131072,
+              "output": 131072,
+              "toolCall": true,
+              "reasoning": false,
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            },
+            {
+              "id": "gpt-oss-120b",
+              "name": "GPT-OSS 120B",
+              "context": 131072,
+              "output": 131072,
+              "toolCall": true,
+              "reasoning": true,
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            },
+            {
+              "id": "gpt-oss-20b",
+              "name": "GPT-OSS 20B",
+              "context": 131072,
+              "output": 131072,
+              "toolCall": true,
+              "reasoning": true,
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            },
+            {
+              "id": "Qwen2.5-VL-72B-Instruct",
+              "name": "Qwen2.5 VL 72B Instruct",
+              "context": 32768,
+              "output": 32768,
+              "toolCall": false,
+              "reasoning": false,
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            },
+            {
+              "id": "Mistral-7B-Instruct-v0.3",
+              "name": "Mistral 7B Instruct v0.3",
+              "context": 65536,
+              "output": 65536,
+              "toolCall": false,
+              "reasoning": false,
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            },
+            {
+              "id": "Mistral-Nemo-Instruct-2407",
+              "name": "Mistral Nemo Instruct 2407",
+              "context": 65536,
+              "output": 65536,
+              "toolCall": false,
+              "reasoning": false,
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "gemini-web-guest",
+          "runtimeId": "gemini-web-guest",
+          "name": "Gemini Web Guest Bridge",
+          "status": "adapter-required",
+          "integration": "self-hosted-bridge",
+          "enabledByDefault": false,
+          "auth": {
+            "mode": "none",
+            "userCredentialRequired": false
+          },
+          "models": [
+            {
+              "id": "gemini-3.6-flash",
+              "name": "Gemini 3.6 Flash",
+              "toolCall": true,
+              "reasoning": true,
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            },
+            {
+              "id": "gemini-3.5-flash-lite",
+              "name": "Gemini 3.5 Flash-Lite",
+              "toolCall": true,
+              "reasoning": true,
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            },
+            {
+              "id": "gemini-3.1-pro",
+              "name": "Gemini 3.1 Pro",
+              "toolCall": true,
+              "reasoning": true,
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "duckduckgo-web",
+          "runtimeId": "duckduckgo-web",
+          "name": "Duck.ai Anonymous",
+          "status": "adapter-required",
+          "integration": "specialized-web",
+          "enabledByDefault": false,
+          "auth": {
+            "mode": "none",
+            "userCredentialRequired": false
+          },
+          "models": [
+            {
+              "id": "gpt-5.4-mini",
+              "name": "GPT-5.4 Mini",
+              "toolCall": false,
+              "reasoning": false,
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            },
+            {
+              "id": "claude-haiku-4-5",
+              "name": "Claude 4.5 Haiku",
+              "toolCall": false,
+              "reasoning": false,
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            },
+            {
+              "id": "mistral-small-2603",
+              "name": "Mistral Small 4",
+              "toolCall": false,
+              "reasoning": false,
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            },
+            {
+              "id": "tinfoil/gpt-oss-120b",
+              "name": "GPT-OSS 120B",
+              "toolCall": false,
+              "reasoning": false,
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            },
+            {
+              "id": "tinfoil/gemma4-31b",
+              "name": "Gemma 4 31B",
+              "toolCall": false,
+              "reasoning": false,
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "cloudflare-playground",
+          "runtimeId": "cloudflare-playground",
+          "name": "Cloudflare AI Playground",
+          "status": "adapter-required",
+          "integration": "browser-websocket",
+          "enabledByDefault": false,
+          "auth": {
+            "mode": "none",
+            "userCredentialRequired": false
+          },
+          "models": []
+        }
+      ],
+      "customProviders": {
+        "providers": [
+          {
+            "id": "soak",
+            "name": "Soak Stub",
+            "models": [
+              {
+                "id": "soak-model",
+                "name": "soak-model",
+                "toolCall": true,
+                "toolCallVerified": true
+              }
+            ],
+            "capability": "general",
+            "credentialId": "api-key"
+          }
+        ]
+      },
+      "imageAi": {},
+      "modelPreferences": {}
+    },
+    "defaults": {
+      "topicDefaults": {
+        "compactOutputMode": false,
+        "showThinkingContent": true,
+        "responseStreamingMode": "draft",
+        "messageFormatMode": "markdown",
+        "showAssistantRunFooter": true,
+        "sendDiffFileAttachments": true,
+        "promptQueueEnabled": false
+      },
+      "defaultCapabilityModels": {},
+      "aiRoles": {}
+    },
+    "credentialReferences": [
+      {
+        "id": "400494ee81c090204cd27aafab54be4ee9272b0b9786bea701c85e32380687dd",
+        "extensionId": "model-provider:soak",
+        "credentialId": "api-key",
+        "configured": true,
+        "missing": false
+      },
+      {
+        "id": "400494ee81c090204cd27aafab54be4ee9272b0b9786bea701c85e32380687dd",
+        "extensionId": "model-provider:soak",
+        "credentialId": "api-key",
+        "configured": true
+      }
+    ]
+  },
+  "credentialVault": {
+    "version": 1,
+    "entries": {
+      "400494ee81c090204cd27aafab54be4ee9272b0b9786bea701c85e32380687dd": {
+        "metadata": {
+          "extensionId": "model-provider:soak",
+          "credentialId": "api-key",
+          "createdAt": "2026-10-13T08:35:14.779Z",
+          "updatedAt": "2026-10-13T08:35:14.891Z"
+        },
+        "secret": {
+          "version": 1,
+          "iv": "hh9Ni18ST8K088vm",
+          "tag": "EW0lQwBRxLZ45azrO3AeOw==",
+          "ciphertext": "jU5J2gsQlzQ="
+        }
+      }
+    }
+  },
+  "extensions": {
+    "version": 1,
+    "records": {
+      "plugin:superpowers": {
+        "id": "plugin:superpowers",
+        "name": "Superpowers",
+        "kind": "plugin",
+        "source": "superpowers@git+https://github.com/obra/superpowers.git#v6.4.2",
+        "purpose": "Reusable planning, debugging, testing, and software-development skills for OpenCode.",
+        "authType": "none",
+        "credentialSchemas": [],
+        "resource": {
+          "kind": "plugin",
+          "specifier": "superpowers@git+https://github.com/obra/superpowers.git#v6.4.2"
+        },
+        "createdAt": "2026-10-13T08:35:14.674Z",
+        "updatedAt": "2026-10-13T08:35:14.674Z",
+        "managed": true
+      }
+    }
+  },
+  "extensionDefaultsMigration": {
+    "version": 1
+  },
+  "telegramMessageContexts": {
+    "worktree:/home/runner/.local/state/opencode-telegram-soak/20261013T083511Z-cycle/opencode/topic-workspaces/987654321/4ef34758-12b1-4d7e-b9ac-c6735fd3eb46": {
+      "chatId": 987654321,
+      "threadId": 10000,
+      "sessionId": "ses_ecb9908cbffe6JoJ3b49rhAuFB",
+      "worktree": "/home/runner/.local/state/opencode-telegram-soak/20261013T083511Z-cycle/opencode/topic-workspaces/987654321/4ef34758-12b1-4d7e-b9ac-c6735fd3eb46",
+      "updatedAt": "2026-10-13T08:35:34.166Z",
+      "message": {
+        "messageId": 10005,
+        "date": 1791880534,
+        "text": "🗑️ Delete Chat",
+        "media": []
+      }
+    },
+    "session:ses_ecb9908cbffe6JoJ3b49rhAuFB": {
+      "chatId": 987654321,
+      "threadId": 10000,
+      "sessionId": "ses_ecb9908cbffe6JoJ3b49rhAuFB",
+      "worktree": "/home/runner/.local/state/opencode-telegram-soak/20261013T083511Z-cycle/opencode/topic-workspaces/987654321/4ef34758-12b1-4d7e-b9ac-c6735fd3eb46",
+      "updatedAt": "2026-10-13T08:35:34.166Z",
+      "message": {
+        "messageId": 10005,
+        "date": 1791880534,
+        "text": "🗑️ Delete Chat",
+        "media": []
+      }
+    }
+  }
+}

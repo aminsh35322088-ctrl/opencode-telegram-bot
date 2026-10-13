@@ -1,0 +1,3 @@
+{"ts":"2026-10-13T08:35:13.530Z","kind":"health","stream":false,"toolProbe":false,"tokens":0}
+{"ts":"2026-10-13T08:35:14.886Z","kind":"models","stream":false,"toolProbe":false,"tokens":0}
+{"ts":"2026-10-13T08:35:30.004Z","kind":"chat","stream":true,"toolProbe":false,"tokens":600,"tool":false}
