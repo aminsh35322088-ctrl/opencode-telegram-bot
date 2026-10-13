@@ -158,6 +158,22 @@ Both calls return the same id:
 Ids start at `10000`, one per distinct `name`, and are persisted to
 `<logdir>/forum-topics.json`, so a restart keeps them.
 
+`deleteForumTopic` removes the name→id mapping (and persists it), so the next
+`createForumTopic` with that name gets a fresh id: a deleted topic is gone, as
+on real Telegram. It answers `note: "topic-deleted:<id>"`, or
+`topic-deleted:<id>:absent` when there was nothing to delete.
+
+```powershell
+curl.exe -s -X POST "$tg/deleteForumTopic" -d '{\"chat_id\":42,\"message_thread_id\":10001}'
+# {"ok":true,"result":true}          (note: topic-deleted:10001)
+
+curl.exe -s -X POST "$tg/deleteForumTopic" -d '{\"chat_id\":42,\"message_thread_id\":10001}'
+# {"ok":true,"result":true}          (note: topic-deleted:10001:absent)
+
+curl.exe -s -X POST "$tg/createForumTopic" -d '{\"chat_id\":42,\"name\":\"Reports\"}'
+# {"ok":true,"result":{"message_thread_id":10002,"name":"Reports","icon_color":13337712}}  fresh id
+```
+
 ### 3.4 `getUpdates` — long poll, append, offset
 
 Empty queue first (there must be no pending line in the updates file):
@@ -251,7 +267,7 @@ Get-Content "$smoke\telegram-api.jsonl" -Tail 3
 {"ts":"2026-10-13T04:28:26.767Z","method":"sendMessage","ok":true,"note":"msg:12"}
 ```
 
-`note` markers: `draft:<id>`, `update:<first id>`, `topic:<id>`, `msg:<id>`, `edit:<id>`,
+`note` markers: `draft:<id>`, `update:<first id>`, `topic:<id>`, `topic-deleted:<id>`, `msg:<id>`, `edit:<id>`,
 `unsupported`, `error:<message>`.
 
 ## 4. Model stub

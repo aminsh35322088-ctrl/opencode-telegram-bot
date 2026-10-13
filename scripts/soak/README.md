@@ -17,12 +17,26 @@ driver.mjs ──appends raw updates──▶ stub-telegram-api.mjs ◀── HT
   because `TELEGRAM_API_ROOT` is set (see `src/config.ts`). It answers `getMe`,
   `getWebhookInfo`, `deleteWebhook`, long-polling `getUpdates`, `sendMessage`,
   `sendMessageDraft`/`sendRichMessageDraft`, `editMessage*`, `deleteMessage`,
-  `createForumTopic`, `answerCallbackQuery`, `pinChatMessage`, `getFile`, … and
+  `createForumTopic`, `deleteForumTopic`, `answerCallbackQuery`,
+  `pinChatMessage`, `getFile`, … and
   exposes `GET /__state` for the driver to observe drafts/messages/threads.
 - **`stub-model.mjs`** is an OpenAI-compatible endpoint (`/v1/models`,
   `/v1/chat/completions`) with deterministic SSE streaming and tool calls.
 - **`seed-state.mjs`** writes `$OPENCODE_TELEGRAM_HOME/app-state.json` with a
-  custom provider pointing at that stub and selects it.
+  custom provider pointing at that stub and selects it. It also seeds
+  `responseStreamingMode: "draft"` (globally and as the Topic default), because
+  Telegram's Stop exists only on drafts: a Bot streaming in the default `edit`
+  mode never registers one, so a native Stop arrives with an id it cannot
+  attribute and is refused as `unknown-draft`.
+- **`updates.mjs`** builds the raw updates the driver injects, byte-compatible
+  with what real Telegram delivers — topic messages carry `is_topic_message`
+  (without it the Bot's Topic extraction returns null and silently consumes the
+  control) and command text carries its `bot_command` entity.
+- **`signals.mjs`** holds the harness's judgement rules: growth since a captured
+  baseline (never an absolute count, which passes vacuously from the second
+  cycle on), the Bot's own `result=confirmed` attribution as the only admissible
+  proof of a Stop, and per-Topic Delete evidence read from the Bot's log. Both
+  modules are unit-tested by `tests/soak-harness.test.ts`.
 - **`driver.mjs`** injects raw updates (including `stopped_message_generation`),
   waits for observable outcomes, enforces the registered deadlines D1–D7 and
   appends evidence.
@@ -103,5 +117,10 @@ Stub evidence never substitutes for real Telegram/Railway evidence, and those
 rows in `SOAK_GATES.md` stay `PENDING` until they are exercised for real.
 
 A flow that cannot be observed is recorded `not-executed`, never as a pass, and
+a flow whose outcome the Bot *refused* is recorded `fail` with the reason the Bot
+gave: cycle run 38368783928 reported W5/stop "pass" while its own log showed the
+Stop refused as `unknown-draft`, because the run's completion had been mistaken
+for a confirmation. The harness now requires the Bot's own `result=confirmed`
+attribution for that exact draft, and
 an interrupted run is recorded as interrupted — runner termination is not test
 completion.
