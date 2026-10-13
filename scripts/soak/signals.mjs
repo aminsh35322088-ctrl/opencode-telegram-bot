@@ -180,6 +180,26 @@ export function restState(samples, stableMs) {
   return { atRest: quietMs >= stableMs, quietMs };
 }
 
+// The verdict tally. `summaries` holds per-cycle summaries (`{results: [...]}`)
+// and bare records (the smoke stage pushes one directly). A status this does
+// not name — including a missing one — is reported as `unrecognized` instead
+// of dropped: run 38397066002 reported success while W1 had failed, because a
+// record that was never collected cannot be counted, and a status silently
+// written to `counts[undefined]` could not be either. The driver exits
+// non-zero while `unrecognized > 0`, so a hole in the picture fails closed.
+export function tallyResults(summaries) {
+  const counts = { pass: 0, fail: 0, "not-executed": 0 };
+  let unrecognized = 0;
+  for (const s of summaries ?? []) {
+    const list = (s && s.results) || [s];
+    for (const r of list ?? []) {
+      if (r && Object.hasOwn(counts, r.status)) counts[r.status] += 1;
+      else unrecognized += 1;
+    }
+  }
+  return { counts, unrecognized };
+}
+
 // RC soak phasing (SOAK_GATES.md §2: "cycles spread over 24 h with active and
 // idle phases"). A phase is a contiguous window measured from the stage's own
 // start — not the 15 s gap between two back-to-back cycles, which is a pause,

@@ -584,3 +584,54 @@ test("the workload may only act at rest, and never claims rest it did not observ
     "quiet time is measured from the last growth, never from the first sample",
   );
 });
+
+test("the verdict tally cannot lose a flow it was given, nor pass an unknown status", async () => {
+  const { tallyResults } = await loadScript<{
+    tallyResults: (summaries: unknown[]) => {
+      counts: Record<string, number>;
+      unrecognized: number;
+    };
+  }>("scripts/soak/signals.mjs");
+
+  // Run 38397066002 (evidence/20261013T124702Z-soak) reported success while
+  // cycles.jsonl held `W1 ... fail: new topic id timed out after 60000ms`:
+  // the tally could only count what reached it, and cycle() never collected
+  // flowNewChat()'s return, so the exit code was built from a picture with
+  // the failure missing. A status the tally cannot name — a missing one
+  // included — must show up as `unrecognized`, never as silence.
+  const { counts, unrecognized } = tallyResults([
+    { results: [{ status: "pass" }, { status: "fail" }, { status: "not-executed" }] },
+    { status: "pass" }, // the smoke stage pushes a bare record
+  ]);
+  assert.deepEqual(counts, { pass: 2, fail: 1, "not-executed": 1 });
+  assert.equal(unrecognized, 0);
+
+  const gap = tallyResults([{ results: [{ status: "pass" }, { threadId: 10000 }] }]);
+  assert.deepEqual(gap.counts, { pass: 1, "fail": 0, "not-executed": 0 });
+  assert.equal(gap.unrecognized, 1, "a record without a status must be seen, not skipped");
+
+  const odd = tallyResults([{ results: [{ status: "exploded" }] }]);
+  assert.equal(odd.unrecognized, 1, "an unknown status must not be counted as anything else");
+});
+
+test("cycle() collects every flow's record, W1's included", async () => {
+  const { readFileSync } = await import("node:fs");
+
+  // The same run 38397066002: every other flow's return was pushed into
+  // `results`, flowNewChat's was not — W1's status reached cycles.jsonl and
+  // never reached summary.json, so the workflow verdict did not know a gate
+  // had failed. The driver runs main() on import and cannot be loaded in a
+  // test, so the wiring is pinned at source level here, the same way
+  // persist-evidence.sh is pinned in this file.
+  const driver = readFileSync(new URL("../scripts/soak/driver.mjs", import.meta.url), "utf8");
+  assert.match(
+    driver,
+    /const chat = await flowNewChat\(\);\s*results\.push\(chat\);/,
+    "the W1 record must be collected like every other flow's",
+  );
+  assert.match(
+    driver,
+    /return \{ \.\.\.pass, threadId: r\.value \};/,
+    "the W1 pass path must return its record: a bare { threadId } carries no status",
+  );
+});

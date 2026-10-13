@@ -21,6 +21,7 @@ import {
   snapshot,
   stopConfirmed,
   streamCalls,
+  tallyResults,
   topicGone,
 } from "./signals.mjs";
 
@@ -338,8 +339,12 @@ async function flowNewChat() {
   enqueue(messageUpdate(NEW_CHAT));
   const r = await waitFor((s) => newThreadId(s, base), 60_000, "new topic id");
   if (!r.ok) return record("W1", "new-chat", "fail", { reason: r.reason, restWaitMs: rest.waitedMs });
-  record("W1", "new-chat", "pass", { threadId: r.value, restWaitMs: rest.waitedMs });
-  return { threadId: r.value };
+  // The record is returned along with the threadId: cycle() must be able to
+  // count W1 like every other flow, and a bare { threadId } carries no status
+  // to count (run 38397066002's W1 failure reached cycles.jsonl and never
+  // reached summary.json — the workflow then reported success).
+  const pass = record("W1", "new-chat", "pass", { threadId: r.value, restWaitMs: rest.waitedMs });
+  return { ...pass, threadId: r.value };
 }
 
 async function flowPrompt(threadId) {
@@ -794,6 +799,7 @@ async function cycle(index) {
   const results = [];
   results.push(await flowStart());
   const chat = await flowNewChat();
+  results.push(chat);
   const threadId = chat?.threadId ?? null;
   if (threadId) results.push(await flowPrompt(threadId));
   // W7/G7: a controlled restart — every run of the single-cycle stage, and every
@@ -821,8 +827,8 @@ async function main() {
 
   if (STAGE === "smoke") {
     const r = await flowStart();
-    await flowNewChat();
-    summaries.push(r);
+    const chat = await flowNewChat();
+    summaries.push(r, chat);
     const state = await tgState().catch(() => null);
     writeFileSync(join(EVIDENCE, "smoke-state.json"), JSON.stringify(state, null, 2));
   } else if (STAGE === "cycle") {
@@ -862,24 +868,23 @@ async function main() {
     process.exit(2);
   }
 
-  const counts = { pass: 0, fail: 0, "not-executed": 0 };
-  for (const s of summaries) {
-    const list = s.results ?? [s];
-    for (const r of list) counts[r.status] = (counts[r.status] ?? 0) + 1;
-  }
+  const { counts, unrecognized } = tallyResults(summaries);
   const out = {
     stage: STAGE,
     startedAt: new Date(startedAt).toISOString(),
     finishedAt: now(),
     elapsedS: Math.round((Date.now() - startedAt) / 1000),
     counts,
+    unrecognized,
     cycles: summaries.length,
     resources: sampleResources(),
   };
   writeFileSync(join(EVIDENCE, "summary.json"), `${JSON.stringify(out, null, 2)}\n`);
   console.log(JSON.stringify(out, null, 2));
-  // Exit non-zero only on an observed failure; unexecuted flows stay pending.
-  process.exit(counts.fail > 0 ? 1 : 0);
+  // Exit non-zero on an observed failure OR on any record the tally could not
+  // name: unexecuted flows stay pending, but a flow that fell out of the
+  // picture must never read as success (run 38397066002 did exactly that).
+  process.exit(counts.fail > 0 || unrecognized > 0 ? 1 : 0);
 }
 
 main().catch((err) => {
