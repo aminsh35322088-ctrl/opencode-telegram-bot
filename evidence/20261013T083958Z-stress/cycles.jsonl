@@ -965,3 +965,15 @@
 {"ts":"2026-10-13T10:04:59.372Z","flow":"W6","step":"delete-chat","status":"pass","elapsed":5,"withinD4":true,"confirmationId":1662}
 {"ts":"2026-10-13T10:05:02.746Z","flow":"W0","step":"start","status":"pass","replies":1664}
 {"ts":"2026-10-13T10:05:13.839Z","flow":"W1","step":"new-chat","status":"pass","threadId":10184}
+{"ts":"2026-10-13T10:06:43.878Z","flow":"W2","step":"prompt-stream-tool","status":"fail","reason":"streamed reply timed out after 90000ms"}
+{"ts":"2026-10-13T10:07:14.130Z","flow":"W5","step":"stop","status":"not-executed","reason":"issued generation draft timed out after 30000ms"}
+{"ts":"2026-10-13T10:07:44.419Z","flow":"W6","step":"delete-chat","status":"fail","reason":"delete confirmation prompt timed out after 30000ms"}
+{"ts":"2026-10-13T10:07:47.791Z","flow":"W0","step":"start","status":"pass","replies":1667}
+{"ts":"2026-10-13T10:07:50.951Z","flow":"W1","step":"new-chat","status":"pass","threadId":10185}
+{"ts":"2026-10-13T10:07:54.647Z","flow":"W2","step":"prompt-stream-tool","status":"pass","drafts":529,"messages":1669,"modelRequests":372,"modelStreams":372,"modelToolCalls":62}
+{"ts":"2026-10-13T10:07:59.908Z","flow":"W5","step":"stop","status":"pass","draftId":186,"source":"stub-draft","confirmMs":315,"confirmedBy":"bot-log","outputsBefore":2997,"outputsAtConfirm":2999,"lateDelta":0,"streamCalls":902,"withinD1":true,"withinD2":true}
+{"ts":"2026-10-13T10:08:00.233Z","flow":"W6","step":"delete-chat","status":"pass","elapsed":5,"withinD4":true,"confirmationId":1674}
+{"ts":"2026-10-13T10:08:15.619Z","flow":"W0","step":"start","status":"pass","replies":1676}
+{"ts":"2026-10-13T10:08:26.684Z","flow":"W1","step":"new-chat","status":"pass","threadId":10185}
+{"ts":"2026-10-13T10:09:56.897Z","flow":"W2","step":"prompt-stream-tool","status":"fail","reason":"streamed reply timed out after 90000ms"}
+{"ts":"2026-10-13T10:10:27.162Z","flow":"W5","step":"stop","status":"not-executed","reason":"issued generation draft timed out after 30000ms"}
