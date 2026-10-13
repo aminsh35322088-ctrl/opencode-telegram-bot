@@ -895,3 +895,19 @@
 {"ts":"2026-10-13T09:49:46.987Z","flow":"W6","step":"delete-chat","status":"pass","elapsed":4,"withinD4":true,"confirmationId":1563}
 {"ts":"2026-10-13T09:49:50.353Z","flow":"W0","step":"start","status":"pass","replies":1565}
 {"ts":"2026-10-13T09:50:01.085Z","flow":"W1","step":"new-chat","status":"pass","threadId":10174}
+{"ts":"2026-10-13T09:51:31.124Z","flow":"W2","step":"prompt-stream-tool","status":"fail","reason":"streamed reply timed out after 90000ms"}
+{"ts":"2026-10-13T09:52:01.344Z","flow":"W5","step":"stop","status":"not-executed","reason":"issued generation draft timed out after 30000ms"}
+{"ts":"2026-10-13T09:52:31.590Z","flow":"W6","step":"delete-chat","status":"fail","reason":"delete confirmation prompt timed out after 30000ms"}
+{"ts":"2026-10-13T09:52:46.970Z","flow":"W0","step":"start","status":"pass","replies":1568}
+{"ts":"2026-10-13T09:52:57.085Z","flow":"W1","step":"new-chat","status":"pass","threadId":10175}
+{"ts":"2026-10-13T09:53:00.462Z","flow":"W2","step":"prompt-stream-tool","status":"pass","drafts":502,"messages":1570,"modelRequests":352,"modelStreams":352,"modelToolCalls":58}
+{"ts":"2026-10-13T09:53:05.718Z","flow":"W5","step":"stop","status":"pass","draftId":176,"source":"stub-draft","confirmMs":318,"confirmedBy":"bot-log","outputsBefore":2816,"outputsAtConfirm":2818,"lateDelta":0,"streamCalls":855,"withinD1":true,"withinD2":true}
+{"ts":"2026-10-13T09:53:06.036Z","flow":"W6","step":"delete-chat","status":"pass","elapsed":4,"withinD4":true,"confirmationId":1575}
+{"ts":"2026-10-13T09:53:09.415Z","flow":"W0","step":"start","status":"pass","replies":1577}
+{"ts":"2026-10-13T09:53:19.523Z","flow":"W1","step":"new-chat","status":"pass","threadId":10176}
+{"ts":"2026-10-13T09:53:21.056Z","flow":"W2","step":"prompt-stream-tool","status":"pass","drafts":504,"messages":1578,"modelRequests":353,"modelStreams":353,"modelToolCalls":59}
+{"ts":"2026-10-13T09:53:27.241Z","flow":"W5","step":"stop","status":"pass","draftId":177,"source":"stub-draft","confirmMs":313,"confirmedBy":"bot-log","outputsBefore":2831,"outputsAtConfirm":2833,"lateDelta":0,"streamCalls":859,"withinD1":true,"withinD2":true}
+{"ts":"2026-10-13T09:53:27.565Z","flow":"W6","step":"delete-chat","status":"pass","elapsed":4,"withinD4":true,"confirmationId":1583}
+{"ts":"2026-10-13T09:53:30.933Z","flow":"W0","step":"start","status":"pass","replies":1585}
+{"ts":"2026-10-13T09:53:41.970Z","flow":"W1","step":"new-chat","status":"pass","threadId":10176}
+{"ts":"2026-10-13T09:55:11.989Z","flow":"W2","step":"prompt-stream-tool","status":"fail","reason":"streamed reply timed out after 90000ms"}
