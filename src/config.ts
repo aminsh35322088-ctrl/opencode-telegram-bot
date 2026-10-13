@@ -94,18 +94,35 @@ type TelegramConfig = {
 
 let resolvedTelegramConfig: TelegramConfig | null = null;
 
+/**
+ * Optional Bot API root override. Empty means "use api.telegram.org".
+ * The soak harness points this at a local stub so the real Bot can be exercised
+ * without Telegram credentials or network egress. The value is already stripped
+ * from the agent child environment (src/opencode/process.ts).
+ */
+function resolveTelegramApiRoot(): string {
+  const raw = process.env.TELEGRAM_API_ROOT;
+  if (raw === undefined) return "";
+  return raw.trim().replace(/\/+$/, "");
+}
+
 export function buildTelegramConfig(): TelegramConfig {
   if (resolvedTelegramConfig === null) {
     resolvedTelegramConfig = {
       token: getRequiredTelegramEnvVar("TELEGRAM_BOT_TOKEN"),
       allowedUserId: parseTelegramAllowedUserId(),
       proxyUrl: "",
-      apiRoot: "",
+      apiRoot: resolveTelegramApiRoot(),
       proxySecret: "",
       forceIpv4: false,
     };
   }
   return resolvedTelegramConfig;
+}
+
+/** Test hook: drop the memoized Telegram config so environment changes apply. */
+export function resetTelegramConfigForTests(): void {
+  resolvedTelegramConfig = null;
 }
 
 export const config = {
