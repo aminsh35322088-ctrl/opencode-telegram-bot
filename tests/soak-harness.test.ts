@@ -272,10 +272,19 @@ test("a controlled restart counts only when the Bot answers again within D5 and 
       afterPid: number | null;
       elapsedMs: number;
       limitMs: number;
-    }) => { answered: boolean; pidChanged: boolean; withinD5: boolean; pass: boolean };
+      bootMs?: number;
+      answerMs?: number;
+    }) => {
+      answered: boolean;
+      pidChanged: boolean;
+      withinD5: boolean;
+      answeredAfterBoot: boolean;
+      pass: boolean;
+    };
   }>("scripts/soak/signals.mjs");
 
   const base = { messages: 1, drafts: 0 };
+  const bootMs = 1_000_000;
   assert.deepEqual(
     restartOutcome({
       base,
@@ -284,8 +293,10 @@ test("a controlled restart counts only when the Bot answers again within D5 and 
       afterPid: 222,
       elapsedMs: 9_000,
       limitMs: 120_000,
+      bootMs,
+      answerMs: 1_009_000,
     }),
-    { answered: true, pidChanged: true, withinD5: true, pass: true },
+    { answered: true, pidChanged: true, withinD5: true, answeredAfterBoot: true, pass: true },
   );
 
   assert.deepEqual(
@@ -296,8 +307,10 @@ test("a controlled restart counts only when the Bot answers again within D5 and 
       afterPid: 222,
       elapsedMs: 9_000,
       limitMs: 120_000,
+      bootMs,
+      answerMs: Number.NaN,
     }),
-    { answered: false, pidChanged: true, withinD5: true, pass: false },
+    { answered: false, pidChanged: true, withinD5: true, answeredAfterBoot: false, pass: false },
     "a Bot that came back but answers nothing is not a successful restart",
   );
 
@@ -309,8 +322,10 @@ test("a controlled restart counts only when the Bot answers again within D5 and 
       afterPid: 111,
       elapsedMs: 9_000,
       limitMs: 120_000,
+      bootMs,
+      answerMs: 1_009_000,
     }),
-    { answered: true, pidChanged: false, withinD5: true, pass: false },
+    { answered: true, pidChanged: false, withinD5: true, answeredAfterBoot: true, pass: false },
     "an unchanged pid means the old process never died, so nothing was restarted",
   );
 
@@ -322,9 +337,72 @@ test("a controlled restart counts only when the Bot answers again within D5 and 
       afterPid: 222,
       elapsedMs: 150_000,
       limitMs: 120_000,
+      bootMs,
+      answerMs: 1_150_000,
     }),
-    { answered: true, pidChanged: true, withinD5: false, pass: false },
+    { answered: true, pidChanged: true, withinD5: false, answeredAfterBoot: true, pass: false },
     "D5 is a registered deadline: missing it is F8 even when the answer eventually arrives",
+  );
+
+  assert.deepEqual(
+    restartOutcome({
+      base,
+      state: { messages: { 1: "welcome", 2: "output of the run that was just stopped" }, drafts: [] },
+      beforePid: 111,
+      afterPid: 222,
+      elapsedMs: 13_029,
+      limitMs: 120_000,
+      bootMs: 1_000_000,
+      answerMs: 999_000,
+    }),
+    {
+      answered: true,
+      pidChanged: true,
+      withinD5: true,
+      answeredAfterBoot: false,
+      pass: false,
+    },
+    "growth observed before the new Bot's own boot line cannot be the new Bot answering — run 38372649512 resolved readyMs=13029 at 10:41:20.83 while the new Bot's first log line is 10:41:21.109: the process that was just stopped was still finishing its run",
+  );
+});
+
+test("an update served to a client that never confirmed it is served again, until its offset acks it", async () => {
+  const { serveBatch } = await loadScript<{
+    serveBatch: (
+      entries: Array<{ update_id: number }>,
+      offset: number,
+      limit: number,
+    ) => { batch: Array<{ update_id: number }>; queue: Array<{ update_id: number }> };
+  }>("scripts/soak/update-queue.mjs");
+
+  const entries = [{ update_id: 1000004 }, { update_id: 1000005 }];
+
+  const served = serveBatch(entries, 1000004, 100);
+  assert.deepEqual(served.batch, entries, "the two updates are what the poll hands to the client");
+  assert.deepEqual(
+    served.queue,
+    entries,
+    "handing them over does not remove them: stress run 38372649512 served 1000004+1000005 to a long-poll whose process had already exited, and the new Bot's first poll then saw an empty queue and waited 60s",
+  );
+
+  const redelivered = serveBatch(served.queue, Number.NaN, 100);
+  assert.deepEqual(
+    redelivered.batch,
+    entries,
+    "a fresh client asking without an offset is owed everything unacked — Telegram's own contract is at-least-once until offset",
+  );
+
+  const acked = serveBatch(redelivered.queue, 1000006, 100);
+  assert.deepEqual(acked.batch, [], "once the client acks past them they are gone");
+  assert.deepEqual(acked.queue, [], "an ack is the only thing that empties the queue");
+
+  const partial = serveBatch([{ update_id: 4 }, { update_id: 5 }, { update_id: 6 }], Number.NaN, 1);
+  assert.deepEqual(partial.batch.map((e) => e.update_id), [4], "limit still caps what one poll returns");
+  const afterPartialAck = serveBatch(partial.queue, 5, 100);
+  assert.deepEqual(
+    afterPartialAck.batch.map((e) => e.update_id),
+    [5, 6],
+    "a client that acked 4 must not be given 4 again, and must be given the rest",
   );
 });
 

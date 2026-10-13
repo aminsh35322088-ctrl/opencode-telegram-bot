@@ -372,6 +372,42 @@ function readBotLogTail(maxBytes = 512 * 1024) {
   }
 }
 
+// Checkpoint for attributing a restart. Every boot writes the same line, so
+// only bytes written after a checkpoint taken before the restart can be that
+// restart's boot; the first boot wrote its own copy at the start of the file.
+function botLogSize() {
+  const logPath = join(RUN_DIR, "bot.log");
+  if (!existsSync(logPath)) return 0;
+  const fd = openSync(logPath, "r");
+  try {
+    return fstatSync(fd).size;
+  } catch {
+    return 0;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function botLogSince(offset) {
+  const logPath = join(RUN_DIR, "bot.log");
+  if (!existsSync(logPath)) return "";
+  const fd = openSync(logPath, "r");
+  try {
+    const size = fstatSync(fd).size;
+    if (size <= offset) return "";
+    // The boot line is the first thing the new Bot writes, so the head of the
+    // appended region is enough — later growth is not read back.
+    const length = Math.min(size - offset, 64 * 1024);
+    const buffer = Buffer.alloc(length);
+    readSync(fd, buffer, 0, length, offset);
+    return buffer.toString("utf8");
+  } catch {
+    return "";
+  } finally {
+    closeSync(fd);
+  }
+}
+
 async function flowDeleteChat(threadId) {
   // W6 is registered as "Delete a Chat while its run is active … then create a
   // new Topic and assert it is served by the same Worker and works normally".
@@ -507,6 +543,7 @@ async function flowRestart(threadId) {
   }
 
   const beforePid = readBotPid();
+  const logOffset = botLogSize();
   const t0 = Date.now();
   try {
     execFileSync("bash", [RESTART_SCRIPT, RUN_DIR, REPO_DIR], { stdio: "pipe" });
@@ -517,12 +554,39 @@ async function flowRestart(threadId) {
     });
   }
 
+  // The new Bot announces itself before it touches Telegram. Until that line,
+  // every byte in the stub state belongs to the process that was just stopped
+  // finishing its run: run 38372649512 judged the environment "ready" from
+  // exactly that — readyMs=13029 resolved at 10:41:20.83 while the new Bot's
+  // first log line is 10:41:21.109, so D5 was satisfied by a Bot that had not
+  // booted yet.
+  const bootDeadline = Date.now() + D.restartReadyMs;
+  let bootMs = null;
+  while (bootMs === null && Date.now() < bootDeadline) {
+    if (botLogSince(logOffset).includes("Starting OpenCode Telegram Bot")) {
+      bootMs = Date.now();
+    } else {
+      await sleep(200);
+    }
+  }
+  if (bootMs === null) {
+    return record("W7", "restart", "fail", {
+      reason: `the new Bot never wrote its boot line within D5 (${D.restartReadyMs}ms)`,
+      beforePid,
+      afterPid: readBotPid(),
+      readyMs: Date.now() - t0,
+    });
+  }
+
   // D5 measures restart -> environment ready and answering, so the clock runs
   // from the stop through the first answer, not merely through the spawn.
   const base = snapshot(await tgState().catch(() => ({})));
   enqueue(messageUpdate("/start"));
-  const answered = await waitFor((s) => growthObserved(s, base), D.restartReadyMs, "answer after restart");
-  const readyMs = Date.now() - t0;
+  // The answer is not waited for past the deadline it is measured against.
+  const answerBudgetMs = Math.max(0, t0 + D.restartReadyMs - Date.now());
+  const answered = await waitFor((s) => growthObserved(s, base), answerBudgetMs, "answer after restart");
+  const answerAt = Date.now();
+  const readyMs = answerAt - t0;
   const afterPid = readBotPid();
   const outcome = restartOutcome({
     base,
@@ -531,6 +595,8 @@ async function flowRestart(threadId) {
     afterPid,
     elapsedMs: readyMs,
     limitMs: D.restartReadyMs,
+    bootMs,
+    answerMs: answered.ok ? answerAt : Number.NaN,
   });
   if (!outcome.pass) {
     return record("W7", "restart", "fail", {
@@ -539,10 +605,13 @@ async function flowRestart(threadId) {
         ? `no answer within D5 (${D.restartReadyMs}ms)`
         : !outcome.pidChanged
           ? `pid did not change (${beforePid} -> ${afterPid}): the Bot was never stopped`
-          : `restart exceeded D5 (${readyMs}ms > ${D.restartReadyMs}ms)`,
+          : !outcome.answeredAfterBoot
+            ? "growth was observed before the new Bot's own boot line: the answer came from the process that was just stopped"
+            : `restart exceeded D5 (${readyMs}ms > ${D.restartReadyMs}ms)`,
       beforePid,
       afterPid,
       readyMs,
+      bootMs,
     });
   }
 

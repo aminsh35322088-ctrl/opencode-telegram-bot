@@ -3,6 +3,8 @@ import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { serveBatch } from "./update-queue.mjs";
+
 const BOT_ID = 777000001;
 const FIRST_UPDATE_ID = 1000000;
 const FIRST_THREAD_ID = 10000;
@@ -117,9 +119,11 @@ function logRequest(method, ok, note) {
 
 // The queue lives in the JSONL file: the driver appends while we run, so we parse only the
 // bytes appended since the last poll and never rewrite the file.
+// `entries` holds every update no client has acked yet — including ones a poll
+// has already handed over, because delivery is not acknowledgement (see
+// update-queue.mjs). `served` counts what clients have acked past.
 const updates = {
   entries: [],
-  consumed: 0,
   bytes: 0,
   tail: "",
   lines: 0,
@@ -164,7 +168,6 @@ function refreshUpdates() {
     updates.bytes = 0;
     updates.tail = "";
     updates.entries = [];
-    updates.consumed = 0;
   }
   if (size === updates.bytes) return;
   const length = size - updates.bytes;
@@ -200,24 +203,13 @@ function refreshUpdates() {
   }
 }
 
+// Delivery hands a batch over without taking it away: the queue only shrinks
+// when the next request's offset proves the client processed what it was given
+// (or proves it processed nothing after a restart, so it is owed it all again).
 function takeBatch(offset, limit) {
-  if (Number.isFinite(offset)) {
-    while (
-      updates.consumed < updates.entries.length &&
-      updates.entries[updates.consumed].update_id < offset
-    ) {
-      updates.consumed += 1;
-    }
-  }
-  const available = updates.entries.length - updates.consumed;
-  const count = limit > 0 ? Math.min(limit, available) : available;
-  const batch = updates.entries.slice(updates.consumed, updates.consumed + count);
-  updates.consumed += count;
-  if (updates.consumed > 0 && updates.consumed === updates.entries.length) {
-    updates.served += updates.consumed;
-    updates.entries = [];
-    updates.consumed = 0;
-  }
+  const { batch, queue } = serveBatch(updates.entries, offset, limit);
+  updates.served += updates.entries.length - queue.length;
+  updates.entries = queue;
   return batch;
 }
 
@@ -429,8 +421,11 @@ function snapshot() {
     counters: Object.fromEntries(state.counters),
     updates: {
       path: updatesPath,
-      pending: updates.entries.length - updates.consumed,
-      position: updates.served + updates.consumed,
+      // Owed until an offset proves otherwise — a batch already handed to a
+      // poll stays pending here, which is exactly how a restart recovers it.
+      pending: updates.entries.length,
+      // How far clients have acknowledged.
+      position: updates.served,
       lines: updates.lines,
       badLines: updates.badLines,
       nextUpdateId: updates.nextUpdateId,

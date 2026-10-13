@@ -112,11 +112,35 @@ export function topicGone(state, threadId) {
 // environment came back. "It answered" alone is not enough — the same pid means
 // the old process never died and nothing was restarted, and an answer past D5
 // is F8 even when it eventually arrives.
-export function restartOutcome({ base, state, beforePid, afterPid, elapsedMs, limitMs }) {
+//
+// The answer must also postdate the new Bot's own boot line. Growth observed
+// before that line is not the new Bot answering: run 38372649512 resolved
+// readyMs=13029 at 10:41:20.83 while the new Bot's first log line is
+// 10:41:21.109 — what grew was the process that had just been stopped, still
+// finishing its run, and the driver then measured "the environment came back"
+// against a Bot that had not booted yet.
+export function restartOutcome({
+  base,
+  state,
+  beforePid,
+  afterPid,
+  elapsedMs,
+  limitMs,
+  bootMs,
+  answerMs,
+}) {
   const answered = growthObserved(state, base);
   const pidChanged = beforePid != null && afterPid != null && beforePid !== afterPid;
   const withinD5 = elapsedMs <= limitMs;
-  return { answered, pidChanged, withinD5, pass: answered && pidChanged && withinD5 };
+  const answeredAfterBoot =
+    Number.isFinite(bootMs) && Number.isFinite(answerMs) && answerMs >= bootMs;
+  return {
+    answered,
+    pidChanged,
+    withinD5,
+    answeredAfterBoot,
+    pass: answered && pidChanged && withinD5 && answeredAfterBoot,
+  };
 }
 
 // D2 baseline: how much of that output is the run still streaming. Finalising
