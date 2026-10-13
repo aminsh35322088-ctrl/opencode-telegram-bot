@@ -803,3 +803,34 @@
 {"ts":"2026-10-13T09:35:12.789Z","flow":"W2","step":"prompt-stream-tool","status":"pass","drafts":455,"messages":1415,"modelRequests":319,"modelStreams":319,"modelToolCalls":53}
 {"ts":"2026-10-13T09:35:18.950Z","flow":"W5","step":"stop","status":"pass","draftId":160,"source":"stub-draft","confirmMs":312,"confirmedBy":"bot-log","outputsBefore":2537,"outputsAtConfirm":2539,"lateDelta":0,"streamCalls":776,"withinD1":true,"withinD2":true}
 {"ts":"2026-10-13T09:35:19.272Z","flow":"W6","step":"delete-chat","status":"pass","elapsed":6,"withinD4":true,"confirmationId":1420}
+{"ts":"2026-10-13T09:35:22.675Z","flow":"W0","step":"start","status":"pass","replies":1422}
+{"ts":"2026-10-13T09:35:33.690Z","flow":"W1","step":"new-chat","status":"pass","threadId":10159}
+{"ts":"2026-10-13T09:37:03.909Z","flow":"W2","step":"prompt-stream-tool","status":"fail","reason":"streamed reply timed out after 90000ms"}
+{"ts":"2026-10-13T09:37:34.094Z","flow":"W5","step":"stop","status":"not-executed","reason":"issued generation draft timed out after 30000ms"}
+{"ts":"2026-10-13T09:38:04.287Z","flow":"W6","step":"delete-chat","status":"fail","reason":"delete confirmation prompt timed out after 30000ms"}
+{"ts":"2026-10-13T09:38:19.665Z","flow":"W0","step":"start","status":"pass","replies":1425}
+{"ts":"2026-10-13T09:38:29.759Z","flow":"W1","step":"new-chat","status":"pass","threadId":10160}
+{"ts":"2026-10-13T09:38:33.437Z","flow":"W2","step":"prompt-stream-tool","status":"pass","drafts":458,"messages":1427,"modelRequests":322,"modelStreams":322,"modelToolCalls":53}
+{"ts":"2026-10-13T09:38:38.687Z","flow":"W5","step":"stop","status":"pass","draftId":161,"source":"stub-draft","confirmMs":313,"confirmedBy":"bot-log","outputsBefore":2559,"outputsAtConfirm":2561,"lateDelta":0,"streamCalls":781,"withinD1":true,"withinD2":true}
+{"ts":"2026-10-13T09:38:39.005Z","flow":"W6","step":"delete-chat","status":"pass","elapsed":5,"withinD4":true,"confirmationId":1432}
+{"ts":"2026-10-13T09:38:42.377Z","flow":"W0","step":"start","status":"pass","replies":1434}
+{"ts":"2026-10-13T09:38:50.633Z","flow":"W1","step":"new-chat","status":"pass","threadId":10161}
+{"ts":"2026-10-13T09:38:53.701Z","flow":"W2","step":"prompt-stream-tool","status":"pass","drafts":461,"messages":1436,"modelRequests":324,"modelStreams":324,"modelToolCalls":54}
+{"ts":"2026-10-13T09:38:58.951Z","flow":"W5","step":"stop","status":"pass","draftId":162,"source":"stub-draft","confirmMs":314,"confirmedBy":"bot-log","outputsBefore":2575,"outputsAtConfirm":2577,"lateDelta":0,"streamCalls":786,"withinD1":true,"withinD2":true}
+{"ts":"2026-10-13T09:38:59.273Z","flow":"W6","step":"delete-chat","status":"pass","elapsed":4,"withinD4":true,"confirmationId":1441}
+{"ts":"2026-10-13T09:39:02.650Z","flow":"W0","step":"start","status":"pass","replies":1443}
+{"ts":"2026-10-13T09:39:09.395Z","flow":"W1","step":"new-chat","status":"pass","threadId":10162}
+{"ts":"2026-10-13T09:39:12.462Z","flow":"W2","step":"prompt-stream-tool","status":"pass","drafts":464,"messages":1445,"modelRequests":326,"modelStreams":326,"modelToolCalls":54}
+{"ts":"2026-10-13T09:39:18.011Z","flow":"W5","step":"stop","status":"pass","draftId":163,"source":"stub-draft","confirmMs":311,"confirmedBy":"bot-log","outputsBefore":2591,"outputsAtConfirm":2593,"lateDelta":0,"streamCalls":791,"withinD1":true,"withinD2":true}
+{"ts":"2026-10-13T09:39:18.334Z","flow":"W6","step":"delete-chat","status":"pass","elapsed":7,"withinD4":true,"confirmationId":1450}
+{"ts":"2026-10-13T09:39:33.712Z","flow":"W0","step":"start","status":"pass","replies":1452}
+{"ts":"2026-10-13T09:39:41.367Z","flow":"W1","step":"new-chat","status":"pass","threadId":10163}
+{"ts":"2026-10-13T09:39:44.433Z","flow":"W2","step":"prompt-stream-tool","status":"pass","drafts":467,"messages":1454,"modelRequests":328,"modelStreams":328,"modelToolCalls":54}
+{"ts":"2026-10-13T09:39:49.700Z","flow":"W5","step":"stop","status":"pass","draftId":164,"source":"stub-draft","confirmMs":324,"confirmedBy":"bot-log","outputsBefore":2607,"outputsAtConfirm":2609,"lateDelta":0,"streamCalls":796,"withinD1":true,"withinD2":true}
+{"ts":"2026-10-13T09:39:50.018Z","flow":"W6","step":"delete-chat","status":"pass","elapsed":5,"withinD4":true,"confirmationId":1459}
+{"ts":"2026-10-13T09:39:53.397Z","flow":"W0","step":"start","status":"pass","replies":1461}
+{"ts":"2026-10-13T09:40:02.269Z","flow":"W1","step":"new-chat","status":"pass","threadId":10164}
+{"ts":"2026-10-13T09:40:06.256Z","flow":"W2","step":"prompt-stream-tool","status":"pass","drafts":470,"messages":1463,"modelRequests":330,"modelStreams":330,"modelToolCalls":55}
+{"ts":"2026-10-13T09:40:11.506Z","flow":"W5","step":"stop","status":"pass","draftId":165,"source":"stub-draft","confirmMs":315,"confirmedBy":"bot-log","outputsBefore":2623,"outputsAtConfirm":2625,"lateDelta":0,"streamCalls":801,"withinD1":true,"withinD2":true}
+{"ts":"2026-10-13T09:40:11.822Z","flow":"W6","step":"delete-chat","status":"pass","elapsed":3,"withinD4":true,"confirmationId":1468}
+{"ts":"2026-10-13T09:40:15.199Z","flow":"W0","step":"start","status":"pass","replies":1470}
