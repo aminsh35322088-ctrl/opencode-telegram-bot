@@ -174,3 +174,12 @@
     at async /home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/composer.js:578:13
     at async /home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/composer.js:62:13
     at async /home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/composer.js:578:13
+[2026-10-13T08:23:09.492Z] [INFO] [RuntimeWatchdog] phase=heartbeat reason=interval pid=2551 uptimeSec=31 rssMb=158 heapUsedMb=41 serviceWorkingSetMb=158 serviceMemoryTotalMb=158 serviceMemoryLimitMb=unknown serviceMemoryPressure=unknown activeChildProcesses=1 serviceProcessCount=131 childKinds={"opencode-server":1} cpuLimit=unknown cpuLoad1=0.62 session=none sessionState=not-found busyForMs=0 sessionCheckMs=0 health=healthy healthLatencyMs=3 eventLoopLagMs=1
+[2026-10-13T08:23:09.705Z] [INFO] [App] Received SIGTERM, shutting down...
+[2026-10-13T08:23:09.705Z] [INFO] [RuntimeWatchdog] stopped
+[2026-10-13T08:23:09.706Z] [INFO] [TopicTelemetry] event=subscription_removed directory=/home/runner/work/opencode-telegram-bot/opencode-telegram-bot subscriberCount=0
+[2026-10-13T08:23:09.706Z] [INFO] [SessionTrace] phase=topic_event_bus_stopped
+[2026-10-13T08:23:09.706Z] [INFO] [TopicTelemetry] event=global_stream_stopped previousSubscriberCount=0
+[2026-10-13T08:23:09.709Z] [INFO] [RuntimeWatchdog] stopped
+[2026-10-13T08:23:09.709Z] [INFO] [SessionTrace] phase=topic_event_bus_stopped
+[2026-10-13T08:23:09.709Z] [INFO] [TopicTelemetry] event=global_stream_stopped previousSubscriberCount=0
