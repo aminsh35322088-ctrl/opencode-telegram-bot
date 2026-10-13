@@ -5,7 +5,7 @@ import { runInTopicRuntimeContext } from "../app/services/topic-runtime-context.
 import { getNativeCore, resolveCoreTopicBinding, restoreRemoteCoreRun } from "../core/native-core-service.js";
 import type { TopicRuntimeContext } from "../app/services/topic-runtime-context.js";
 import { hasRemoteTopicRunEvents, startRemoteTopicRunEvents } from "../opencode/topic-event-bus.js";
-interface Options { parentID?: string; sessionID?: string; requestID?: string; answers?: string[][]; parts?: unknown[]; model?: unknown; agent?: string; variant?: string; directory?: string }
+interface Options { parentID?: string; reply?: "once"|"always"|"reject"; sessionID?: string; requestID?: string; answers?: string[][]; parts?: unknown[]; model?: unknown; agent?: string; variant?: string; directory?: string }
 const runs = new Map<string,string>();
 export function getRemoteRunId(sessionId: string): string | undefined { return runs.get(sessionId); }
 /** One request-driven recovery attempt; never starts an idle heartbeat or retry loop. */
@@ -70,7 +70,22 @@ export async function invokeTopicSdk(topic: TopicRuntimeContext, operation: stri
       if(!runId)return {handled:true,result:{data:true}};
       return request("stop",{runId});
     }
+    case "config.providers": return request("models.list");
+    case "app.agents": return request("agents.list");
+    case "command.list": return request("commands.list");
+    case "permission.list": return request("permission.list");
+    case "permission.reply": {
+      if(!options.requestID||!options.reply)throw new Error("Remote Permission lacks reply identity");
+      const runId=binding.sessionId?await recoverRemoteTopicRun(topic,false,requestOptions?.signal):undefined;
+      if(!runId)throw new Error("Remote Permission lacks active run identity");
+      return request("permission.reply",{runId,requestId:options.requestID,reply:options.reply});
+    }
     case "question.list": return request("question.list");
+    case "question.reject": {
+      const runId=binding.sessionId?await recoverRemoteTopicRun({...topic,directory:options.directory??topic.directory},true,requestOptions?.signal):undefined;
+      if(!runId||!options.requestID)throw new Error("Remote Question lacks active run identity");
+      return request("question.reject",{runId,requestId:options.requestID});
+    }
     case "question.reply": {
       const runId=binding.sessionId ? await recoverRemoteTopicRun({...topic,directory:options.directory??topic.directory},true,requestOptions?.signal) : undefined;
       if(!runId || !options.requestID || !options.answers) throw new Error("Remote Question lacks active run identity");

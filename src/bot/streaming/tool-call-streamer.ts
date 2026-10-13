@@ -8,6 +8,13 @@ const TELEGRAM_MESSAGE_SAFE_LENGTH = 4000;
 const MAX_STREAM_SYNC_RATE_LIMIT_RETRIES = 3;
 
 const DEFAULT_STREAM_KEY = "default";
+const ACTIVITY_AUTHORIZATION = /(authorization\s*:\s*bearer\s+)[^\s]+/gi;
+const ACTIVITY_SECRET_ASSIGNMENT = /(\b(?:api[_-]?key|token|password|secret|credential)\b\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s]+)/gi;
+const ACTIVITY_TELEGRAM_TOKEN = /\b\d{6,}:[A-Za-z0-9_-]{20,}\b/g;
+export function renderToolActivity(input:string):{text:string;entities:Array<{type:"expandable_blockquote";offset:number;length:number}>}{
+ const body=input.trim().replace(ACTIVITY_AUTHORIZATION,"$1[REDACTED]").replace(ACTIVITY_SECRET_ASSIGNMENT,"$1[REDACTED]").replace(ACTIVITY_TELEGRAM_TOKEN,"[REDACTED]");
+ const text=`🛠 Activity\n\n${body}`; return {text,entities:[{type:"expandable_blockquote",offset:0,length:text.length}]};
+}
 
 export type ToolStreamKey = "default" | "subagent" | "todo";
 
@@ -253,9 +260,7 @@ export class ToolCallStreamer {
     }
   }
 
-  private getStateId(sessionId: string, streamKey: ToolStreamKey): string {
-    return `${sessionId}:${streamKey}`;
-  }
+  private getStateId(sessionId: string, _streamKey: ToolStreamKey): string { return `${sessionId}:activity`; }
 
   private getStatesForSession(sessionId: string): StreamState[] {
     return Array.from(this.allStates).filter((state) => state.sessionId === sessionId);

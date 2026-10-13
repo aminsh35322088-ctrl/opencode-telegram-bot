@@ -9,13 +9,14 @@ type TypingApi = Pick<Api, "sendChatAction">;
 type TypingState = {
   api: TypingApi;
   chatId: number;
+  threadId?: number;
   timer: ReturnType<typeof setInterval>;
 };
 
 class TypingIndicatorManager {
   private readonly states = new Map<string, TypingState>();
 
-  start(sessionId: string, api: TypingApi, chatId: number): void {
+  start(sessionId: string, api: TypingApi, chatId: number, threadId?: number): void {
     if (!sessionId || !chatId) return;
     this.stop(sessionId, "restart");
 
@@ -24,7 +25,7 @@ class TypingIndicatorManager {
     }, TYPING_REFRESH_MS);
     timer.unref?.();
 
-    this.states.set(sessionId, { api, chatId, timer });
+    this.states.set(sessionId, { api, chatId, ...(threadId && threadId > 1 ? { threadId } : {}), timer });
     void this.tick(sessionId);
   }
 
@@ -53,7 +54,8 @@ class TypingIndicatorManager {
     }
 
     try {
-      await state.api.sendChatAction(state.chatId, "typing");
+      if (state.threadId) await state.api.sendChatAction(state.chatId, "typing", { message_thread_id: state.threadId });
+      else await state.api.sendChatAction(state.chatId, "typing");
     } catch (error) {
       logger.debug(`[TypingIndicator] Telegram typing refresh failed: session=${sessionId}`, error);
     }

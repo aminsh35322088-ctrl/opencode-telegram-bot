@@ -6,10 +6,13 @@ import { invokeTopicSdk } from "../src/control-plane/topic-sdk-adapter.js";
 const binding:NodeBinding={nodeId:'adapter-node',generation:1,chatId:-100,threadId:2,sessionId:'owned',currentRevision:2,status:'ready',createdAt:'now',updatedAt:'now'};
 nodeBindings.find=async()=>structuredClone(binding);
 nodeBindings.list=async()=>[];
-const calls:string[]=[];
+const calls:Array<{operation:string;payload:unknown}>=[];
 installSecureNodeTransport({request:async (_binding,envelope)=>{
-  calls.push(envelope.operation);
+  calls.push({operation:envelope.operation,payload:envelope.payload});
   if(envelope.operation==='session.get')return {ok:true,result:{id:'owned',directory:'/data/topic'}};
+  if(envelope.operation==='models.list')return {ok:true,result:{providers:[{id:'opencode',name:'OpenCode',models:{}}]}};
+  if(envelope.operation==='agents.list')return {ok:true,result:[{name:'build',mode:'primary'}]};
+  if(envelope.operation==='permission.list')return {ok:true,result:[{id:'perm',sessionID:'owned'}]};
   return {ok:true,result:{}};
 }});
 const topic={chatId:-100,threadId:2,sessionId:'owned',directory:'/logical/topic-one'};
@@ -32,4 +35,11 @@ test('unbound Topic retains legacy dispatch without remote fallback for bound To
 test('retired remote Topics never fall back to the local Core',async()=>{
  const original=nodeBindings.find;nodeBindings.find=async()=>undefined;nodeBindings.list=async()=>[{...binding,status:'retired'}];
  try{await assert.rejects(invokeTopicSdk(topic,'session.get',[]),/Retired/);}finally{nodeBindings.find=original;nodeBindings.list=async()=>[];}
+});
+
+test('remote Topic routes provider catalog and pending permission reads through owned Worker RPC',async()=>{
+ const catalog=await invokeTopicSdk(topic,'config.providers',[{}]);assert.deepEqual(catalog,{handled:true,result:{data:{providers:[{id:'opencode',name:'OpenCode',models:{}}]}}});
+ const agents=await invokeTopicSdk(topic,'app.agents',[{directory:topic.directory}]);assert.deepEqual(agents,{handled:true,result:{data:[{name:'build',mode:'primary'}]}});
+ const permissions=await invokeTopicSdk(topic,'permission.list',[{directory:topic.directory}]);assert.deepEqual(permissions,{handled:true,result:{data:[{id:'perm',sessionID:'owned'}]}});
+ assert.deepEqual(calls.slice(-3),[{operation:'models.list',payload:{}},{operation:'agents.list',payload:{}},{operation:'permission.list',payload:{}}]);
 });

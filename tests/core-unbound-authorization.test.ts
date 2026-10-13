@@ -54,3 +54,16 @@ test('Root in-place rotation sanitizes old generation and verifies binding.rotat
  });
  await transport.retireFenced(identity,true);await transport.rotateFenced(identity,'b'.repeat(64),target);assert.deepEqual(seen,['retire','binding.rotate']);
 });
+
+
+test('bound Root transport admits Worker-supported provider catalog and permission reads with exact session scope',async()=>{
+ const home=await mkdtemp(path.join(tmpdir(),'bound-root-'));const protocol=new NodeProtocol(path.join(home,'replay.json'));
+ const identity={binding:{nodeId:'slot',generation:3,chatId:-100,threadId:77,sessionId:'owned',status:'ready'},endpoint:'https://worker.up.railway.app',secret:'s'.repeat(64)};
+ const registry=captureNodeRegistry({CONTROL_NODE_REGISTRY:JSON.stringify([identity])});const seen:string[]=[];
+ const transport=new InfrastructureNodeTransport(registry,protocol,async()=>{},async(_url,options)=>{
+  const request=JSON.parse(options!.body as string);seen.push(request.operation);const result=request.operation==='models.list'?{providers:[]}:[];
+  const reply=protocol.sign({...request,nonce:`reply-${seen.length}`.padEnd(32,'a'),timestamp:Date.now(),payload:{ok:true,result}},identity.secret);return new Response(reply.body,{status:200,headers:{'x-node-signature':reply.signature}});
+ });
+ for(const operation of ['models.list','permission.list']){const result=await transport.request({version:1,...identity.binding,operation,payload:{},timestamp:Date.now(),nonce:operation.replaceAll('.','').padEnd(32,'a')});assert.equal((result as {ok?:boolean}).ok,true);}
+ assert.deepEqual(seen,['models.list','permission.list']);
+});
