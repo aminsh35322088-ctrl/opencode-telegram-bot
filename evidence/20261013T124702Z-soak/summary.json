@@ -1,0 +1,31 @@
+{
+  "stage": "soak",
+  "startedAt": "2026-10-13T12:47:12.985Z",
+  "finishedAt": "2026-10-13T12:49:44.210Z",
+  "elapsedS": 151,
+  "counts": {
+    "pass": 5,
+    "fail": 0,
+    "not-executed": 2
+  },
+  "cycles": 2,
+  "resources": {
+    "pid": 2323,
+    "selfRssKb": 124276,
+    "childRssKb": 586500,
+    "totalRssKb": 710776,
+    "childCount": 1,
+    "children": [
+      {
+        "pid": 2349,
+        "rssKb": 586500,
+        "cmd": "opencode serve --port 4096"
+      }
+    ],
+    "cpuTimeS": 27,
+    "memTotalKb": 16372440,
+    "memAvailableKb": 14696800,
+    "loadavg": "0.16 0.23 0.10",
+    "cpus": 4
+  }
+}

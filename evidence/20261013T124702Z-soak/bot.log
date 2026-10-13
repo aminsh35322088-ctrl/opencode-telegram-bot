@@ -1,0 +1,297 @@
+[2026-10-13T12:47:05.310Z] [INFO] Starting OpenCode Telegram Bot v0.26.2...
+[2026-10-13T12:47:05.311Z] [INFO] Node.js v22.23.3 on linux x64
+[2026-10-13T12:47:05.311Z] [INFO] Config loaded from /home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/.env
+[2026-10-13T12:47:05.311Z] [INFO] Logs are written to /home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/logs/bot-2026-10-13_12-47-04_2323.log
+[2026-10-13T12:47:05.311Z] [INFO] Allowed User ID: 987654321
+[2026-10-13T12:47:05.370Z] [INFO] [Extensions] Migrated bundled runtime Extensions into bot state: seeded=1
+[2026-10-13T12:47:05.373Z] [INFO] [TopicTelemetry] event=runtime_state_store_missing path=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/runtime/topics/telegram-topic-runtime.json
+[2026-10-13T12:47:05.373Z] [INFO] [GithubIntegration] not configured
+[2026-10-13T12:47:05.540Z] [INFO] [FreeLLMCatalog] Public catalog updated: generatedAt=2026-09-29T07:15:42.065Z, providers=5, direct=free-kilo
+[2026-10-13T12:47:05.563Z] [INFO] [CustomProvider] Migrated 1 legacy provider/STT credential(s) into Credential Vault
+[2026-10-13T12:47:05.564Z] [INFO] [Tailscale] not connected
+[2026-10-13T12:47:05.572Z] [INFO] [Extensions] Managed OpenCode config ready: path=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/.config/opencode-telegram/managed-opencode.json, plugins=1
+[2026-10-13T12:47:05.573Z] [INFO] [ModelCatalog] Automatic provider model refresh enabled: every 5 minutes
+[2026-10-13T12:47:05.573Z] [INFO] [FreeLLMCatalog] Live public registry refresh enabled: every 5 minutes
+[2026-10-13T12:47:05.574Z] [INFO] [Bot] Using custom Telegram API root: http://127.0.0.1:8081
+[2026-10-13T12:47:05.588Z] [WARN] [Bot] Could not send Core update notification: Error: ENOENT: no such file or directory, open '/data/.last-core-notified-version'
+    at async open (node:internal/fs/promises:639:25)
+    at async writeFile (node:internal/fs/promises:1222:14)
+    at async notifyCoreUpdate (file:///home/runner/work/opencode-telegram-bot/opencode-telegram-bot/dist/bot/index.js:59:9)
+[2026-10-13T12:47:05.590Z] [INFO] [Core] Railway memory policy: soft=840MiB hard=963MiB maxWorkers=8
+[2026-10-13T12:47:05.592Z] [INFO] [Core] OpenCode Telegram Core initialized: bindings=0, workers=0
+[2026-10-13T12:47:05.592Z] [INFO] [TelegramTopics] Bot capabilities: has_topics_enabled=true, allows_users_to_create_topics=true
+[2026-10-13T12:47:05.603Z] [INFO] [RuntimeWatchdog] enabled intervalMs=30000 busyWarnMs=300000 eventLoopWarnMs=2000 eventLoopCriticalMs=10000
+[2026-10-13T12:47:05.604Z] [INFO] [OpenCodeAutoRestart] Enabled: host=127.0.0.1, port=4096, intervalSec=20, container=false, spawnInContainer=false, healthTimeoutMs=5000, failuresBeforeRestart=3
+[2026-10-13T12:47:05.608Z] [INFO] [OpenCodeAutoRestart] Startup: preparing local OpenCode server on port=4096
+[2026-10-13T12:47:05.609Z] [INFO] [ProcessBudget] admit kind=diagnostic lease=2323-mv6oe1l5-1 active=1/7 workingSetMb=142 totalMb=142 memoryLimitMb=unknown cpuLimit=unknown timeoutMs=5000
+[2026-10-13T12:47:05.617Z] [INFO] Bot @soak_test_bot started!
+[2026-10-13T12:47:05.642Z] [INFO] [ProcessBudget] release kind=diagnostic lease=2323-mv6oe1l5-1 durationMs=33 active=0/7
+[2026-10-13T12:47:05.642Z] [INFO] [ProcessBudget] admit kind=diagnostic lease=2323-mv6oe1m2-2 active=1/7 workingSetMb=140 totalMb=140 memoryLimitMb=unknown cpuLimit=unknown timeoutMs=5000
+[2026-10-13T12:47:05.649Z] [INFO] [CustomProvider] Saved provider soak capability=general models=1
+[2026-10-13T12:47:05.649Z] [INFO] [ModelCatalog] Updated soak: 1 -> 1 models
+[2026-10-13T12:47:05.655Z] [INFO] [ModelCatalog] Custom provider config updated without restarting active OpenCode server
+[2026-10-13T12:47:05.685Z] [INFO] [ProcessBudget] release kind=diagnostic lease=2323-mv6oe1m2-2 durationMs=43 active=0/7
+[2026-10-13T12:47:05.685Z] [INFO] [OpenCodeAutoRestart] Startup: starting local OpenCode server on port=4096
+[2026-10-13T12:47:05.686Z] [INFO] [ProcessBudget] admit kind=opencode-server lease=2323-mv6oe1na-3 active=1/7 workingSetMb=140 totalMb=140 memoryLimitMb=unknown cpuLimit=unknown timeoutMs=owner-bound
+[2026-10-13T12:47:10.611Z] [INFO] [RuntimeWatchdog] phase=heartbeat reason=startup pid=2323 uptimeSec=6 rssMb=140 heapUsedMb=39 serviceWorkingSetMb=140 serviceMemoryTotalMb=140 serviceMemoryLimitMb=unknown serviceMemoryPressure=unknown activeChildProcesses=1 serviceProcessCount=120 childKinds={"opencode-server":1} cpuLimit=unknown cpuLoad1=0.73 session=none sessionState=not-found busyForMs=0 sessionCheckMs=0 health=healthy healthLatencyMs=7 eventLoopLagMs=1
+[2026-10-13T12:47:11.692Z] [INFO] [OpenCodeAutoRestart] OpenCode server recovered: pid=2349, port=4096
+[2026-10-13T12:47:11.692Z] [INFO] [OpenCodeReady] OpenCode server is ready: reason=auto_restart_startup
+[2026-10-13T12:47:11.694Z] [INFO] [Bot] Subscribing to OpenCode events for project: /home/runner/work/opencode-telegram-bot/opencode-telegram-bot
+[2026-10-13T12:47:11.694Z] [INFO] [TopicTelemetry] event=subscription_added directory=/home/runner/work/opencode-telegram-bot/opencode-telegram-bot subscriberCount=1 scoped=false
+[2026-10-13T12:47:11.694Z] [INFO] [SessionTrace] phase=topic_directory_stream_connecting directory=/home/runner/work/opencode-telegram-bot/opencode-telegram-bot
+[2026-10-13T12:47:11.695Z] [INFO] [Bot] Started background session tracking after OpenCode ready: reason=auto_restart_startup
+[2026-10-13T12:47:11.695Z] [INFO] [SessionTrace] phase=topic_directory_stream_active directory=/home/runner/work/opencode-telegram-bot/opencode-telegram-bot
+[2026-10-13T12:47:11.695Z] [INFO] [TopicTelemetry] event=directory_stream_active directory=/home/runner/work/opencode-telegram-bot/opencode-telegram-bot subscriberCount=1
+[2026-10-13T12:47:13.143Z] [INFO] [TelegramKeyboard] /start mode detection: chat=987654321, isInTopic=false, isSupergroupForum=false, isPrivateTopicMode=true, topicMode=false
+[2026-10-13T12:47:13.149Z] [INFO] [TelegramKeyboard] Main navigation pinned in All/root: chat=987654321, message=2
+[2026-10-13T12:47:13.164Z] [INFO] [TelegramKeyboard] /start replaced Main navigation anchor in All/root: chat=987654321, previous=none, current=2
+[2026-10-13T12:47:13.164Z] [INFO] [TelegramKeyboard] /start root Main replacement finished: chat=987654321, success=true, mode=topic-aware
+[2026-10-13T12:47:13.367Z] [INFO] [Bot] Consuming Reply Keyboard control: scope=main thread=0 text=💬 New Chat
+[2026-10-13T12:47:14.383Z] [INFO] [TelegramTopics] Created isolated workspace: chat=987654321, directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c
+[2026-10-13T12:47:14.384Z] [INFO] [OpenCode] Creating session pinned to selected model: soak/soak-model
+[2026-10-13T12:47:19.577Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked directory=/home/runner/work/opencode-telegram-bot/opencode-telegram-bot type=server.connected
+[2026-10-13T12:47:20.103Z] [INFO] [FreeLLMCatalog] Runtime registration verified: providers=free-kilo, models=16
+[2026-10-13T12:47:20.103Z] [INFO] [OpenCodeMemory] enabled intervalMs=30000 cooldownMs=900000 workingSetThreshold=78% totalThreshold=86%
+[2026-10-13T12:47:20.727Z] [INFO] [TopicTelemetry] event=binding_saved chat=987654321 thread=10000 session=ses_ecab2659fffeV73w1lURNdNWst directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c
+[2026-10-13T12:47:20.727Z] [INFO] [TelegramTopics] Created topic binding: session=ses_ecab2659fffeV73w1lURNdNWst, chat=987654321, thread=10000, title="Chat #01", directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c
+[2026-10-13T12:47:20.728Z] [INFO] [TopicTelemetry] event=runtime_state_created chat=987654321 thread=10000 session=ses_ecab2659fffeV73w1lURNdNWst states=1
+[2026-10-13T12:47:20.730Z] [INFO] [TopicTelemetry] event=runtime_state_persisted states=1
+[2026-10-13T12:47:20.735Z] [INFO] [TopicMode] Entered Topic Mode without replacing General InlineKeyboard: chat=987654321
+[2026-10-13T12:47:20.737Z] [INFO] [TelegramKeyboard] Main navigation pinned in All/root: chat=987654321, message=2
+[2026-10-13T12:47:20.737Z] [INFO] [TelegramKeyboard] Restored pinned Main status + InlineKeyboard in-place: chat=987654321, message=2
+[2026-10-13T12:47:20.770Z] [INFO] [Bot] Subscribing to OpenCode events for project: /home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c
+[2026-10-13T12:47:20.770Z] [INFO] [TopicTelemetry] event=subscription_added session=ses_ecab2659fffeV73w1lURNdNWst directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c subscriberCount=2 scoped=true
+[2026-10-13T12:47:20.770Z] [INFO] [Attach] Attached to session: key=987654321:10000, session=ses_ecab2659fffeV73w1lURNdNWst, directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c
+[2026-10-13T12:47:20.771Z] [INFO] [SessionTrace] phase=topic_directory_stream_connecting directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c
+[2026-10-13T12:47:20.773Z] [INFO] [SessionTrace] phase=topic_directory_stream_active directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c
+[2026-10-13T12:47:20.773Z] [INFO] [TopicTelemetry] event=directory_stream_active directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c subscriberCount=1
+[2026-10-13T12:47:20.781Z] [INFO] [TelegramTopics] New Chat created: session=ses_ecab2659fffeV73w1lURNdNWst, title=Chat #01, thread=10000; General InlineKeyboard preserved; AI Topic ReplyKeyboard activated
+[2026-10-13T12:47:20.781Z] [INFO] [TelegramTopics] New Chat opened: session=ses_ecab2659fffeV73w1lURNdNWst, chat=987654321, thread=10000, directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c
+[2026-10-13T12:47:21.019Z] [INFO] [Bot] Dispatching prompt: session=ses_ecab2659fffeV73w1lURNdNWst model=soak/soak-model agent=build textLength=55 files=0
+[2026-10-13T12:47:21.020Z] [INFO] [Attach] Marked attached session busy: key=987654321:10000, session=ses_ecab2659fffeV73w1lURNdNWst
+[2026-10-13T12:47:21.024Z] [INFO] [LLM Prompt] session=ses_ecab2659fffeV73w1lURNdNWst model=soak/soak-model agent=build parts=1 promptChars=55 memoryInjected=false prepMs=0
+[2026-10-13T12:47:21.050Z] [INFO] [LLM Prompt] session=ses_ecab2659fffeV73w1lURNdNWst promptAsync returned in 26ms
+[2026-10-13T12:47:21.050Z] [INFO] [Bot] promptAsync accepted by OpenCode: session=ses_ecab2659fffeV73w1lURNdNWst model=soak/soak-model
+[2026-10-13T12:47:21.507Z] [ERROR] Failed to send typing action: GrammyError: Call to 'sendChatAction' failed! (400: Unsupported method)
+    at toGrammyError (/home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/core/error.js:47:12)
+    at ApiClient.callApi (/home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/core/client.js:101:48)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+[2026-10-13T12:47:21.922Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=core/config-reference directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.929Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=agent directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.930Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=command directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.930Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=skill directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.931Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=models-dev directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.932Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=config-agent directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.933Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=config-command directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.934Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=config-skill directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.935Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=alibaba directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.937Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=amazon-bedrock directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.938Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=anthropic directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.938Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=azure-cognitive-services directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.939Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=azure directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.940Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=cerebras directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.941Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=cloudflare-ai-gateway directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.942Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=cloudflare-workers-ai directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.943Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=cohere directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.943Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=deepinfra directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.944Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=gateway directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.945Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=github-copilot directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.945Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=gitlab directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.946Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=google directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.947Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=google-vertex-anthropic directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.947Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=google-vertex directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.948Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=groq directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.949Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=kilo directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.949Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=llmgateway directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.950Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=mistral directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.951Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=nvidia directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.952Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=opencode directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.952Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=snowflake-cortex directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.953Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=openai-compatible directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.954Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=openai directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.955Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=openrouter directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.955Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=perplexity directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.956Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=sap-ai-core directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.957Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=togetherai directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.957Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=vercel directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.958Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=venice directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.959Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=xai directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.959Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=zenmux directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.960Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=dynamic-provider directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.961Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=config-plugin directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.961Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=config-provider directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:21.962Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=variant directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c type=plugin.added
+[2026-10-13T12:47:24.232Z] [INFO] [Cancellation] Requesting current-run cancellation: session=ses_ecab2659fffeV73w1lURNdNWst, reason=telegram_native_stop
+[2026-10-13T12:47:24.266Z] [WARN] [Aggregator] Session error: ses_ecab2659fffeV73w1lURNdNWst: Aborted
+[2026-10-13T12:47:24.266Z] [INFO] [Aggregator] Session became idle: ses_ecab2659fffeV73w1lURNdNWst
+[2026-10-13T12:47:24.273Z] [INFO] [Aggregator] Session became idle: ses_ecab2659fffeV73w1lURNdNWst
+[2026-10-13T12:47:24.273Z] [INFO] [Aggregator] Session became idle: ses_ecab2659fffeV73w1lURNdNWst
+[2026-10-13T12:47:24.273Z] [INFO] [Attach] Marked attached session idle: key=987654321:10000, session=ses_ecab2659fffeV73w1lURNdNWst
+[2026-10-13T12:47:24.274Z] [INFO] [TopicTelemetry] event=runtime_state_updated chat=987654321 thread=10000 session=ses_ecab2659fffeV73w1lURNdNWst runState=idle
+[2026-10-13T12:47:24.275Z] [INFO] [TopicTelemetry] event=runtime_state_updated chat=987654321 thread=10000 session=ses_ecab2659fffeV73w1lURNdNWst runState=idle
+[2026-10-13T12:47:24.275Z] [INFO] [Bot] Native generation stop handled: chat=987654321, thread=10000, draft=1, result=confirmed
+[2026-10-13T12:47:24.277Z] [ERROR] Failed to send typing action: GrammyError: Call to 'sendChatAction' failed! (400: Unsupported method)
+    at toGrammyError (/home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/core/error.js:47:12)
+    at ApiClient.callApi (/home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/core/client.js:101:48)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+[2026-10-13T12:47:24.281Z] [INFO] [TopicTelemetry] event=runtime_state_persisted states=1
+[2026-10-13T12:47:24.288Z] [INFO] [TopicTelemetry] event=runtime_state_persisted states=1
+[2026-10-13T12:47:26.059Z] [INFO] [LLM Usage] session=ses_ecab2659fffeV73w1lURNdNWst model=soak/soak-model promptChars=55 elapsedMs=5009 input=0 output=0 reasoning=0 cost=0
+[2026-10-13T12:47:28.620Z] [INFO] [Bot] Dispatching prompt: session=ses_ecab2659fffeV73w1lURNdNWst model=soak/soak-model agent=build textLength=50 files=0
+[2026-10-13T12:47:28.620Z] [INFO] [Attach] Marked attached session busy: key=987654321:10000, session=ses_ecab2659fffeV73w1lURNdNWst
+[2026-10-13T12:47:28.621Z] [INFO] [LLM Prompt] session=ses_ecab2659fffeV73w1lURNdNWst model=soak/soak-model agent=build parts=1 promptChars=50 memoryInjected=false prepMs=0
+[2026-10-13T12:47:28.639Z] [INFO] [LLM Prompt] session=ses_ecab2659fffeV73w1lURNdNWst promptAsync returned in 18ms
+[2026-10-13T12:47:28.639Z] [INFO] [Bot] promptAsync accepted by OpenCode: session=ses_ecab2659fffeV73w1lURNdNWst model=soak/soak-model
+[2026-10-13T12:47:28.670Z] [ERROR] Failed to send typing action: GrammyError: Call to 'sendChatAction' failed! (400: Unsupported method)
+    at toGrammyError (/home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/core/error.js:47:12)
+    at ApiClient.callApi (/home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/core/client.js:101:48)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+[2026-10-13T12:47:29.584Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked directory=/home/runner/work/opencode-telegram-bot/opencode-telegram-bot type=server.heartbeat
+[2026-10-13T12:47:30.122Z] [INFO] [Bot] Consuming Reply Keyboard control: scope=ai-topic thread=10000 text=🗑 Delete Chat
+[2026-10-13T12:47:30.428Z] [INFO] [TelegramTopics] Delete requested during active run; cancelling current run first: session=ses_ecab2659fffeV73w1lURNdNWst, thread=10000
+[2026-10-13T12:47:30.428Z] [INFO] [Cancellation] Requesting current-run cancellation: session=ses_ecab2659fffeV73w1lURNdNWst, reason=telegram_topic_delete
+[2026-10-13T12:47:30.444Z] [WARN] [Aggregator] Session error: ses_ecab2659fffeV73w1lURNdNWst: Aborted
+[2026-10-13T12:47:30.445Z] [INFO] [Aggregator] Session became idle: ses_ecab2659fffeV73w1lURNdNWst
+[2026-10-13T12:47:30.448Z] [INFO] [Aggregator] Session became idle: ses_ecab2659fffeV73w1lURNdNWst
+[2026-10-13T12:47:30.448Z] [INFO] [Aggregator] Session became idle: ses_ecab2659fffeV73w1lURNdNWst
+[2026-10-13T12:47:30.449Z] [INFO] [Attach] Marked attached session idle: key=987654321:10000, session=ses_ecab2659fffeV73w1lURNdNWst
+[2026-10-13T12:47:30.449Z] [INFO] [TopicTelemetry] event=runtime_state_updated chat=987654321 thread=10000 session=ses_ecab2659fffeV73w1lURNdNWst runState=idle
+[2026-10-13T12:47:30.450Z] [INFO] [TopicTelemetry] event=runtime_state_updated chat=987654321 thread=10000 session=ses_ecab2659fffeV73w1lURNdNWst runState=idle
+[2026-10-13T12:47:30.450Z] [ERROR] Failed to send typing action: GrammyError: Call to 'sendChatAction' failed! (400: Unsupported method)
+    at toGrammyError (/home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/core/error.js:47:12)
+    at ApiClient.callApi (/home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/core/client.js:101:48)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+[2026-10-13T12:47:30.461Z] [INFO] [TopicTelemetry] event=runtime_state_persisted states=1
+[2026-10-13T12:47:30.464Z] [INFO] [TopicTelemetry] event=runtime_state_persisted states=1
+[2026-10-13T12:47:30.465Z] [INFO] [TopicTelemetry] event=delete_started chat=987654321 thread=10000 session=ses_ecab2659fffeV73w1lURNdNWst directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c
+[2026-10-13T12:47:30.476Z] [INFO] [TopicTelemetry] event=session_deleted chat=987654321 thread=10000 session=ses_ecab2659fffeV73w1lURNdNWst directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c
+[2026-10-13T12:47:30.476Z] [INFO] [TopicTelemetry] event=subscription_removed session=ses_ecab2659fffeV73w1lURNdNWst directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c subscriberCount=1
+[2026-10-13T12:47:30.477Z] [INFO] [Bot] Retired session runtime state: session=ses_ecab2659fffeV73w1lURNdNWst, reason=topic_deleted
+[2026-10-13T12:47:30.477Z] [INFO] [TopicTelemetry] event=event_subscription_removed chat=987654321 thread=10000 session=ses_ecab2659fffeV73w1lURNdNWst directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c
+[2026-10-13T12:47:30.477Z] [INFO] [TopicTelemetry] event=runtime_state_updated chat=987654321 thread=10000 session=ses_ecab2659fffeV73w1lURNdNWst runState=idle
+[2026-10-13T12:47:30.477Z] [INFO] [Attach] Cleared attached session: reason=telegram_topic_deleted, key=987654321:10000, session=ses_ecab2659fffeV73w1lURNdNWst, directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c
+[2026-10-13T12:47:30.480Z] [INFO] [TopicTelemetry] event=runtime_state_persisted states=1
+[2026-10-13T12:47:30.614Z] [INFO] [TelegramTopics] Deleted isolated workspace: directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c
+[2026-10-13T12:47:30.614Z] [INFO] [TopicTelemetry] event=workspace_deleted chat=987654321 thread=10000 session=ses_ecab2659fffeV73w1lURNdNWst directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c
+[2026-10-13T12:47:30.615Z] [INFO] [TopicTelemetry] event=telegram_topic_deleted chat=987654321 thread=10000 session=ses_ecab2659fffeV73w1lURNdNWst directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c
+[2026-10-13T12:47:30.616Z] [INFO] [TopicTelemetry] event=ephemeral_state_cleared chat=987654321 thread=10000 session=ses_ecab2659fffeV73w1lURNdNWst directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c
+[2026-10-13T12:47:30.616Z] [INFO] [TopicTelemetry] event=runtime_state_removed chat=987654321 thread=10000 removed=true
+[2026-10-13T12:47:30.616Z] [INFO] [TopicTelemetry] event=runtime_state_removed chat=987654321 thread=10000 session=ses_ecab2659fffeV73w1lURNdNWst directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c
+[2026-10-13T12:47:30.617Z] [INFO] [TopicTelemetry] event=runtime_state_persisted states=0
+[2026-10-13T12:47:30.617Z] [INFO] [TopicTelemetry] event=binding_removed chat=987654321 session=ses_ecab2659fffeV73w1lURNdNWst
+[2026-10-13T12:47:30.617Z] [INFO] [TopicTelemetry] event=binding_removed chat=987654321 thread=10000 session=ses_ecab2659fffeV73w1lURNdNWst directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c
+[2026-10-13T12:47:30.617Z] [INFO] [TelegramTopics] No topics remaining for chat=987654321; returning to normal mode
+[2026-10-13T12:47:30.617Z] [INFO] [TopicTelemetry] event=delete_completed chat=987654321 thread=10000 session=ses_ecab2659fffeV73w1lURNdNWst directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c
+[2026-10-13T12:47:30.617Z] [INFO] [TelegramTopics] Permanently deleted Topic: session=ses_ecab2659fffeV73w1lURNdNWst, chat=987654321, thread=10000, directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/3e08afff-aef1-4b9e-92b2-a36e04d6353c
+[2026-10-13T12:47:30.624Z] [INFO] [TelegramTopics] Delete confirmation completed: session=ses_ecab2659fffeV73w1lURNdNWst, thread=10000
+[2026-10-13T12:47:34.735Z] [INFO] [Bot] Consuming Reply Keyboard control: scope=general thread=0 text=💬 New Chat
+[2026-10-13T12:47:35.605Z] [INFO] [RuntimeWatchdog] phase=heartbeat reason=interval pid=2323 uptimeSec=31 rssMb=153 heapUsedMb=49 serviceWorkingSetMb=153 serviceMemoryTotalMb=153 serviceMemoryLimitMb=unknown serviceMemoryPressure=unknown activeChildProcesses=1 serviceProcessCount=120 childKinds={"opencode-server":1} cpuLimit=unknown cpuLoad1=0.97 session=none sessionState=not-found busyForMs=0 sessionCheckMs=0 health=healthy healthLatencyMs=2 eventLoopLagMs=1
+[2026-10-13T12:47:35.767Z] [INFO] [TelegramTopics] Created isolated workspace: chat=987654321, directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67
+[2026-10-13T12:47:35.768Z] [INFO] [OpenCode] Creating session pinned to selected model: soak/soak-model
+[2026-10-13T12:47:37.056Z] [INFO] [TopicTelemetry] event=binding_saved chat=987654321 thread=10001 session=ses_ecab225bdffezoog25q24Qkoxm directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67
+[2026-10-13T12:47:37.056Z] [INFO] [TelegramTopics] Created topic binding: session=ses_ecab225bdffezoog25q24Qkoxm, chat=987654321, thread=10001, title="Chat #01", directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67
+[2026-10-13T12:47:37.056Z] [INFO] [TopicTelemetry] event=runtime_state_created chat=987654321 thread=10001 session=ses_ecab225bdffezoog25q24Qkoxm states=1
+[2026-10-13T12:47:37.058Z] [INFO] [TopicTelemetry] event=runtime_state_persisted states=1
+[2026-10-13T12:47:37.062Z] [INFO] [TopicMode] Entered Topic Mode without replacing General InlineKeyboard: chat=987654321
+[2026-10-13T12:47:37.064Z] [INFO] [TelegramKeyboard] Main navigation pinned in All/root: chat=987654321, message=2
+[2026-10-13T12:47:37.064Z] [INFO] [TelegramKeyboard] Restored pinned Main status + InlineKeyboard in-place: chat=987654321, message=2
+[2026-10-13T12:47:37.084Z] [INFO] [Bot] Subscribing to OpenCode events for project: /home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67
+[2026-10-13T12:47:37.084Z] [INFO] [TopicTelemetry] event=subscription_added session=ses_ecab225bdffezoog25q24Qkoxm directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 subscriberCount=2 scoped=true
+[2026-10-13T12:47:37.085Z] [INFO] [Attach] Attached to session: key=987654321:10001, session=ses_ecab225bdffezoog25q24Qkoxm, directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67
+[2026-10-13T12:47:37.085Z] [INFO] [SessionTrace] phase=topic_directory_stream_connecting directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67
+[2026-10-13T12:47:37.086Z] [INFO] [SessionTrace] phase=topic_directory_stream_active directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67
+[2026-10-13T12:47:37.086Z] [INFO] [TopicTelemetry] event=directory_stream_active directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 subscriberCount=1
+[2026-10-13T12:47:37.091Z] [INFO] [TelegramTopics] New Chat created: session=ses_ecab225bdffezoog25q24Qkoxm, title=Chat #01, thread=10001; General InlineKeyboard preserved; AI Topic ReplyKeyboard activated
+[2026-10-13T12:47:37.091Z] [INFO] [TelegramTopics] New Chat opened: session=ses_ecab225bdffezoog25q24Qkoxm, chat=987654321, thread=10001, directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67
+[2026-10-13T12:47:37.124Z] [INFO] [Bot] Dispatching prompt: session=ses_ecab225bdffezoog25q24Qkoxm model=soak/soak-model agent=build textLength=55 files=0
+[2026-10-13T12:47:37.124Z] [INFO] [Attach] Marked attached session busy: key=987654321:10001, session=ses_ecab225bdffezoog25q24Qkoxm
+[2026-10-13T12:47:37.126Z] [INFO] [LLM Prompt] session=ses_ecab225bdffezoog25q24Qkoxm model=soak/soak-model agent=build parts=1 promptChars=55 memoryInjected=false prepMs=0
+[2026-10-13T12:47:37.140Z] [INFO] [LLM Prompt] session=ses_ecab225bdffezoog25q24Qkoxm promptAsync returned in 14ms
+[2026-10-13T12:47:37.140Z] [INFO] [Bot] promptAsync accepted by OpenCode: session=ses_ecab225bdffezoog25q24Qkoxm model=soak/soak-model
+[2026-10-13T12:47:37.557Z] [ERROR] Failed to send typing action: GrammyError: Call to 'sendChatAction' failed! (400: Unsupported method)
+    at toGrammyError (/home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/core/error.js:47:12)
+    at ApiClient.callApi (/home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/core/client.js:101:48)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+[2026-10-13T12:47:37.881Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=core/config-reference directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.888Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=agent directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.889Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=command directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.889Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=skill directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.890Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=models-dev directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.890Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=config-agent directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.891Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=config-command directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.892Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=config-skill directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.892Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=alibaba directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.893Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=amazon-bedrock directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.894Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=anthropic directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.894Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=azure-cognitive-services directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.895Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=azure directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.895Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=cerebras directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.896Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=cloudflare-ai-gateway directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.897Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=cloudflare-workers-ai directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.897Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=cohere directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.898Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=deepinfra directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.898Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=gateway directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.899Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=github-copilot directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.900Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=gitlab directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.900Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=google directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.902Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=google-vertex-anthropic directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.902Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=google-vertex directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.902Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=groq directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.904Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=kilo directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.904Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=llmgateway directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.905Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=mistral directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.905Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=nvidia directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.906Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=opencode directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.907Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=snowflake-cortex directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.907Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=openai-compatible directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.908Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=openai directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.908Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=openrouter directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.909Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=perplexity directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.909Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=sap-ai-core directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.910Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=togetherai directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.910Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=vercel directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.911Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=venice directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.912Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=xai directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.912Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=zenmux directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.913Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=dynamic-provider directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.913Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=config-plugin directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.914Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=config-provider directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:37.915Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=variant directory=/home/runner/.local/state/opencode-telegram-soak/20261013T124702Z-soak/opencode/topic-workspaces/987654321/99b2b8b4-a1be-4a53-8223-38a699b66d67 type=plugin.added
+[2026-10-13T12:47:39.585Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked directory=/home/runner/work/opencode-telegram-bot/opencode-telegram-bot type=server.heartbeat
+[2026-10-13T12:47:40.416Z] [INFO] [TelegramKeyboard] /start mode detection: chat=987654321, isInTopic=false, isSupergroupForum=false, isPrivateTopicMode=true, topicMode=true
+[2026-10-13T12:47:40.418Z] [INFO] [TelegramKeyboard] Main navigation pinned in All/root: chat=987654321, message=16
+[2026-10-13T12:47:40.430Z] [INFO] [TelegramKeyboard] Retired previous Main navigation message: chat=987654321, message=2
+[2026-10-13T12:47:40.430Z] [INFO] [TelegramKeyboard] /start replaced Main navigation anchor in All/root: chat=987654321, previous=2, current=16
+[2026-10-13T12:47:40.430Z] [INFO] [TelegramKeyboard] /start root Main replacement finished: chat=987654321, success=true, mode=topic-aware
+[2026-10-13T12:47:40.733Z] [INFO] [Bot] Consuming Reply Keyboard control: scope=general thread=0 text=💬 New Chat
+[2026-10-13T12:47:41.557Z] [ERROR] Failed to send typing action: GrammyError: Call to 'sendChatAction' failed! (400: Unsupported method)
+    at toGrammyError (/home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/core/error.js:47:12)
+    at ApiClient.callApi (/home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/core/client.js:101:48)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+[2026-10-13T12:47:45.558Z] [ERROR] Failed to send typing action: GrammyError: Call to 'sendChatAction' failed! (400: Unsupported method)
+    at toGrammyError (/home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/core/error.js:47:12)
+    at ApiClient.callApi (/home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/core/client.js:101:48)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+[2026-10-13T12:47:49.227Z] [INFO] [Aggregator] Session became idle: ses_ecab225bdffezoog25q24Qkoxm
+[2026-10-13T12:47:49.227Z] [INFO] [Attach] Marked attached session idle: key=987654321:10001, session=ses_ecab225bdffezoog25q24Qkoxm
+[2026-10-13T12:47:49.228Z] [ERROR] Failed to send typing action: GrammyError: Call to 'sendChatAction' failed! (400: Unsupported method)
+    at toGrammyError (/home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/core/error.js:47:12)
+    at ApiClient.callApi (/home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/core/client.js:101:48)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+[2026-10-13T12:47:49.585Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked directory=/home/runner/work/opencode-telegram-bot/opencode-telegram-bot type=server.heartbeat
+[2026-10-13T12:47:52.150Z] [INFO] [LLM Usage] session=ses_ecab225bdffezoog25q24Qkoxm model=soak/soak-model promptChars=55 elapsedMs=15010 input=0 output=0 reasoning=0 cost=0
+[2026-10-13T12:47:59.586Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked directory=/home/runner/work/opencode-telegram-bot/opencode-telegram-bot type=server.heartbeat
+[2026-10-13T12:48:05.605Z] [INFO] [RuntimeWatchdog] phase=heartbeat reason=interval pid=2323 uptimeSec=61 rssMb=161 heapUsedMb=43 serviceWorkingSetMb=161 serviceMemoryTotalMb=161 serviceMemoryLimitMb=unknown serviceMemoryPressure=unknown activeChildProcesses=1 serviceProcessCount=120 childKinds={"opencode-server":1} cpuLimit=unknown cpuLoad1=0.75 session=none sessionState=not-found busyForMs=0 sessionCheckMs=0 health=healthy healthLatencyMs=2 eventLoopLagMs=2
+[2026-10-13T12:48:09.586Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked directory=/home/runner/work/opencode-telegram-bot/opencode-telegram-bot type=server.heartbeat
+[2026-10-13T12:48:19.586Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked directory=/home/runner/work/opencode-telegram-bot/opencode-telegram-bot type=server.heartbeat
+[2026-10-13T12:48:29.587Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked directory=/home/runner/work/opencode-telegram-bot/opencode-telegram-bot type=server.heartbeat
+[2026-10-13T12:48:35.606Z] [INFO] [RuntimeWatchdog] phase=heartbeat reason=interval pid=2323 uptimeSec=91 rssMb=119 heapUsedMb=33 serviceWorkingSetMb=119 serviceMemoryTotalMb=119 serviceMemoryLimitMb=unknown serviceMemoryPressure=unknown activeChildProcesses=1 serviceProcessCount=120 childKinds={"opencode-server":1} cpuLimit=unknown cpuLoad1=0.51 session=none sessionState=not-found busyForMs=0 sessionCheckMs=0 health=healthy healthLatencyMs=3 eventLoopLagMs=1
+[2026-10-13T12:48:39.588Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked directory=/home/runner/work/opencode-telegram-bot/opencode-telegram-bot type=server.heartbeat
+[2026-10-13T12:48:49.588Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked directory=/home/runner/work/opencode-telegram-bot/opencode-telegram-bot type=server.heartbeat
+[2026-10-13T12:48:59.588Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked directory=/home/runner/work/opencode-telegram-bot/opencode-telegram-bot type=server.heartbeat
+[2026-10-13T12:49:05.605Z] [INFO] [RuntimeWatchdog] phase=heartbeat reason=interval pid=2323 uptimeSec=121 rssMb=120 heapUsedMb=33 serviceWorkingSetMb=120 serviceMemoryTotalMb=120 serviceMemoryLimitMb=unknown serviceMemoryPressure=unknown activeChildProcesses=1 serviceProcessCount=119 childKinds={"opencode-server":1} cpuLimit=unknown cpuLoad1=0.31 session=none sessionState=not-found busyForMs=0 sessionCheckMs=0 health=healthy healthLatencyMs=2 eventLoopLagMs=0
+[2026-10-13T12:49:09.589Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked directory=/home/runner/work/opencode-telegram-bot/opencode-telegram-bot type=server.heartbeat
+[2026-10-13T12:49:19.589Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked directory=/home/runner/work/opencode-telegram-bot/opencode-telegram-bot type=server.heartbeat
+[2026-10-13T12:49:29.590Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked directory=/home/runner/work/opencode-telegram-bot/opencode-telegram-bot type=server.heartbeat
+[2026-10-13T12:49:35.605Z] [INFO] [RuntimeWatchdog] phase=heartbeat reason=interval pid=2323 uptimeSec=151 rssMb=121 heapUsedMb=34 serviceWorkingSetMb=121 serviceMemoryTotalMb=121 serviceMemoryLimitMb=unknown serviceMemoryPressure=unknown activeChildProcesses=1 serviceProcessCount=119 childKinds={"opencode-server":1} cpuLimit=unknown cpuLoad1=0.18 session=none sessionState=not-found busyForMs=0 sessionCheckMs=0 health=healthy healthLatencyMs=2 eventLoopLagMs=0
+[2026-10-13T12:49:39.590Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked directory=/home/runner/work/opencode-telegram-bot/opencode-telegram-bot type=server.heartbeat

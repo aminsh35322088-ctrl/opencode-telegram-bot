@@ -1,0 +1,9 @@
+{"ts":"2026-10-13T12:47:13.352Z","flow":"W0","step":"start","status":"pass","replies":2}
+{"ts":"2026-10-13T12:47:20.903Z","flow":"W1","step":"new-chat","status":"pass","threadId":10000}
+{"ts":"2026-10-13T12:47:23.321Z","flow":"W2","step":"prompt-stream-tool","status":"pass","drafts":1,"messages":4,"modelRequests":2,"modelStreams":2,"modelToolCalls":0}
+{"ts":"2026-10-13T12:47:28.533Z","flow":"W5","step":"stop","status":"pass","draftId":1,"source":"stub-draft","confirmMs":303,"confirmedBy":"bot-log","outputsBefore":10,"outputsAtConfirm":11,"lateDelta":0,"streamCalls":3,"withinD1":true,"withinD2":true}
+{"ts":"2026-10-13T12:47:37.369Z","flow":"W6","step":"delete-chat","status":"pass","elapsed":303,"withinD4":true,"confirmationId":9,"liveDraft":2,"deletedTopic":10000,"topicGone":true,"reuseThreadId":10001,"reuseMs":302,"lateStreams":0,"requested":true,"completed":true}
+{"ts":"2026-10-13T12:47:40.709Z","flow":"W0","step":"start","status":"pass","replies":16}
+{"ts":"2026-10-13T12:48:40.940Z","flow":"W1","step":"new-chat","status":"fail","reason":"new topic id timed out after 60000ms"}
+{"ts":"2026-10-13T12:49:11.058Z","flow":"W5","step":"stop","status":"not-executed","reason":"issued generation draft timed out after 30000ms"}
+{"ts":"2026-10-13T12:49:41.192Z","flow":"W6","step":"delete-chat","status":"not-executed","reason":"issued generation draft timed out after 30000ms"}
