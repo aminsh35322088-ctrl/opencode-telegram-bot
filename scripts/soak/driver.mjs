@@ -20,6 +20,8 @@ const TG_PORT = args.get("telegram-port") ?? "8081";
 const TOKEN = args.get("token") ?? "123:soak";
 const USER_ID = Number(args.get("user-id") ?? 987654321);
 const TG_ROOT = `http://127.0.0.1:${TG_PORT}`;
+const MODEL_PORT = args.get("model-port") ?? process.env.SOAK_MODEL_PORT ?? "8090";
+const MODEL_ROOT = `http://127.0.0.1:${MODEL_PORT}`;
 
 // Registered deadlines — docs/SOAK_GATES.md §5. Exceeding one is a failure.
 const D = {
@@ -67,6 +69,16 @@ function messageUpdate(text, opts = {}) {
     from: { id: opts.fromId ?? USER_ID, is_bot: false, first_name: "Soak" },
     text,
   };
+  // Real Telegram attaches a `bot_command` entity to any text that starts with
+  // "/". grammy's Composer.command() requires that entity (offset 0, type
+  // `bot_command`) before it will dispatch, so without it EVERY Bot command is
+  // silently ignored — the message still reaches message-router, which made the
+  // gap look like a Bot bug rather than a harness gap. Verified: with no entity
+  // the debug probe `cmdmw enter text="/start"` fired but the handler never did.
+  if (text.startsWith("/")) {
+    const space = text.indexOf(" ");
+    message.entities = [{ offset: 0, length: space === -1 ? text.length : space, type: "bot_command" }];
+  }
   if (opts.threadId) message.message_thread_id = opts.threadId;
   return { message };
 }
@@ -85,6 +97,27 @@ async function tgState() {
   const res = await fetch(`${TG_ROOT}/__state`);
   if (!res.ok) throw new Error(`stub state HTTP ${res.status}`);
   return res.json();
+}
+
+// The model stub's own counters. `requests` counts every chat completion (the
+// Bot's tool-call probe included); `streams` counts streamed completions, which
+// only a real prompt produces. `streams` is therefore the honest signal that a
+// user turn actually reached a model.
+async function modelState() {
+  const res = await fetch(`${MODEL_ROOT}/__state`);
+  if (!res.ok) throw new Error(`model stub HTTP ${res.status}`);
+  return res.json();
+}
+
+async function waitForModel(predicate, timeoutMs, label) {
+  const deadline = Date.now() + timeoutMs;
+  let last = { requests: -1, streams: -1 };
+  while (Date.now() < deadline) {
+    last = await modelState().catch(() => ({ requests: 0, streams: 0 }));
+    if (predicate(last)) return { ok: true, value: last };
+    await sleep(500);
+  }
+  return { ok: false, reason: `${label} timed out after ${timeoutMs}ms`, counters: last };
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -120,21 +153,47 @@ function sampleResources() {
       return "";
     }
   };
-  const selfRss = out("ps", ["-o", "rss=", "-p", String(pid)]);
-  const tree = out("ps", ["--ppid", String(pid), "-o", "pid=", "-rss="]);
-  const rows = tree
+  // Direct-children only is not enough evidence: the Bot's OpenCode server is
+  // not always a direct child, which reported childCount=0 while the runtime
+  // watchdog saw `childKinds={"opencode-server":1}`. Walk the whole descendant
+  // tree so process counts and RSS cover every governed child.
+  const parsed = out("ps", ["-eo", "pid=,ppid=,rss=,cmd="])
     .split("\n")
-    .map((l) => l.trim().split(/\s+/))
-    .filter((r) => r.length >= 2 && r[0]);
-  const childRss = rows.reduce((sum, r) => sum + (Number(r[1]) || 0), 0);
-  const selfRssKb = Number(selfRss) || 0;
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => {
+      const parts = l.split(/\s+/);
+      return { pid: parts[0], ppid: parts[1], rss: Number(parts[2]) || 0, cmd: parts.slice(3).join(" ") };
+    });
+  const byParent = new Map();
+  for (const row of parsed) {
+    if (!byParent.has(row.ppid)) byParent.set(row.ppid, []);
+    byParent.get(row.ppid).push(row);
+  }
+  const descendants = [];
+  const seen = new Set();
+  const stack = [String(pid)];
+  while (stack.length > 0) {
+    for (const child of byParent.get(stack.pop()) ?? []) {
+      if (seen.has(child.pid)) continue;
+      seen.add(child.pid);
+      descendants.push(child);
+      stack.push(child.pid);
+    }
+  }
+  const selfRssKb = Number(out("ps", ["-o", "rss=", "-p", String(pid)])) || 0;
+  const childRssKb = descendants.reduce((sum, row) => sum + row.rss, 0);
   return {
     pid,
     selfRssKb,
-    childRssKb: childRss,
-    totalRssKb: selfRssKb + childRss,
-    childCount: rows.length,
-    children: rows.map((r) => ({ pid: Number(r[0]), rssKb: Number(r[1]) || 0 })),
+    childRssKb,
+    totalRssKb: selfRssKb + childRssKb,
+    childCount: descendants.length,
+    children: descendants.map((row) => ({
+      pid: Number(row.pid),
+      rssKb: row.rss,
+      cmd: row.cmd.slice(0, 120),
+    })),
     loadavg: out("cat", ["/proc/loadavg"]).split(" ").slice(0, 3).join(" "),
     cpus: Number(out("nproc", [])) || 0,
   };
@@ -160,9 +219,13 @@ async function flowStart() {
 }
 
 async function flowNewChat() {
+  // The thread is what New Chat actually creates. Waiting on a message count
+  // alone short-circuits as soon as /start's own welcome messages are counted,
+  // which recorded a null threadId even though the topic had been created.
+  const before = msgCount(await tgState());
   enqueue(messageUpdate(NEW_CHAT));
   const r = await waitFor(
-    (s) => threadIds(s).length > 0 || msgCount(s) >= 2,
+    (s) => threadIds(s).length > 0 || msgCount(s) > before,
     60_000,
     "New Chat outcome",
   );
@@ -174,6 +237,7 @@ async function flowNewChat() {
 
 async function flowPrompt(threadId) {
   const before = msgCount(await tgState());
+  const modelBefore = await modelState().catch(() => ({ requests: 0, streams: 0 }));
   enqueue(messageUpdate("Reply with the single word PONG and then read README.md", { threadId }));
   const r = await waitFor(
     (s) => msgCount(s) > before || (s.drafts?.length ?? 0) > 0,
@@ -181,9 +245,29 @@ async function flowPrompt(threadId) {
     "streamed reply",
   );
   if (!r.ok) return record("W2", "prompt-stream-tool", "fail", { reason: r.reason });
+
+  // A Telegram-side reply is NOT proof the model ran. An orphaned `opencode
+  // serve` left behind by an earlier run answers on the shared port, produces
+  // an empty stream, and yields a new Telegram message — which passed here
+  // once. Require the model stub to have served a streamed completion after
+  // this prompt was sent.
+  const model = await waitForModel(
+    (c) => c.streams > Number(modelBefore.streams ?? 0),
+    45_000,
+    "streamed model completion",
+  );
+  if (!model.ok) {
+    return record("W2", "prompt-stream-tool", "fail", {
+      reason: `telegram replied but no streamed model completion arrived: ${model.reason}`,
+      counters: model.counters,
+    });
+  }
   return record("W2", "prompt-stream-tool", "pass", {
     drafts: r.state.drafts?.length ?? 0,
     messages: msgCount(r.state),
+    modelRequests: model.value.requests,
+    modelStreams: model.value.streams,
+    modelToolCalls: model.value.toolCalls ?? 0,
   });
 }
 

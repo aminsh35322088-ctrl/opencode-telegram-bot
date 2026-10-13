@@ -32,10 +32,39 @@ UPDATES="$RUN_DIR/updates.jsonl"
 
 log() { printf '[%s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 
+# The Bot spawns `opencode serve` detached, so it is re-parented to init and
+# survives Bot shutdown. The next run then sees the port already bound, skips
+# spawning, and attaches to that stale server - which still points at the
+# previous run's model stub. Every prompt is silently turned into an empty
+# reply, so a flow that only counts Telegram messages looks like a pass. Free
+# the port before booting.
+OPENCODE_PORT="${SOAK_OPENCODE_PORT:-4096}"
+for stale in $(pgrep -f "opencode serve --port $OPENCODE_PORT" || true); do
+  log "killing stale OpenCode server pid=$stale (bound for a previous run)"
+  kill "$stale" 2>/dev/null
+done
+sleep 1
+if pgrep -f "opencode serve --port $OPENCODE_PORT" >/dev/null 2>&1; then
+  log "ERROR: port $OPENCODE_PORT is still held after cleanup"
+  exit 1
+fi
+
 PIDS=()
 cleanup() {
   local code=$?
   log "shutting down"
+  # Stop the Bot BEFORE the stubs. Killing the stubs first aborts grammy's
+  # in-flight long poll with `HttpError: Network request for 'getUpdates'
+  # failed!`, which crashes the Bot and turns a clean shutdown into a noisy
+  # non-zero exit that can mask the real stage result.
+  if [ -n "${BOT_PID:-}" ]; then
+    kill "$BOT_PID" 2>/dev/null
+    for _ in $(seq 1 15); do
+      kill -0 "$BOT_PID" 2>/dev/null || break
+      sleep 1
+    done
+    kill -9 "$BOT_PID" 2>/dev/null
+  fi
   for pid in "${PIDS[@]:-}"; do
     [ -n "$pid" ] && kill "$pid" 2>/dev/null
   done
