@@ -111,14 +111,16 @@ test("a Stop is confirmed only by the Bot's confirmed attribution of that exact 
       base: { messages: number; drafts: number },
       logText: string,
       draftId: number | null,
+      sinceIso: string,
     ) => { confirmed: boolean; by: string | null; refusal: string | null };
   }>("scripts/soak/signals.mjs");
 
   const base = snapshot({ messages: { 1: "welcome" }, drafts: [{ draft_id: 1 }] });
+  const sinceIso = "2026-10-13T08:22:00.000Z";
 
   const confirmedLog =
     "[2026-10-13T08:22:52.033Z] [INFO] [Bot] Native generation stop handled: chat=987654321, thread=10000, draft=1, result=confirmed";
-  assert.deepEqual(stopConfirmed({ messages: { 1: "welcome" }, drafts: [{ draft_id: 1 }] }, base, confirmedLog, 1), {
+  assert.deepEqual(stopConfirmed({ messages: { 1: "welcome" }, drafts: [{ draft_id: 1 }] }, base, confirmedLog, 1, sinceIso), {
     confirmed: true,
     by: "bot-log",
     refusal: null,
@@ -130,6 +132,7 @@ test("a Stop is confirmed only by the Bot's confirmed attribution of that exact 
       base,
       "",
       1,
+      sinceIso,
     ),
     { confirmed: false, by: null, refusal: null },
     "a message published after the press is ambiguous: the run may simply have finished, which is exactly what a refused Stop looked like in run 38368783928",
@@ -138,7 +141,7 @@ test("a Stop is confirmed only by the Bot's confirmed attribution of that exact 
   const refusedLog =
     "[2026-10-13T08:22:52.033Z] [INFO] [Bot] Native generation stop handled: chat=987654321, thread=10000, draft=4, result=stale-draft";
   assert.deepEqual(
-    stopConfirmed({ messages: { 1: "welcome" }, drafts: [{ draft_id: 1 }] }, base, refusedLog, 4),
+    stopConfirmed({ messages: { 1: "welcome" }, drafts: [{ draft_id: 1 }] }, base, refusedLog, 4, sinceIso),
     { confirmed: false, by: null, refusal: "stale-draft" },
     "a refusal must surface as a refusal so the run reports a failing Stop instead of waiting for the deadline",
   );
@@ -149,9 +152,59 @@ test("a Stop is confirmed only by the Bot's confirmed attribution of that exact 
       base,
       "",
       1,
+      sinceIso,
     ),
     { confirmed: false, by: null, refusal: null },
     "another draft from a generation that is still streaming is late output, never a confirmation",
+  );
+});
+
+test("a Stop may only be confirmed by a line the Bot wrote after this press", async () => {
+  const { stopConfirmed } = await loadScript<{
+    stopConfirmed: (
+      state: Record<string, unknown>,
+      base: { messages: number; drafts: number },
+      logText: string,
+      draftId: number | null,
+      sinceIso: string,
+    ) => { confirmed: boolean; by: string | null; refusal: string | null };
+  }>("scripts/soak/signals.mjs");
+
+  // Run 38403749350: W7 restarted the Bot mid-cycle and the new process's
+  // draft-id counter started over (…27, 31 → 1, 4, 7). The pre-restart
+  // confirmations were still in the same bot.log, so the first `draft=1,
+  // result=confirmed` in the tail was cycle 1's line from 13:18:08 — W5's
+  // Stop "confirmed" 2 ms after the press, before the Bot had seen it, and
+  // the still-streaming run was then charged to D2 (`withinD2:false`,
+  // `lateDelta:1`). Attribution belongs to this press: a line written
+  // before it is history, however well it matches.
+  const state = { messages: {}, drafts: [{ draft_id: 1 }] };
+  const base = { messages: 0, drafts: 0 };
+  const pressIso = "2026-10-13T13:26:06.600Z";
+  const staleConfirm =
+    "[2026-10-13T13:18:08.827Z] [INFO] [Bot] Native generation stop handled: chat=987654321, thread=10000, draft=1, result=confirmed";
+  const realConfirm =
+    "[2026-10-13T13:26:07.208Z] [INFO] [Bot] Native generation stop handled: chat=987654321, thread=10018, draft=1, result=confirmed";
+
+  assert.deepEqual(
+    stopConfirmed(state, base, staleConfirm, 1, pressIso),
+    { confirmed: false, by: null, refusal: null },
+    "a confirmation written before the press cannot confirm this Stop",
+  );
+  assert.deepEqual(
+    stopConfirmed(state, base, `${staleConfirm}\n${realConfirm}`, 1, pressIso),
+    { confirmed: true, by: "bot-log", refusal: null },
+    "the Bot's own line after the press confirms; the history before it is ignored",
+  );
+  assert.deepEqual(
+    stopConfirmed(state, base, "[2026-10-13T13:18:08.827Z] [INFO] [Bot] Native generation stop handled: chat=987654321, thread=10000, draft=1, result=stale-draft", 1, pressIso),
+    { confirmed: false, by: null, refusal: null },
+    "a refusal from before the press must not fail this Stop either",
+  );
+  assert.deepEqual(
+    stopConfirmed(state, base, realConfirm, 1, "not-a-timestamp"),
+    { confirmed: false, by: null, refusal: null },
+    "an unattributable window never confirms",
   );
 });
 

@@ -47,18 +47,34 @@ export function draftIssued(state, base) {
 }
 
 // A Stop counts as confirmed only when the Bot itself says so, for that exact
-// draft. Nothing weaker is admissible: a message published after the press is
-// equally consistent with the run having finished on its own — which is
-// precisely what a refused Stop looked like in cycle run 38368783928
-// (`result=stale-draft`), where the run's own completion was recorded as
-// confirmation. A refusal is surfaced as such so the gate reports a failing
-// Stop immediately instead of waiting out the deadline.
-export function stopConfirmed(state, base, logText, draftId) {
+// draft, in a line it wrote *after this press*. Nothing weaker is admissible:
+// a message published after the press is equally consistent with the run
+// having finished on its own — which is precisely what a refused Stop looked
+// like in cycle run 38368783928 (`result=stale-draft`), where the run's own
+// completion was recorded as confirmation. And matching across the press is
+// still not enough by position alone: the Bot's draft-id counter restarts
+// with the process, so run 38403749350's W7 restart made the new Bot issue
+// draft ids 1, 4, 7 again while the old confirmations sat in the same
+// bot.log — the first `draft=1, result=confirmed` was cycle 1's line from
+// 13:18:08 and the Stop "confirmed" 2 ms after the press, before the Bot had
+// seen it. A refusal surfaced before the press is history too, not this
+// Stop's verdict. An unparseable window never confirms: attribution that
+// cannot be established must fail closed.
+export function stopConfirmed(state, base, logText, draftId, sinceIso) {
   if (draftId == null) return { confirmed: false, by: null, refusal: null };
-  const match = new RegExp(`draft=${draftId}, result=([a-z-]+)`).exec(logText ?? "");
-  if (!match) return { confirmed: false, by: null, refusal: null };
-  if (match[1] === "confirmed") return { confirmed: true, by: "bot-log", refusal: null };
-  return { confirmed: false, by: null, refusal: match[1] };
+  const sinceMs = Date.parse(sinceIso ?? "");
+  if (!Number.isFinite(sinceMs)) return { confirmed: false, by: null, refusal: null };
+  for (const line of String(logText ?? "").split("\n")) {
+    if (!line.includes(`draft=${draftId}, result=`)) continue;
+    const stamp = /^\[([^\]]+)\]/.exec(line);
+    if (!stamp) continue; // no timestamp, no attribution to this press
+    const atMs = Date.parse(stamp[1]);
+    if (!Number.isFinite(atMs) || atMs < sinceMs) continue;
+    const result = /result=([a-z-]+)/.exec(line)?.[1] ?? null;
+    if (result === "confirmed") return { confirmed: true, by: "bot-log", refusal: null };
+    return { confirmed: false, by: null, refusal: result };
+  }
+  return { confirmed: false, by: null, refusal: null };
 }
 
 // Telegram output calls that a stopped run must stop producing. Polling

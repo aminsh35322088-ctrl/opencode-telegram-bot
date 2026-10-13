@@ -406,6 +406,11 @@ async function flowStop(threadId) {
   const outputsBefore = outputCalls(started.state);
 
   const t0 = Date.now();
+  // Attribution window: only lines the Bot writes after this press may confirm
+  // or refuse it. The tail still contains earlier cycles' lines, and W7's
+  // restart hands the new process's draft-id counter back to 1 — run
+  // 38403749350 confirmed cycle 10's Stop against cycle 1's `draft=1` line.
+  const sinceIso = new Date(t0).toISOString();
   enqueue(stopUpdate(threadId ?? draftId, draftId));
 
   // Confirmation is only ever *observed*, never inferred from the absence of
@@ -418,7 +423,7 @@ async function flowStop(threadId) {
   const deadline = Date.now() + D.stopConfirmMs;
   while (Date.now() < deadline && !confirmed.confirmed) {
     confirmState = (await tgState().catch(() => null)) ?? confirmState;
-    confirmed = stopConfirmed(confirmState, confirmBase, readBotLogTail(), draftId);
+    confirmed = stopConfirmed(confirmState, confirmBase, readBotLogTail(), draftId, sinceIso);
     if (!confirmed.confirmed && !confirmed.refusal) await sleep(300);
   }
   const confirmMs = Date.now() - t0;
