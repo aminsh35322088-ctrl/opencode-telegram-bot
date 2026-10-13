@@ -11,6 +11,7 @@ import {
   deleteOutcome,
   draftIssued,
   growthObserved,
+  newThreadId,
   outputCalls,
   restartOutcome,
   snapshot,
@@ -199,7 +200,6 @@ const LONG_PROMPT = "Write a long explanation of the repository layout.";
 // The stub exposes `messages` as {messageId: text} and `threads` as
 // {name: threadId}; these helpers give the driver a count / ordered ids.
 const msgCount = (s) => Object.keys(s?.messages ?? {}).length;
-const threadIds = (s) => Object.values(s?.threads ?? {});
 
 async function flowStart() {
   const base = snapshot(await tgState().catch(() => ({})));
@@ -210,25 +210,22 @@ async function flowStart() {
 }
 
 async function flowNewChat() {
-  // The thread is what New Chat actually creates. Waiting on a message count
-  // alone short-circuits as soon as /start's own welcome messages are counted,
-  // which recorded a null threadId even though the topic had been created.
-  // Both baselines are captured fresh: in a stress run earlier cycles leave
-  // messages and threads behind, so an absolute count would pass vacuously.
+  // The thread is what New Chat actually creates, so a *newly created* thread
+  // is the only admissible proof that one exists. The Bot takes seconds to
+  // create the workspace, session and binding and sends other messages first,
+  // so a wait that accepted any growth let the driver read the previous
+  // cycle's *deleted* Topic as the newest one and prompt it: the Bot refused
+  // it as stale metadata and W2, W5 and W6 went down with it (stress run
+  // 38370753677, 2 of 167 cycles). The baseline is captured fresh — earlier
+  // cycles leave messages and threads behind, so an absolute count would pass
+  // vacuously from the second cycle on.
   const pre = await tgState().catch(() => ({}));
   const base = snapshot(pre);
-  const threadsBase = threadIds(pre).length;
   enqueue(messageUpdate(NEW_CHAT));
-  const r = await waitFor(
-    (s) => threadIds(s).length > threadsBase || growthObserved(s, base),
-    60_000,
-    "New Chat outcome",
-  );
+  const r = await waitFor((s) => newThreadId(s, base), 60_000, "new topic id");
   if (!r.ok) return record("W1", "new-chat", "fail", { reason: r.reason });
-  // Newest thread: earlier stress cycles created (and deleted) their own.
-  const threadId = threadIds(r.state).at(-1) ?? null;
-  record("W1", "new-chat", "pass", { threadId });
-  return { threadId };
+  record("W1", "new-chat", "pass", { threadId: r.value });
+  return { threadId: r.value };
 }
 
 async function flowPrompt(threadId) {
@@ -448,8 +445,8 @@ async function flowDeleteChat(threadId) {
   // reused topic name, so a reused id would mean a stale binding was revived.
   const reuseBase = snapshot(await tgState());
   enqueue(messageUpdate(NEW_CHAT));
-  const created = await waitFor((s) => growthObserved(s, reuseBase), 30_000, "topic after delete");
-  const reuseThreadId = created.ok ? (threadIds(created.state).at(-1) ?? null) : null;
+  const created = await waitFor((s) => newThreadId(s, reuseBase), 30_000, "topic after delete");
+  const reuseThreadId = created.ok ? created.value : null;
   if (!reuseThreadId || reuseThreadId === threadId) {
     return record("W6", "delete-chat", "fail", {
       reason: reuseThreadId

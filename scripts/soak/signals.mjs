@@ -9,7 +9,23 @@ export function snapshot(state) {
   return {
     messages: Object.keys(state?.messages ?? {}).length,
     drafts: (state?.drafts ?? []).length,
+    threads: Object.values(state?.threads ?? {}),
   };
+}
+
+// A Topic is created when an id that did not exist at the baseline appears —
+// never when "something happened". The Bot needs seconds to create the
+// workspace, session and binding, and it sends other messages first, so a
+// growth-based wait let the driver read the previous cycle's *deleted* Topic
+// as the newest one: stress run 38370753677 lost this race in 2 of 167 cycles,
+// prompted the deleted Topic, and the Bot correctly refused it as stale
+// metadata — taking W2, W5 and W6 down with it.
+export function newThreadId(state, base) {
+  const known = new Set((base?.threads ?? []).map(String));
+  const created = Object.values(state?.threads ?? {})
+    .map(Number)
+    .filter((id) => Number.isFinite(id) && !known.has(String(id)));
+  return created.length > 0 ? Math.max(...created) : null;
 }
 
 // Growth since a baseline. Both flows and Stop attach to something that is

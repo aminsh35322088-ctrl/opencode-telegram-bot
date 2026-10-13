@@ -79,12 +79,16 @@ test("seeded soak settings select draft streaming so Telegram Stop has a draft t
 
 test("growth is observed as a new draft or a new message, never by a stale baseline", async () => {
   const { snapshot, growthObserved } = await loadScript<{
-    snapshot: (state: Record<string, unknown>) => { messages: number; drafts: number };
+    snapshot: (state: Record<string, unknown>) => {
+      messages: number;
+      drafts: number;
+      threads: Array<number | string>;
+    };
     growthObserved: (state: Record<string, unknown>, base: { messages: number; drafts: number }) => boolean;
   }>("scripts/soak/signals.mjs");
 
   const base = snapshot({ messages: { 1: "welcome" }, drafts: [] });
-  assert.deepEqual(base, { messages: 1, drafts: 0 });
+  assert.deepEqual(base, { messages: 1, drafts: 0, threads: [] });
 
   assert.equal(
     growthObserved({ messages: { 1: "welcome" }, drafts: [{ draft_id: 7 }] }, base),
@@ -192,6 +196,26 @@ test("late output is measured by Telegram output calls, not by message count alo
     "edits and drafts are output the stopped run must stop producing; getUpdates/typing polls are not",
   );
   assert.equal(outputCalls({ counters: {} }), 0);
+});
+
+test("a Topic counts as created only when an id absent from the baseline appears", async () => {
+  const { newThreadId } = await loadScript<{
+    newThreadId: (state: Record<string, unknown>, base: { threads?: Array<number | string> }) => number | null;
+  }>("scripts/soak/signals.mjs");
+
+  const base = { threads: [10152] };
+  assert.equal(newThreadId({ threads: { "Chat #154": 10153 } }, base), 10153);
+  assert.equal(
+    newThreadId({ threads: { "Chat #153": 10152 } }, base),
+    null,
+    "the previous cycle's deleted Topic still being the newest id is not a Topic being created — that is how stress run 38370753677 prompted a deleted Topic twice in 167 cycles and the Bot refused it as stale metadata, losing W2, W5 and W6 with it",
+  );
+  assert.equal(newThreadId({ threads: {} }, { threads: [] }), null);
+  assert.equal(
+    newThreadId({ threads: { "Chat #153": 10152, "Chat #154": 10153 } }, base),
+    10153,
+    "when several ids are new the highest is the one just created",
+  );
 });
 
 test("W6 evidence separates a delete of a live Topic from an idle or foreign one", async () => {
