@@ -13,6 +13,8 @@ import { TELEGRAM_TEXT_MESSAGE_LIMIT } from "../render/limits.js";
 import { getTelegramRenderedPartSignature } from "../render/part-signature.js";
 import { shouldRenderRtl } from "../render/text-direction.js";
 import type { TelegramRenderedPart } from "../render/types.js";
+import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
+import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 
 /** A format retry requires an explicit parse/schema failure, never any 400. */
 function isTelegramRenderingError(error: unknown): boolean {
@@ -105,13 +107,24 @@ let nextImplicitThinkingDraftId = IMPLICIT_THINKING_DRAFT_MIN;
  *
  * A draft id alone does not identify which run produced it: the response-stream
  * draft counter resets whenever its session stream is cleared, so ids can repeat
- * across generations. Recording the creation instant lets the native Stop path
- * prove that a stopped draft belongs to the run that is still active before it
- * cancels anything (see `cancelCurrentRun({ stopAttribution })`).
+ * across generations. Every draft therefore records the **exact identity of the
+ * run that issued it** — Topic (chat/thread), session, run id and generation —
+ * which the native Stop path must match before it cancels anything (see
+ * `cancelCurrentRun({ stopAttribution })`). `createdAt` is only used for expiry;
+ * identity, not timing, is what authorises a Stop.
  */
+export interface GenerationDraftOwner {
+  chatId: number;
+  threadId: number;
+  sessionId: string;
+  runId: string;
+  generation: number;
+}
+
 interface GenerationDraftRecord {
   createdAt: number;
   expiresAt: number;
+  owner?: GenerationDraftOwner;
 }
 
 const activeThinkingDrafts = new Map<string, GenerationDraftRecord>();
@@ -219,7 +232,27 @@ function allocateThinkingDraftId(): number {
   return draftId;
 }
 
-function markThinkingDraft(chatId: number, draftId: number, createdAt = Date.now()): void {
+/** Resolve the run that is issuing a draft right now, from the ambient Topic. */
+function resolveAmbientDraftOwner(chatId: number): GenerationDraftOwner | undefined {
+  const topic = getTopicRuntimeContext();
+  if (!topic || topic.chatId !== chatId || !topic.sessionId) return undefined;
+  const run = assistantRunState.getRun(topic.sessionId);
+  if (!run) return undefined;
+  return {
+    chatId: topic.chatId,
+    threadId: topic.threadId,
+    sessionId: topic.sessionId,
+    runId: run.runId,
+    generation: run.generation,
+  };
+}
+
+function markThinkingDraft(
+  chatId: number,
+  draftId: number,
+  createdAt = Date.now(),
+  owner?: GenerationDraftOwner,
+): void {
   cleanupExpiredThinkingDrafts();
   const key = thinkingDraftKey(chatId, draftId);
   const existing = activeThinkingDrafts.get(key);
@@ -227,6 +260,8 @@ function markThinkingDraft(chatId: number, draftId: number, createdAt = Date.now
     // Re-sending an existing draft must not make a stale draft look recent.
     createdAt: existing ? Math.min(existing.createdAt, createdAt) : createdAt,
     expiresAt: createdAt + THINKING_DRAFT_TTL_MS,
+    // Never rewrite ownership on a re-send: the first issuing run stays the owner.
+    owner: owner ?? existing?.owner ?? resolveAmbientDraftOwner(chatId),
   });
 }
 
@@ -241,11 +276,18 @@ function isActiveThinkingDraft(chatId: number, draftId: number): boolean {
 }
 
 /**
- * Record a Bot-issued generation draft so a later native Stop can be attributed
- * to the run that produced it. `createdAt` is overridable for tests only.
+ * Record a Bot-issued generation draft together with the exact identity of the
+ * run that issued it, so a later native Stop can be attributed to that run.
+ * `owner` and `createdAt` are overridable for tests; without an explicit `owner`
+ * the owner is taken from the ambient Topic runtime context.
  */
-export function registerGenerationDraft(chatId: number, draftId: number, createdAt = Date.now()): void {
-  markThinkingDraft(chatId, draftId, createdAt);
+export function registerGenerationDraft(
+  chatId: number,
+  draftId: number,
+  createdAt = Date.now(),
+  owner?: GenerationDraftOwner,
+): void {
+  markThinkingDraft(chatId, draftId, createdAt, owner);
 }
 
 /** Look up a Bot-issued generation draft. Returns `null` when unknown or expired. */
@@ -253,10 +295,13 @@ export function resolveGenerationDraft(
   chatId: number,
   draftId: number,
   now = Date.now(),
-): { createdAt: number } | null {
+): { createdAt: number; owner?: GenerationDraftOwner } | null {
   cleanupExpiredThinkingDrafts(now);
   const record = activeThinkingDrafts.get(thinkingDraftKey(chatId, draftId));
-  return record ? { createdAt: record.createdAt } : null;
+  if (!record) return null;
+  return record.owner
+    ? { createdAt: record.createdAt, owner: record.owner }
+    : { createdAt: record.createdAt };
 }
 
 const GENERATION_DRAFT_OPTIONS = {
@@ -535,6 +580,8 @@ interface SendDraftBotPartParams {
   chatId: Parameters<SendDraftApi["sendMessageDraft"]>[0];
   draftId: number;
   part: TelegramRenderedPart;
+  /** Exact identity of the run issuing this draft; required for Stop attribution. */
+  owner?: GenerationDraftOwner;
 }
 
 interface CompleteDraftPartParams {
@@ -549,6 +596,7 @@ export async function sendDraftBotPart({
   chatId,
   draftId,
   part,
+  owner,
 }: SendDraftBotPartParams): Promise<RenderedPartDeliveryResult> {
   logger.debug("[Bot] Sending draft part", {
     draftId,
@@ -557,7 +605,7 @@ export async function sendDraftBotPart({
   });
 
   // Telegram exposes Stop on this draft, so it must be attributable to its run.
-  registerGenerationDraft(chatId, draftId);
+  registerGenerationDraft(chatId, draftId, Date.now(), owner);
 
   if (isPlainPart(part)) {
     await api.sendMessageDraft(chatId, draftId, part.fallbackText, GENERATION_DRAFT_OPTIONS);

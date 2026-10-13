@@ -30,27 +30,53 @@ export interface CancelCurrentRunOptions {
   /**
    * Telegram native Stop attribution: the generation draft the user actually
    * stopped. When present, cancellation is refused (`stale-draft`) unless that
-   * draft is attributable to the run that is still active, so stopping an old
-   * draft can never cancel a newer run.
+   * draft's recorded owner — Topic (chat/thread), session, run id and
+   * generation — matches the run that is still active. Stopping an old draft can
+   * therefore never cancel a newer run, another Topic, or a post-restart run.
    */
   stopAttribution?: { chatId: number; draftId: number };
 }
 
+type StopAttributionFailure =
+  | "unknown-draft"
+  | "draft-without-owner"
+  | "topic-mismatch"
+  | "session-mismatch"
+  | "no-active-run"
+  | "stale-run"
+  | "stale-generation";
+
 /**
- * A native Stop may only cancel the run that produced the stopped draft.
- * Attribution fails when the draft is unknown/expired, when no run is active,
- * or when the active run started after the draft was issued (a newer run).
+ * A native Stop may only cancel the run that issued the stopped draft.
+ *
+ * Attribution is by **exact identity** — Topic (chat/thread), session, run id and
+ * generation — never by timing. Timing alone cannot separate a stale draft, a
+ * restart, or a race in which a newer run started while the user was reaching
+ * for Stop; identity can.
  */
-function isStopAttributable(
+function attributeStoppedRun(
   sessionId: string,
   attribution: { chatId: number; draftId: number },
   now = Date.now(),
-): boolean {
+): { ok: true; runId: string } | { ok: false; reason: StopAttributionFailure } {
   const draft = resolveGenerationDraft(attribution.chatId, attribution.draftId, now);
-  if (!draft) return false;
+  if (!draft) return { ok: false, reason: "unknown-draft" };
+  const owner = draft.owner;
+  if (!owner) return { ok: false, reason: "draft-without-owner" };
+
+  // Defence in depth: when the Stop arrived inside a Topic, it must be that Topic.
+  const topic = getTopicRuntimeContext();
+  if (topic && (topic.chatId !== owner.chatId || topic.threadId !== owner.threadId)) {
+    return { ok: false, reason: "topic-mismatch" };
+  }
+  if (sessionId !== owner.sessionId) return { ok: false, reason: "session-mismatch" };
+
   const run = assistantRunState.getRun(sessionId);
-  if (!run) return false;
-  return run.startedAt <= draft.createdAt;
+  if (!run) return { ok: false, reason: "no-active-run" };
+  if (run.runId !== owner.runId) return { ok: false, reason: "stale-run" };
+  if (run.generation !== owner.generation) return { ok: false, reason: "stale-generation" };
+
+  return { ok: true, runId: run.runId };
 }
 
 type SessionState = "idle" | "busy" | "retry" | "not-found";
@@ -114,11 +140,14 @@ export async function cancelCurrentRun(
 
     // Refuse before touching any local state: an unattributable Stop must not
     // clear the interaction state of a run it does not own.
-    if (options.stopAttribution && !isStopAttributable(target.id, options.stopAttribution)) {
-      logger.warn(
-        `[Cancellation] Refused unattributable native Stop: session=${target.id}, chat=${options.stopAttribution.chatId}, draft=${options.stopAttribution.draftId}`,
-      );
-      return "stale-draft";
+    if (options.stopAttribution) {
+      const attribution = attributeStoppedRun(target.id, options.stopAttribution);
+      if (!attribution.ok) {
+        logger.warn(
+          `[Cancellation] Refused unattributable native Stop: session=${target.id}, chat=${options.stopAttribution.chatId}, draft=${options.stopAttribution.draftId}, reason=${attribution.reason}`,
+        );
+        return "stale-draft";
+      }
     }
 
     clearAllInteractionState(options.reason);
