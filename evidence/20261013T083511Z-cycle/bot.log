@@ -172,3 +172,11 @@
     at async /home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/composer.js:578:13
     at async /home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/composer.js:62:13
     at async /home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/composer.js:578:13
+[2026-10-13T08:35:36.152Z] [INFO] [App] Received SIGTERM, shutting down...
+[2026-10-13T08:35:36.152Z] [INFO] [RuntimeWatchdog] stopped
+[2026-10-13T08:35:36.152Z] [INFO] [TopicTelemetry] event=subscription_removed directory=/home/runner/work/opencode-telegram-bot/opencode-telegram-bot subscriberCount=0
+[2026-10-13T08:35:36.157Z] [INFO] [SessionTrace] phase=topic_event_bus_stopped
+[2026-10-13T08:35:36.157Z] [INFO] [TopicTelemetry] event=global_stream_stopped previousSubscriberCount=0
+[2026-10-13T08:35:36.160Z] [INFO] [RuntimeWatchdog] stopped
+[2026-10-13T08:35:36.160Z] [INFO] [SessionTrace] phase=topic_event_bus_stopped
+[2026-10-13T08:35:36.160Z] [INFO] [TopicTelemetry] event=global_stream_stopped previousSubscriberCount=0
