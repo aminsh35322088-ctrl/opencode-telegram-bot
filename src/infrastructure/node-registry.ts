@@ -2,6 +2,7 @@ import type {NodeControlBinding} from "../control-plane/node-control.js";
 import {lstat,readFile,mkdir,open,rename} from "node:fs/promises";
 import {dirname} from "node:path";
 import {syncDirectory} from "../utils/sync-directory.js";
+import {isRestrictiveMode,isRootUser} from "../utils/file-ownership.js";
 
 export interface InfrastructureNodeIdentity {binding: NodeControlBinding;endpoint:string;secret:string;}
 /** Root-only identity owner. Consume environment before any application imports. */
@@ -37,7 +38,7 @@ export function captureNodeRegistry(environment:NodeJS.ProcessEnv) {
       identities.set(identity.binding.nodeId,structuredClone(identity));
     },
     load:async(filename:string)=>{
-      try{const stat=await lstat(filename);if(!stat.isFile()||stat.isSymbolicLink()||stat.uid!==0||(stat.mode&0o077)!==0)throw new Error("Invalid infrastructure identity store");
+      try{const stat=await lstat(filename);if(!stat.isFile()||stat.isSymbolicLink()||!isRootUser(stat.uid)||!isRestrictiveMode(stat.mode))throw new Error("Invalid infrastructure identity store");
         const loaded=captureNodeRegistry({CONTROL_NODE_REGISTRY:await readFile(filename,"utf8")});
         for(const metadata of loaded.metadata()){
           const identity=await loaded.resolve(metadata.nodeId);if(!identity)continue;

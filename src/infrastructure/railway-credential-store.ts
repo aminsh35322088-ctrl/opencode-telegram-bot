@@ -2,6 +2,7 @@ import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from "node:
 import { chmod, lstat, mkdir, open, readFile, rename } from "node:fs/promises";
 import path from "node:path";
 import { syncDirectory } from "../utils/sync-directory.js";
+import { isOwnUser, isRestrictiveMode } from "../utils/file-ownership.js";
 
 export type RailwayInfrastructureTokenType = "account" | "workspace";
 export interface StoredRailwayInfrastructureCredential {
@@ -43,8 +44,7 @@ export class RailwayCredentialStore {
   private async key(): Promise<Buffer> {
     try {
       const info = await lstat(this.keyFilename);
-      const uid = process.getuid?.();
-      if (!info.isFile() || info.isSymbolicLink() || (uid !== undefined && info.uid !== uid) || (info.mode & 0o077) !== 0 || info.size !== 32) throw new Error("Invalid Railway credential key");
+      if (!info.isFile() || info.isSymbolicLink() || !isOwnUser(info.uid) || !isRestrictiveMode(info.mode) || info.size !== 32) throw new Error("Invalid Railway credential key");
       return await readFile(this.keyFilename);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -78,8 +78,7 @@ export class RailwayCredentialStore {
   async load(): Promise<StoredRailwayInfrastructureCredential | undefined> {
     try {
       const info = await lstat(this.filename);
-      const uid = process.getuid?.();
-      if (!info.isFile() || info.isSymbolicLink() || (uid !== undefined && info.uid !== uid) || (info.mode & 0o077) !== 0 || info.size > 16 * 1024) throw new Error("Invalid Railway credential store");
+      if (!info.isFile() || info.isSymbolicLink() || !isOwnUser(info.uid) || !isRestrictiveMode(info.mode) || info.size > 16 * 1024) throw new Error("Invalid Railway credential store");
       const envelope = JSON.parse(await readFile(this.filename, "utf8")) as CredentialEnvelope;
       if (envelope.version !== 1 || !["account", "workspace"].includes(envelope.tokenType)) throw new Error("Invalid Railway credential store");
       const workspaceId = bounded(envelope.workspaceId, "Railway workspace id", 256);

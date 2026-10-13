@@ -1,6 +1,7 @@
 import { lstat, mkdir, open, readFile, rename } from "node:fs/promises";
 import path from "node:path";
 import { syncDirectory } from "../utils/sync-directory.js";
+import { isRestrictiveMode } from "../utils/file-ownership.js";
 import { randomUUID } from "node:crypto";
 
 export interface RailwayWorkerSettings {
@@ -53,7 +54,7 @@ export class RailwayWorkerSettingsStore {
     if (this.current) return { ...this.current };
     try {
       const stat = await lstat(this.filename);
-      if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0 || stat.size > 64 * 1024) throw new Error("Invalid Railway Worker settings store");
+      if (!stat.isFile() || stat.isSymbolicLink() || !isRestrictiveMode(stat.mode) || stat.size > 64 * 1024) throw new Error("Invalid Railway Worker settings store");
       this.current = normalizeRailwayWorkerSettings(JSON.parse(await readFile(this.filename, "utf8")));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;

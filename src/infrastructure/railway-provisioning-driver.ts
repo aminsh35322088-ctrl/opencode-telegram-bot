@@ -3,6 +3,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { lstat, mkdir, open, readFile, rename } from "node:fs/promises";
 import path from "node:path";
 import { syncDirectory } from "../utils/sync-directory.js";
+import { isOwnUser, isRestrictiveMode } from "../utils/file-ownership.js";
 import type { NodeBinding } from "../control-plane/node-bindings.js";
 
 import {WorkerProvisioningError,type WorkerProvisioningDriver,type WorkerPool,type ProvisionedNode} from "./worker-provisioning-driver.js";
@@ -101,7 +102,7 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
     return this.singleFlight(async () => {
       try {
         const stat = await lstat(this.options.journalPath);
-        if (!stat.isFile() || stat.isSymbolicLink() || stat.uid !== process.getuid?.() || (stat.mode & 0o077) !== 0 || stat.size > 1024 * 1024) throw new Error("Invalid journal");
+        if (!stat.isFile() || stat.isSymbolicLink() || !isOwnUser(stat.uid) || !isRestrictiveMode(stat.mode) || stat.size > 1024 * 1024) throw new Error("Invalid journal");
         const journal = await this.read();
         const record = journal.nodes.find(node => node.nodeId === nodeId && node.generation === generation);
         if (!record || !record.unbound || record.slot !== 1 || record.phase !== "deploying" || !record.serviceId || !record.volumeId) throw new Error("Invalid Worker ownership");

@@ -2,6 +2,7 @@ import {randomBytes,randomUUID} from 'node:crypto';
 import {lstat,mkdir,open,readFile,rename} from 'node:fs/promises';
 import path from 'node:path';
 import {syncDirectory} from '../utils/sync-directory.js';
+import {isOwnUser,isRestrictiveMode} from '../utils/file-ownership.js';
 import type {NodeBinding} from '../control-plane/node-bindings.js';
 import {RailwayProvisioningDriver} from './railway-provisioning-driver.js';
 import type {WorkerProvisioningDriver,ProvisionedNode,WorkerPool} from './worker-provisioning-driver.js';
@@ -65,7 +66,7 @@ export class InfrastructureController {
  }
  private async ensureIdentity(binding:Readonly<NodeBinding>,create:()=>string):Promise<string>{
   const filename=path.join(this.options.stateDirectory,'identity-seeds.json');let seeds:Seed[]=[];
-  try{const stat=await lstat(filename);if(!stat.isFile()||stat.isSymbolicLink()||(stat.mode&0o077)!==0||stat.uid!==process.getuid?.()||stat.size>1024*1024)throw Error('Invalid identity seed store');seeds=JSON.parse(await readFile(filename,'utf8')) as Seed[];if(!Array.isArray(seeds)||seeds.length>1000)throw Error('Invalid identity seed store');}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
+  try{const stat=await lstat(filename);if(!stat.isFile()||stat.isSymbolicLink()||!isRestrictiveMode(stat.mode)||!isOwnUser(stat.uid)||stat.size>1024*1024)throw Error('Invalid identity seed store');seeds=JSON.parse(await readFile(filename,'utf8')) as Seed[];if(!Array.isArray(seeds)||seeds.length>1000)throw Error('Invalid identity seed store');}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
   const existing=seeds.find(seed=>seed.nodeId===binding.nodeId);
   if(existing){
    if(existing.generation===binding.generation&&existing.chatId===binding.chatId&&existing.threadId===binding.threadId)return existing.secret;
@@ -86,7 +87,7 @@ export class InfrastructureController {
  }
  private async rotateIdentitySeed(binding:Readonly<NodeBinding>,previous:Readonly<InfrastructureNodeIdentity>):Promise<string>{
   const filename=path.join(this.options.stateDirectory,'identity-seeds.json');let seeds:Seed[]=[];
-  try{const stat=await lstat(filename);if(!stat.isFile()||stat.isSymbolicLink()||(stat.mode&0o077)!==0||stat.uid!==process.getuid?.()||stat.size>1024*1024)throw Error('Invalid identity seed store');seeds=JSON.parse(await readFile(filename,'utf8')) as Seed[];if(!Array.isArray(seeds)||seeds.length>1000)throw Error('Invalid identity seed store');}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
+  try{const stat=await lstat(filename);if(!stat.isFile()||stat.isSymbolicLink()||!isRestrictiveMode(stat.mode)||!isOwnUser(stat.uid)||stat.size>1024*1024)throw Error('Invalid identity seed store');seeds=JSON.parse(await readFile(filename,'utf8')) as Seed[];if(!Array.isArray(seeds)||seeds.length>1000)throw Error('Invalid identity seed store');}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
   const seed=seeds.find(item=>item.nodeId===binding.nodeId);if(!seed)throw Error('Identity seed missing for in-place rotation');
   if(seed.generation===binding.generation&&seed.chatId===binding.chatId&&seed.threadId===binding.threadId)return seed.secret;
   if(seed.generation!==previous.binding.generation||seed.chatId!==previous.binding.chatId||seed.threadId!==previous.binding.threadId||binding.generation!==previous.binding.generation+1)throw Error('Identity rotation fence mismatch');
