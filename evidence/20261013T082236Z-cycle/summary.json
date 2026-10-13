@@ -1,0 +1,28 @@
+{
+  "stage": "cycle",
+  "startedAt": "2026-10-13T08:22:46.770Z",
+  "finishedAt": "2026-10-13T08:23:07.735Z",
+  "elapsedS": 21,
+  "counts": {
+    "pass": 4,
+    "fail": 0,
+    "not-executed": 0
+  },
+  "cycles": 1,
+  "resources": {
+    "pid": 2551,
+    "selfRssKb": 159708,
+    "childRssKb": 542684,
+    "totalRssKb": 702392,
+    "childCount": 1,
+    "children": [
+      {
+        "pid": 2576,
+        "rssKb": 542684,
+        "cmd": "opencode serve --port 4096"
+      }
+    ],
+    "loadavg": "0.67 0.23 0.08",
+    "cpus": 4
+  }
+}

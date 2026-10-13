@@ -1,0 +1,5 @@
+{"ts":"2026-10-13T08:22:47.186Z","flow":"W0","step":"start","status":"pass","replies":2}
+{"ts":"2026-10-13T08:22:50.524Z","flow":"W1","step":"new-chat","status":"pass","threadId":10000}
+{"ts":"2026-10-13T08:22:51.335Z","flow":"W2","step":"prompt-stream-tool","status":"pass","drafts":0,"messages":3,"modelRequests":1,"modelStreams":1,"modelToolCalls":0}
+{"ts":"2026-10-13T08:23:07.403Z","flow":"W5","step":"stop","status":"pass","draftId":4,"source":"published-message","confirmMs":11458,"confirmedBy":"message","outputsBefore":8,"outputsAtConfirm":21,"lateDelta":0,"streamCalls":12,"withinD1":true,"withinD2":true}
+{"ts":"2026-10-13T08:23:07.708Z","flow":"W6","step":"delete-chat","status":"pass","elapsed":1,"withinD4":true,"confirmationId":18}
