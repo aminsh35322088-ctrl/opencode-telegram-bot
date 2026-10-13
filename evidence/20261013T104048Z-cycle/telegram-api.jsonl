@@ -66,3 +66,7 @@
 {"ts":"2026-10-13T10:42:35.499Z","method":"sendChatAction","ok":false,"note":"unsupported"}
 {"ts":"2026-10-13T10:42:35.872Z","method":"sendChatAction","ok":false,"note":"unsupported"}
 {"ts":"2026-10-13T10:42:37.352Z","method":"sendRichMessageDraft","ok":true,"note":"draft:3"}
+{"ts":"2026-10-13T10:42:38.404Z","method":"sendRichMessageDraft","ok":true,"note":"draft:3"}
+{"ts":"2026-10-13T10:42:39.459Z","method":"sendRichMessageDraft","ok":true,"note":"draft:3"}
+{"ts":"2026-10-13T10:42:39.499Z","method":"sendChatAction","ok":false,"note":"unsupported"}
+{"ts":"2026-10-13T10:42:39.872Z","method":"sendChatAction","ok":false,"note":"unsupported"}
