@@ -22,3 +22,14 @@
 {"ts":"2026-10-13T12:10:11.370Z","kind":"chat","stream":true,"toolProbe":false,"tokens":600,"tool":false,"long":false}
 {"ts":"2026-10-13T12:10:21.394Z","kind":"chat","stream":true,"toolProbe":false,"tokens":600,"tool":false,"long":true}
 {"ts":"2026-10-13T12:10:36.877Z","kind":"models","stream":false,"toolProbe":false,"tokens":0}
+{"ts":"2026-10-13T12:10:40.239Z","kind":"chat","stream":true,"toolProbe":false,"tokens":600,"tool":true,"long":false}
+{"ts":"2026-10-13T12:10:40.691Z","kind":"chat","stream":true,"toolProbe":false,"tokens":600,"tool":false,"long":false}
+{"ts":"2026-10-13T12:12:44.584Z","kind":"chat","stream":true,"toolProbe":false,"tokens":600,"tool":false,"long":false}
+{"ts":"2026-10-13T12:12:50.671Z","kind":"chat","stream":true,"toolProbe":false,"tokens":600,"tool":false,"long":true}
+{"ts":"2026-10-13T12:12:52.797Z","kind":"chat","stream":true,"toolProbe":false,"tokens":600,"tool":false,"long":false}
+{"ts":"2026-10-13T12:13:09.260Z","kind":"chat","stream":true,"toolProbe":false,"tokens":600,"tool":false,"long":false}
+{"ts":"2026-10-13T12:13:09.738Z","kind":"chat","stream":true,"toolProbe":false,"tokens":600,"tool":true,"long":false}
+{"ts":"2026-10-13T12:13:21.063Z","kind":"chat","stream":true,"toolProbe":false,"tokens":600,"tool":false,"long":false}
+{"ts":"2026-10-13T12:13:29.775Z","kind":"chat","stream":true,"toolProbe":false,"tokens":600,"tool":false,"long":false}
+{"ts":"2026-10-13T12:13:30.252Z","kind":"chat","stream":true,"toolProbe":false,"tokens":600,"tool":true,"long":false}
+{"ts":"2026-10-13T12:13:41.575Z","kind":"chat","stream":true,"toolProbe":false,"tokens":600,"tool":false,"long":false}
