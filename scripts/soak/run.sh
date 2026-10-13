@@ -210,6 +210,7 @@ node "$SOAK/driver.mjs" --stage "$STAGE" \
   --duration "$DURATION" \
   --active "${SOAK_ACTIVE_S:-0}" \
   --idle "${SOAK_IDLE_S:-0}" \
+  --opencode-port "$OPENCODE_PORT" \
   --run-dir "$RUN_DIR" \
   --updates "$UPDATES" \
   --telegram-port "$TELEGRAM_PORT" \

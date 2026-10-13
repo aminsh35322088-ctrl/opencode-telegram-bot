@@ -16,6 +16,7 @@ import {
   outputCalls,
   parseMeminfo,
   phaseFor,
+  restState,
   restartOutcome,
   snapshot,
   stopConfirmed,
@@ -44,6 +45,12 @@ const USER_ID = Number(args.get("user-id") ?? 987654321);
 const TG_ROOT = `http://127.0.0.1:${TG_PORT}`;
 const MODEL_PORT = args.get("model-port") ?? process.env.SOAK_MODEL_PORT ?? "8090";
 const MODEL_ROOT = `http://127.0.0.1:${MODEL_PORT}`;
+// The local OpenCode server the Bot spawns. Session creation during its
+// startup recovery times out (stress run 38393992089, cycle 1: `Error
+// creating session: TimeoutError` at +10.6s), so its own health endpoint is
+// part of the rest precondition before a New Chat press.
+const OC_PORT = args.get("opencode-port") ?? process.env.SOAK_OPENCODE_PORT ?? "4096";
+const OC_ROOT = `http://127.0.0.1:${OC_PORT}`;
 
 // Update builders live in their own module so their Telegram shape is under
 // test (tests/soak-harness.test.ts); the driver only decides *when* to send.
@@ -246,6 +253,64 @@ async function flowStart() {
   return record("W0", "start", "pass", { replies: msgCount(r.state) });
 }
 
+const REST_STABLE_MS = 5_000;
+const REST_HEALTHY_MS = 2_000;
+const REST_LIMIT_MS = 60_000;
+
+// The workload's own precondition for pressing New Chat, made observable
+// instead of raced for. Two failures in stress run 38393992089 require it:
+// (a) the Bot drops the press silently when a run is active — menuAllowed
+// returns false *after* the router has already deleted the button — and the
+// previous cycle's answer tail kept streaming ~13s after its flow recorded,
+// losing cycles 3, 5 and 8 to a wait that could never see a new thread;
+// (b) session creation during the local OpenCode server's startup recovery
+// timed out (cycle 1). Rest is therefore both: a signature that has stopped
+// changing, and a server that has been healthy for a moment.
+async function workloadSignature() {
+  const tg = await tgState().catch(() => ({}));
+  const model = await modelState().catch(() => null);
+  // Telegram output covers every token of a stream (drafts land about once a
+  // second); model streams covers completions themselves. Background traffic
+  // (getUpdates, typing actions, probe requests) is deliberately excluded —
+  // it never stops and would mask real activity.
+  return outputCalls(tg) + (model ? Number(model.streams ?? 0) : 0);
+}
+
+async function opencodeHealthy() {
+  try {
+    const res = await fetch(`${OC_ROOT}/global/health`, { signal: AbortSignal.timeout(2_000) });
+    if (!res.ok) return false;
+    const body = await res.json().catch(() => null);
+    return body?.healthy === true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitAtRest() {
+  const samples = [];
+  const t0 = Date.now();
+  let healthySince = null;
+  for (;;) {
+    const now = Date.now();
+    samples.push({ t: now, calls: await workloadSignature() });
+    if (await opencodeHealthy()) {
+      if (healthySince === null) healthySince = now;
+    } else {
+      healthySince = null;
+    }
+    const { atRest, quietMs } = restState(samples, REST_STABLE_MS);
+    const healthyForMs = healthySince === null ? 0 : now - healthySince;
+    if (atRest && healthyForMs >= REST_HEALTHY_MS) {
+      return { ok: true, waitedMs: now - t0, quietMs, healthyForMs };
+    }
+    if (now - t0 >= REST_LIMIT_MS) {
+      return { ok: false, waitedMs: now - t0, quietMs, healthyForMs };
+    }
+    await sleep(500);
+  }
+}
+
 async function flowNewChat() {
   // The thread is what New Chat actually creates, so a *newly created* thread
   // is the only admissible proof that one exists. The Bot takes seconds to
@@ -256,12 +321,24 @@ async function flowNewChat() {
   // 38370753677, 2 of 167 cycles). The baseline is captured fresh — earlier
   // cycles leave messages and threads behind, so an absolute count would pass
   // vacuously from the second cycle on.
+  // The press is gated on rest: the Bot deletes the button and drops the press
+  // without a reply whenever a run is active (menuAllowed), so pressing during
+  // the previous cycle's answer tail loses the update entirely (stress run
+  // 38393992089, cycles 3, 5 and 8). The baseline is captured after the wait,
+  // so what the wait observed cannot pass the check below vacuously.
+  const rest = await waitAtRest();
+  if (!rest.ok) {
+    return record("W1", "new-chat", "fail", {
+      reason: `the environment never reached rest: output still changing or the OpenCode server unhealthy after ${rest.waitedMs}ms (quiet=${rest.quietMs}ms healthyFor=${rest.healthyForMs}ms)`,
+      restWaitMs: rest.waitedMs,
+    });
+  }
   const pre = await tgState().catch(() => ({}));
   const base = snapshot(pre);
   enqueue(messageUpdate(NEW_CHAT));
   const r = await waitFor((s) => newThreadId(s, base), 60_000, "new topic id");
-  if (!r.ok) return record("W1", "new-chat", "fail", { reason: r.reason });
-  record("W1", "new-chat", "pass", { threadId: r.value });
+  if (!r.ok) return record("W1", "new-chat", "fail", { reason: r.reason, restWaitMs: rest.waitedMs });
+  record("W1", "new-chat", "pass", { threadId: r.value, restWaitMs: rest.waitedMs });
   return { threadId: r.value };
 }
 
@@ -516,6 +593,22 @@ async function flowDeleteChat(threadId) {
   // has to be proven is that it still serves a Topic created *after* the
   // delete, and that this Topic is genuinely new — the stub reuses an id for a
   // reused topic name, so a reused id would mean a stale binding was revived.
+  // The same rest gate as W1: this press is a New Chat too, and the delete's
+  // own cleanup output may still be settling. It sits after the D4 window
+  // (`elapsed` is already frozen), so the registered timing is untouched.
+  const reuseRest = await waitAtRest();
+  if (!reuseRest.ok) {
+    return record("W6", "delete-chat", "fail", {
+      reason: `the environment never reached rest before recreating a Topic: ${reuseRest.waitedMs}ms (quiet=${reuseRest.quietMs}ms healthyFor=${reuseRest.healthyForMs}ms)`,
+      elapsed,
+      confirmationId,
+      liveDraft,
+      topicGone: gone,
+      lateStreams,
+      restWaitMs: reuseRest.waitedMs,
+      ...outcome,
+    });
+  }
   const reuseBase = snapshot(await tgState());
   enqueue(messageUpdate(NEW_CHAT));
   const created = await waitFor((s) => newThreadId(s, reuseBase), 30_000, "topic after delete");
@@ -568,10 +661,20 @@ async function flowDeleteChat(threadId) {
     topicGone: gone,
     reuseThreadId,
     reuseMs,
+    restWaitMs: reuseRest.waitedMs,
     lateStreams,
     requested: outcome.requested,
     completed: outcome.completed,
   });
+}
+
+// Which path bot-restart.sh took: graceful (the Bot finished its own
+// shutdown), forced (SIGKILL was required), absent (no old pid to stop) or
+// unkillable (refused). The script writes the marker into bot.log, so the
+// observation travels with the evidence instead of living only in stderr.
+function parseRestartExit(logText) {
+  const m = /bot-restart: [^\n]*exit=(\w+)/.exec(logText ?? "");
+  return m ? m[1] : null;
 }
 
 async function flowRestart(threadId) {
@@ -595,8 +698,10 @@ async function flowRestart(threadId) {
     return record("W7", "restart", "fail", {
       reason: `restart command failed: ${String(error?.stderr ?? error?.message ?? error).slice(0, 300)}`,
       beforePid,
+      restartExit: parseRestartExit(botLogSince(logOffset)),
     });
   }
+  const restartExit = parseRestartExit(botLogSince(logOffset));
 
   // The new Bot announces itself before it touches Telegram. Until that line,
   // every byte in the stub state belongs to the process that was just stopped
@@ -619,6 +724,7 @@ async function flowRestart(threadId) {
       beforePid,
       afterPid: readBotPid(),
       readyMs: Date.now() - t0,
+      restartExit,
     });
   }
 
@@ -656,6 +762,7 @@ async function flowRestart(threadId) {
       afterPid,
       readyMs,
       bootMs,
+      restartExit,
     });
   }
 
@@ -674,11 +781,12 @@ async function flowRestart(threadId) {
         afterPid,
         readyMs,
         threadId,
+        restartExit,
       });
     }
   }
 
-  return record("W7", "restart", "pass", { ...outcome, beforePid, afterPid, readyMs, threadId });
+  return record("W7", "restart", "pass", { ...outcome, beforePid, afterPid, readyMs, threadId, restartExit });
 }
 
 async function cycle(index) {

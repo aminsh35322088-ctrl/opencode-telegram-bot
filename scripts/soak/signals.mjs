@@ -163,6 +163,23 @@ export function streamCalls(state) {
   return total;
 }
 
+// Rest, as the workload must observe it before pressing a control the Bot
+// drops silently during an active run (reply-keyboard-router `menuAllowed`
+// returns false and the router has already deleted the pressed button). The
+// caller samples a monotonic signature — Telegram output calls plus streamed
+// completions — and this decides whether it has been stable for `stableMs`.
+// Any change resets the clock, so a press can never be justified by a gap
+// between two bursts of activity that the samples straddled.
+export function restState(samples, stableMs) {
+  if (!samples || samples.length === 0) return { atRest: false, quietMs: 0 };
+  let lastGrowth = samples[0].t;
+  for (let i = 1; i < samples.length; i += 1) {
+    if (samples[i].calls !== samples[i - 1].calls) lastGrowth = samples[i].t;
+  }
+  const quietMs = samples[samples.length - 1].t - lastGrowth;
+  return { atRest: quietMs >= stableMs, quietMs };
+}
+
 // RC soak phasing (SOAK_GATES.md §2: "cycles spread over 24 h with active and
 // idle phases"). A phase is a contiguous window measured from the stage's own
 // start — not the 15 s gap between two back-to-back cycles, which is a pause,

@@ -511,3 +511,76 @@ test("cumulative CPU time parses every ps TIME shape and refuses to invent one",
   assert.equal(cputimeSeconds(""), null, "absent is not zero");
   assert.equal(cputimeSeconds("running"), null, "unparseable is not a plausible figure");
 });
+
+test("the workload may only act at rest, and never claims rest it did not observe", async () => {
+  const { restState } = await loadScript<{
+    restState: (
+      samples: Array<{ t: number; calls: number }>,
+      stableMs: number,
+    ) => { atRest: boolean; quietMs: number };
+  }>("scripts/soak/signals.mjs");
+
+  // Stress run 38393992089: the next cycle's New Chat arrived while the
+  // previous cycle's answer tail was still streaming, the Bot's menuAllowed
+  // guard saw an active run, and the press — already deleted by the router —
+  // was dropped with no reply. Rest is the workload's precondition; it must be
+  // waited for, not raced for.
+  assert.deepEqual(
+    restState([], 5000),
+    { atRest: false, quietMs: 0 },
+    "no observation is not rest",
+  );
+  assert.deepEqual(
+    restState([{ t: 1000, calls: 7 }], 5000),
+    { atRest: false, quietMs: 0 },
+    "a single reading cannot show stability",
+  );
+  assert.deepEqual(
+    restState(
+      [
+        { t: 1000, calls: 7 },
+        { t: 3500, calls: 7 },
+        { t: 6000, calls: 7 },
+      ],
+      5000,
+    ),
+    { atRest: true, quietMs: 5000 },
+    "5s without a single output growth is rest",
+  );
+  assert.equal(
+    restState(
+      [
+        { t: 1000, calls: 7 },
+        { t: 6000, calls: 7 },
+      ],
+      5000,
+    ).atRest,
+    true,
+    "the boundary counts as rest",
+  );
+  assert.equal(
+    restState(
+      [
+        { t: 1000, calls: 7 },
+        { t: 3500, calls: 7 },
+        { t: 5000, calls: 8 },
+      ],
+      5000,
+    ).atRest,
+    false,
+    "any growth, up or down, restarts the clock",
+  );
+  assert.deepEqual(
+    restState(
+      [
+        { t: 1000, calls: 7 },
+        { t: 2000, calls: 8 },
+        { t: 7000, calls: 8 },
+        { t: 8000, calls: 8 },
+      ],
+      5000,
+    ),
+    { atRest: true, quietMs: 6000 },
+    "quiet time is measured from the last growth, never from the first sample",
+  );
+});
