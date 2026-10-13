@@ -1,0 +1,209 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+
+// The soak harness drives the real Bot through raw Telegram updates. Two of its
+// assumptions were wrong and only an end-to-end cycle run could see it: thread
+// messages that are not marked `is_topic_message` are silently dropped by the
+// Bot's Topic extraction (Delete Chat never answered), and a Bot streaming in
+// `edit` mode never issues a draft, so Telegram Stop arrives with an id the Bot
+// cannot attribute (`unknown-draft`). These cases pin the harness contract.
+async function loadScript<T = Record<string, unknown>>(relative: string): Promise<T> {
+  return (await import(new URL(`../${relative}`, import.meta.url).href)) as T;
+}
+
+test("a thread-bound message update marks is_topic_message so the Bot resolves Topic scope", async () => {
+  const { createUpdateBuilders } = await loadScript<{
+    createUpdateBuilders: (options: { userId: number }) => {
+      messageUpdate: (
+        text: string,
+        options?: { chatId?: number; fromId?: number; threadId?: number },
+      ) => { message: Record<string, unknown> };
+    };
+  }>("scripts/soak/updates.mjs");
+
+  const builders = createUpdateBuilders({ userId: 987654321 });
+  const inTopic = builders.messageUpdate("🗑️ Delete Chat", { threadId: 10000 });
+
+  assert.equal(inTopic.message.message_thread_id, 10000);
+  assert.equal(
+    inTopic.message.is_topic_message,
+    true,
+    "real Telegram sets is_topic_message on forum-topic messages; without it the Bot's getTopicFromMessage() returns null and consumes the control without answering",
+  );
+
+  const direct = builders.messageUpdate("/start");
+  assert.equal(direct.message.is_topic_message, undefined);
+});
+
+test("a thread-bound callback update marks is_topic_message on its embedded message", async () => {
+  const { createUpdateBuilders } = await loadScript<{
+    createUpdateBuilders: (options: { userId: number }) => {
+      callbackUpdate: (
+        data: string,
+        messageId: number | null,
+        threadId?: number,
+      ) => { callback_query: { message?: Record<string, unknown> } };
+    };
+  }>("scripts/soak/updates.mjs");
+
+  const builders = createUpdateBuilders({ userId: 987654321 });
+  const inTopic = builders.callbackUpdate("telegram-topic:delete:confirm", 55, 10000);
+
+  assert.equal(inTopic.callback_query.message?.message_thread_id, 10000);
+  assert.equal(
+    inTopic.callback_query.message?.is_topic_message,
+    true,
+    "the Delete confirmation callback is resolved through the same Topic extraction as the button press",
+  );
+});
+
+test("seeded soak settings select draft streaming so Telegram Stop has a draft to attribute", async () => {
+  const { settingsPatch } = await loadScript<{
+    settingsPatch: (options: { providerId: string; modelId: string; modelName: string }) => Record<string, unknown>;
+  }>("scripts/soak/seed-state.mjs");
+
+  const patch = settingsPatch({ providerId: "soak", modelId: "soak-model", modelName: "Soak Stub Model" });
+
+  assert.equal(
+    patch.responseStreamingMode,
+    "draft",
+    "default streaming mode is `edit`, which never issues a draft; Telegram's stopped_message_generation then carries an id the Bot never registered and refuses the Stop as unknown-draft",
+  );
+  const topicDefaults = patch.topicDefaults as Record<string, unknown> | undefined;
+  assert.equal(
+    topicDefaults?.responseStreamingMode,
+    "draft",
+    "a Topic created by New Chat takes its settings from topicDefaults, so the global value alone is not enough",
+  );
+});
+
+test("growth is observed as a new draft or a new message, never by a stale baseline", async () => {
+  const { snapshot, growthObserved } = await loadScript<{
+    snapshot: (state: Record<string, unknown>) => { messages: number; drafts: number };
+    growthObserved: (state: Record<string, unknown>, base: { messages: number; drafts: number }) => boolean;
+  }>("scripts/soak/signals.mjs");
+
+  const base = snapshot({ messages: { 1: "welcome" }, drafts: [] });
+  assert.deepEqual(base, { messages: 1, drafts: 0 });
+
+  assert.equal(
+    growthObserved({ messages: { 1: "welcome" }, drafts: [{ draft_id: 7 }] }, base),
+    true,
+    "draft mode announces the run as a draft, before any message exists",
+  );
+  assert.equal(growthObserved({ messages: { 1: "welcome", 2: "reply" }, drafts: [] }, base), true);
+  assert.equal(
+    growthObserved({ messages: { 1: "welcome" }, drafts: [] }, base),
+    false,
+    "a baseline that already counts a previous cycle's output must not report growth again",
+  );
+});
+
+test("a Stop is confirmed by a new message or by the Bot's own confirmed attribution", async () => {
+  const { snapshot, stopConfirmed } = await loadScript<{
+    snapshot: (state: Record<string, unknown>) => { messages: number; drafts: number };
+    stopConfirmed: (
+      state: Record<string, unknown>,
+      base: { messages: number; drafts: number },
+      logText: string,
+      draftId: number | null,
+    ) => { confirmed: boolean; by: string | null };
+  }>("scripts/soak/signals.mjs");
+
+  const base = snapshot({ messages: { 1: "welcome" }, drafts: [{ draft_id: 7 }] });
+
+  const confirmedLog =
+    "[2026-10-13T07:38:28.513Z] [INFO] [Bot] Native generation stop handled: chat=987654321, thread=10000, draft=7, result=confirmed";
+  assert.deepEqual(stopConfirmed({ messages: { 1: "welcome" }, drafts: [{ draft_id: 7 }] }, base, confirmedLog, 7), {
+    confirmed: true,
+    by: "bot-log",
+  });
+
+  assert.deepEqual(
+    stopConfirmed({ messages: { 1: "welcome", 2: "stopped" }, drafts: [] }, base, "", 7),
+    { confirmed: true, by: "message" },
+    "publishing the stopped draft as a real message is the other observable confirmation",
+  );
+
+  const refusedLog =
+    "[2026-10-13T07:38:28.513Z] [WARN] [Cancellation] Refused unattributable native Stop: draft=7, reason=unknown-draft";
+  assert.deepEqual(
+    stopConfirmed({ messages: { 1: "welcome" }, drafts: [{ draft_id: 7 }] }, base, refusedLog, 7),
+    { confirmed: false, by: null },
+    "a refused Stop must never be reported as confirmation",
+  );
+
+  assert.deepEqual(
+    stopConfirmed(
+      { messages: { 1: "welcome", 2: "partial draft" }, drafts: [{ draft_id: 7 }, { draft_id: 8 }] },
+      base,
+      "",
+      7,
+    ),
+    { confirmed: false, by: null },
+    "another draft from a generation that is still streaming is late output, never a confirmation",
+  );
+});
+
+test("late output is measured by Telegram output calls, not by message count alone", async () => {
+  const { outputCalls } = await loadScript<{
+    outputCalls: (state: Record<string, unknown>) => number;
+  }>("scripts/soak/signals.mjs");
+
+  const state = {
+    counters: {
+      getUpdates: 40,
+      sendChatAction: 6,
+      sendMessageDraft: 2,
+      sendRichMessageDraft: 3,
+      editMessageText: 11,
+      sendMessage: 4,
+    },
+  };
+  assert.equal(
+    outputCalls(state),
+    20,
+    "edits and drafts are output the stopped run must stop producing; getUpdates/typing polls are not",
+  );
+  assert.equal(outputCalls({ counters: {} }), 0);
+});
+
+test("persist-evidence pushes to GitHub with the checkout's credentials and never hides the reason", async () => {
+  const { readFileSync } = await import("node:fs");
+  const script = readFileSync(new URL("../scripts/soak/persist-evidence.sh", import.meta.url), "utf8");
+
+  assert.ok(
+    !/git push[^\n]*2>\/dev\/null/.test(script),
+    "swallowing push stderr left two soak runs reporting 'push failed after 3 attempts (offline?)' with no reason — a durability gate (E6) cannot be audited if the cause is discarded",
+  );
+  assert.ok(
+    /\bpush\b[^\n]*\$REMOTE/.test(script),
+    "after the file:// seed clone, `origin` points at the local checkout: a push there succeeds locally and never reaches GitHub, so the push must target the remote URL",
+  );
+  assert.ok(
+    /extraheader/.test(script),
+    "actions/checkout stores the token in http.https://github.com/.extraheader of the parent repo; a fresh clone does not inherit it, so the push must pass it explicitly",
+  );
+});
+
+test("D2 counts streaming output only, because finalising the stopped draft is legitimate", async () => {
+  const { streamCalls } = await loadScript<{
+    streamCalls: (state: Record<string, unknown>) => number;
+  }>("scripts/soak/signals.mjs");
+
+  const state = {
+    counters: {
+      getUpdates: 40,
+      sendChatAction: 6,
+      sendMessageDraft: 2,
+      sendRichMessageDraft: 3,
+      editMessageText: 11,
+      sendMessage: 4,
+    },
+  };
+  assert.equal(
+    streamCalls(state),
+    16,
+    "publishing the stopped draft as a message is the confirmation itself; a run still streaming after the stop is the violation",
+  );
+});

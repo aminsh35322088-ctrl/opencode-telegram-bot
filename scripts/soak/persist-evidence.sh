@@ -57,13 +57,33 @@ fi
 git -c user.name="soak-harness" -c user.email="soak-harness@users.noreply.github.com" \
   commit -q -m "evidence: ${STAMP}" || exit 1
 
+# Push to the GitHub URL, carrying the checkout's credentials.
+#
+# Two separate failure modes are hidden here otherwise: (1) after the `file://`
+# seed clone, `origin` points at the local checkout, where a push "succeeds"
+# without ever leaving the runner; (2) actions/checkout keeps the token as an
+# extraheader in the PARENT repo's config, which a fresh clone does not inherit,
+# so an authenticated push must pass it explicitly. And stderr is kept, because
+# a durability gate that reports only "offline?" cannot be audited (E6).
+AUTH_HEADER="$(git -C "$REPO_DIR" config --get http.https://github.com/.extraheader || true)"
+
+push_evidence() {
+  if [ -n "$AUTH_HEADER" ]; then
+    git -C "$WORK" -c "http.https://github.com/.extraheader=$AUTH_HEADER" \
+      push --quiet "$REMOTE" "HEAD:refs/heads/$BRANCH" 2>&1
+  else
+    git -C "$WORK" push --quiet "$REMOTE" "HEAD:refs/heads/$BRANCH" 2>&1
+  fi
+}
+
 for attempt in 1 2 3; do
-  if git push --quiet origin "$BRANCH" 2>/dev/null; then
-    echo "persist-evidence: pushed $(git rev-parse --short HEAD)"
+  if last_error="$(push_evidence)"; then
+    echo "persist-evidence: pushed $(git -C "$WORK" rev-parse --short HEAD)"
     exit 0
   fi
+  echo "persist-evidence: push attempt ${attempt} failed: ${last_error}" >&2
   sleep $((attempt * 3))
 done
 
-echo "persist-evidence: push failed after 3 attempts (offline?)" >&2
+echo "persist-evidence: push failed after 3 attempts" >&2
 exit 1

@@ -3,9 +3,11 @@
 // for observable outcomes, enforces the registered deadlines and records
 // evidence. A flow that cannot be observed is reported "not-executed", never
 // as a pass.
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
+import { createUpdateBuilders } from "./updates.mjs";
+import { growthObserved, outputCalls, snapshot, stopConfirmed, streamCalls } from "./signals.mjs";
 
 const args = new Map();
 for (let i = 2; i < process.argv.length; i += 2) {
@@ -23,6 +25,10 @@ const TG_ROOT = `http://127.0.0.1:${TG_PORT}`;
 const MODEL_PORT = args.get("model-port") ?? process.env.SOAK_MODEL_PORT ?? "8090";
 const MODEL_ROOT = `http://127.0.0.1:${MODEL_PORT}`;
 
+// Update builders live in their own module so their Telegram shape is under
+// test (tests/soak-harness.test.ts); the driver only decides *when* to send.
+const { messageUpdate, stopUpdate, callbackUpdate } = createUpdateBuilders({ userId: USER_ID });
+
 // Registered deadlines — docs/SOAK_GATES.md §5. Exceeding one is a failure.
 const D = {
   stopConfirmMs: 30_000, // D1 (absolute ceiling)
@@ -38,7 +44,6 @@ mkdirSync(EVIDENCE, { recursive: true });
 const CYCLE_LOG = join(EVIDENCE, "cycles.jsonl");
 
 let updateId = 1_000_000;
-let messageId = 10_000;
 const startedAt = Date.now();
 
 function now() {
@@ -58,39 +63,6 @@ function enqueue(update) {
   const payload = { update_id: updateId, ...update };
   appendFileSync(UPDATES, `${JSON.stringify(payload)}\n`);
   return payload;
-}
-
-function messageUpdate(text, opts = {}) {
-  messageId += 1;
-  const message = {
-    message_id: messageId,
-    date: Math.floor(Date.now() / 1000),
-    chat: { id: opts.chatId ?? USER_ID, type: "private", first_name: "Soak" },
-    from: { id: opts.fromId ?? USER_ID, is_bot: false, first_name: "Soak" },
-    text,
-  };
-  // Real Telegram attaches a `bot_command` entity to any text that starts with
-  // "/". grammy's Composer.command() requires that entity (offset 0, type
-  // `bot_command`) before it will dispatch, so without it EVERY Bot command is
-  // silently ignored — the message still reaches message-router, which made the
-  // gap look like a Bot bug rather than a harness gap. Verified: with no entity
-  // the debug probe `cmdmw enter text="/start"` fired but the handler never did.
-  if (text.startsWith("/")) {
-    const space = text.indexOf(" ");
-    message.entities = [{ offset: 0, length: space === -1 ? text.length : space, type: "bot_command" }];
-  }
-  if (opts.threadId) message.message_thread_id = opts.threadId;
-  return { message };
-}
-
-function stopUpdate(threadId, draftId) {
-  return {
-    stopped_message_generation: {
-      chat: { id: USER_ID, type: "private", first_name: "Soak" },
-      ...(threadId ? { message_thread_id: threadId } : {}),
-      draft_id: draftId,
-    },
-  };
 }
 
 async function tgState() {
@@ -212,8 +184,9 @@ const msgCount = (s) => Object.keys(s?.messages ?? {}).length;
 const threadIds = (s) => Object.values(s?.threads ?? {});
 
 async function flowStart() {
+  const base = snapshot(await tgState().catch(() => ({})));
   enqueue(messageUpdate("/start"));
-  const r = await waitFor((s) => msgCount(s) > 0, 45_000, "reply to /start");
+  const r = await waitFor((s) => growthObserved(s, base), 45_000, "reply to /start");
   if (!r.ok) return record("W0", "start", "fail", { reason: r.reason });
   return record("W0", "start", "pass", { replies: msgCount(r.state) });
 }
@@ -222,28 +195,29 @@ async function flowNewChat() {
   // The thread is what New Chat actually creates. Waiting on a message count
   // alone short-circuits as soon as /start's own welcome messages are counted,
   // which recorded a null threadId even though the topic had been created.
-  const before = msgCount(await tgState());
+  // Both baselines are captured fresh: in a stress run earlier cycles leave
+  // messages and threads behind, so an absolute count would pass vacuously.
+  const pre = await tgState().catch(() => ({}));
+  const base = snapshot(pre);
+  const threadsBase = threadIds(pre).length;
   enqueue(messageUpdate(NEW_CHAT));
   const r = await waitFor(
-    (s) => threadIds(s).length > 0 || msgCount(s) > before,
+    (s) => threadIds(s).length > threadsBase || growthObserved(s, base),
     60_000,
     "New Chat outcome",
   );
   if (!r.ok) return record("W1", "new-chat", "fail", { reason: r.reason });
-  const threadId = threadIds(r.state)[0] ?? null;
+  // Newest thread: earlier stress cycles created (and deleted) their own.
+  const threadId = threadIds(r.state).at(-1) ?? null;
   record("W1", "new-chat", "pass", { threadId });
   return { threadId };
 }
 
 async function flowPrompt(threadId) {
-  const before = msgCount(await tgState());
+  const base = snapshot(await tgState().catch(() => ({})));
   const modelBefore = await modelState().catch(() => ({ requests: 0, streams: 0 }));
   enqueue(messageUpdate("Reply with the single word PONG and then read README.md", { threadId }));
-  const r = await waitFor(
-    (s) => msgCount(s) > before || (s.drafts?.length ?? 0) > 0,
-    90_000,
-    "streamed reply",
-  );
+  const r = await waitFor((s) => growthObserved(s, base), 90_000, "streamed reply");
   if (!r.ok) return record("W2", "prompt-stream-tool", "fail", { reason: r.reason });
 
   // A Telegram-side reply is NOT proof the model ran. An orphaned `opencode
@@ -276,45 +250,71 @@ async function flowStop(threadId) {
   // so waiting for a draft that already exists left W5 permanently
   // not-executed. Start a fresh long-running turn and stop it mid-flight.
   const pre = await tgState().catch(() => ({}));
-  const preCount = msgCount(pre);
+  const base = snapshot(pre);
   enqueue(messageUpdate("Write a long explanation of the repository layout.", { threadId }));
 
-  const started = await waitFor((s) => msgCount(s) > preCount, 30_000, "in-flight streamed message");
+  const started = await waitFor(
+    (s) => growthObserved(s, base),
+    30_000,
+    "in-flight draft or streamed message",
+  );
   if (!started.ok) return record("W5", "stop", "not-executed", { reason: started.reason });
 
-  // In this Bot the streamer publishes `messageId === draftId`, so the id the
-  // Bot just published for this run is the draft identity Stop is attributed
-  // to. A real Telegram client learns the same value from the draft it was
-  // shown; the stub records drafts when `sendMessageDraft` is used, so prefer
-  // that when it is present.
+  // The draft the Bot registered for this run is the identity Stop must be
+  // attributed to. A real Telegram client learns the same value from the draft
+  // it was shown; the stub records it whenever `sendMessageDraft` is used, so
+  // prefer that and fall back to the id of the published message.
   const recordedDraft = (started.state.drafts ?? []).at(-1);
   const draftId = recordedDraft?.draft_id ?? latestMessageId(started.state);
-  const beforeCount = msgCount(started.state);
+  const confirmBase = snapshot(started.state);
+  const outputsBefore = outputCalls(started.state);
 
   const t0 = Date.now();
   enqueue(stopUpdate(threadId ?? draftId, draftId));
 
-  const confirmed = await waitFor(
-    (s) => msgCount(s) > beforeCount,
-    D.stopConfirmMs,
-    "Stop confirmation",
-  );
+  // Confirmation is only ever *observed*, never assumed: a reply published by
+  // the Bot, or the Bot's own `result=confirmed` attribution for this exact
+  // draft. A refusal (unknown-draft, stale-draft, …) matches neither and the
+  // deadline expires as a failure — exactly what §3 requires of a Stop.
+  let confirmed = { confirmed: false, by: null };
+  let confirmState = started.state;
+  const deadline = Date.now() + D.stopConfirmMs;
+  while (Date.now() < deadline && !confirmed.confirmed) {
+    confirmState = (await tgState().catch(() => null)) ?? confirmState;
+    confirmed = stopConfirmed(confirmState, confirmBase, readBotLogTail(), draftId);
+    if (!confirmed.confirmed) await sleep(300);
+  }
   const confirmMs = Date.now() - t0;
-  if (!confirmed.ok) {
-    return record("W5", "stop", "fail", { reason: confirmed.reason, confirmMs, draftId, source: recordedDraft ? "stub-draft" : "published-message" });
+  const source = recordedDraft ? "stub-draft" : "published-message";
+  if (!confirmed.confirmed) {
+    return record("W5", "stop", "fail", {
+      reason: `Stop confirmation timed out after ${D.stopConfirmMs}ms`,
+      confirmMs,
+      draftId,
+      source,
+      outputsBefore,
+    });
   }
 
-  // D2: late output from the stopped run must cease.
-  const postStopCount = msgCount(confirmed.state);
+  // D2: streaming output from the stopped run must cease. Publishing the
+  // stopped draft as a final message is the confirmation itself, so only
+  // draft/edit calls count as late output.
+  const stateAtConfirm = await tgState().catch(() => ({}));
+  const outputsAtConfirm = outputCalls(stateAtConfirm);
+  const streamsAtConfirm = streamCalls(stateAtConfirm);
   await sleep(D.lateOutputMs + 2_000);
   const after = await tgState();
-  const lateDelta = msgCount(after) - postStopCount;
+  const lateDelta = streamCalls(after) - streamsAtConfirm;
   const status = lateDelta > 0 ? "fail" : "pass";
   return record("W5", "stop", status, {
     draftId,
-    source: recordedDraft ? "stub-draft" : "published-message",
+    source,
     confirmMs,
+    confirmedBy: confirmed.by,
+    outputsBefore,
+    outputsAtConfirm,
     lateDelta,
+    streamCalls: streamCalls(after),
     withinD1: confirmMs <= D.stopConfirmMs,
     withinD2: lateDelta === 0,
   });
@@ -325,25 +325,25 @@ function latestMessageId(state) {
   return ids.length > 0 ? Math.max(...ids) : null;
 }
 
-function callbackUpdate(data, messageId, threadId) {
-  return {
-    callback_query: {
-      id: `cb-${Date.now()}`,
-      from: { id: USER_ID, is_bot: false, first_name: "Soak" },
-      chat_instance: "soak",
-      data,
-      ...(messageId !== null
-        ? {
-            message: {
-              message_id: messageId,
-              date: Math.floor(Date.now() / 1000),
-              chat: { id: USER_ID, type: "private", first_name: "Soak" },
-              ...(threadId ? { message_thread_id: threadId } : {}),
-            },
-          }
-        : {}),
-    },
-  };
+// Tail of the Bot's own log. The Stop contract is confirmed there exactly as
+// the Bot reports it (`result=confirmed`), which is the only signal available
+// when a cancelled generation publishes no further message. Only the tail is
+// read: a stress run grows this file without bound.
+function readBotLogTail(maxBytes = 512 * 1024) {
+  const logPath = join(RUN_DIR, "bot.log");
+  if (!existsSync(logPath)) return "";
+  const fd = openSync(logPath, "r");
+  try {
+    const size = fstatSync(fd).size;
+    const length = Math.min(size, maxBytes);
+    const buffer = Buffer.alloc(length);
+    readSync(fd, buffer, 0, length, size - length);
+    return buffer.toString("utf8");
+  } catch {
+    return "";
+  } finally {
+    closeSync(fd);
+  }
 }
 
 async function flowDeleteChat(threadId) {
