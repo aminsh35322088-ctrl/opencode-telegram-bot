@@ -1,0 +1,22 @@
+{
+  "stage": "cycle",
+  "startedAt": "2026-10-13T11:59:11.104Z",
+  "finishedAt": "2026-10-13T11:59:48.908Z",
+  "elapsedS": 38,
+  "counts": {
+    "pass": 5,
+    "fail": 0,
+    "not-executed": 0
+  },
+  "cycles": 1,
+  "resources": {
+    "pid": 2693,
+    "selfRssKb": 156288,
+    "childRssKb": 0,
+    "totalRssKb": 156288,
+    "childCount": 0,
+    "children": [],
+    "loadavg": "0.65 0.26 0.10",
+    "cpus": 4
+  }
+}
