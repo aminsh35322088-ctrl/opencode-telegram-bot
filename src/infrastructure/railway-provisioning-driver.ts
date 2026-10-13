@@ -2,6 +2,7 @@ import { WORKER_CORE_COMMIT,WORKER_CORE_VERSION } from "./worker-core-release.js
 import { randomBytes, randomUUID } from "node:crypto";
 import { lstat, mkdir, open, readFile, rename } from "node:fs/promises";
 import path from "node:path";
+import { syncDirectory } from "../utils/sync-directory.js";
 import type { NodeBinding } from "../control-plane/node-bindings.js";
 
 import {WorkerProvisioningError,type WorkerProvisioningDriver,type WorkerPool,type ProvisionedNode} from "./worker-provisioning-driver.js";
@@ -85,8 +86,7 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
     const file = await open(temporary, "wx", 0o600);
     try { await file.writeFile(JSON.stringify(journal)); await file.sync(); } finally { await file.close(); }
     await rename(temporary, this.options.journalPath);
-    const directory = await open(path.dirname(this.options.journalPath), "r");
-    try { await directory.sync(); } finally { await directory.close(); }
+    await syncDirectory(path.dirname(this.options.journalPath));
   }
   private singleFlight<T>(task: () => Promise<T>): Promise<T> {
     const current = this.queue.then(task); this.queue = current.catch(() => undefined); return current;

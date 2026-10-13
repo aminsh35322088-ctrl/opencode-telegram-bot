@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { mkdir, open, readFile, rename } from "node:fs/promises";
 import { dirname } from "node:path";
+import { syncDirectory } from "../utils/sync-directory.js";
 
 export interface NodeIdentity {nodeId: string; generation: number; chatId: number; threadId: number;}
 export interface NodeEnvelope extends NodeIdentity {
@@ -56,8 +57,7 @@ export class NodeProtocol {
       const file=await open(`${this.replayPath}.tmp`,"w",0o600);
       try {await file.writeFile(JSON.stringify(entries));await file.sync();} finally {await file.close();}
       await rename(`${this.replayPath}.tmp`,this.replayPath);
-      const directory=await open(dirname(this.replayPath),"r");
-      try {await directory.sync();} finally {await directory.close();}
+      await syncDirectory(dirname(this.replayPath));
     });
     this.queue=admission.catch(()=>{});
     await admission;

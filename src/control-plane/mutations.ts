@@ -4,6 +4,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getRuntimePaths } from "../runtime/paths.js";
+import { syncDirectory } from "../utils/sync-directory.js";
 import { getGlobalSkillsDir } from "../app/services/global-skill-path.js";
 import { readAppState, updateAppState, transactAppState, isAppStateTransactionActive } from "../app/stores/app-state-store.js";
 
@@ -114,8 +115,7 @@ async function rollbackExternalEffect(pending: PendingGlobalMutation): Promise<b
     } finally { await fs.rm(temporary, {force: true}); }
   }
   // Make the restored artifact durable before recording recovery of the approval.
-  const parent = await fs.open(before ? path.dirname(file) : getGlobalSkillsDir(), "r");
-  try { await parent.sync(); } finally { await parent.close(); }
+  await syncDirectory(before ? path.dirname(file) : getGlobalSkillsDir());
   return true;
 }
 function exactCanonicalReceipt(state: Record<string, unknown>, pending: PendingGlobalMutation): {revision: number} | null {

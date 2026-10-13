@@ -1,6 +1,7 @@
 import {randomBytes,randomUUID} from 'node:crypto';
 import {lstat,mkdir,open,readFile,rename} from 'node:fs/promises';
 import path from 'node:path';
+import {syncDirectory} from '../utils/sync-directory.js';
 import type {NodeBinding} from '../control-plane/node-bindings.js';
 import {RailwayProvisioningDriver} from './railway-provisioning-driver.js';
 import type {WorkerProvisioningDriver,ProvisionedNode,WorkerPool} from './worker-provisioning-driver.js';
@@ -81,7 +82,7 @@ export class InfrastructureController {
   }
   const secret=existing?.secret??create();if(!/^[a-zA-Z0-9_-]{64,}$/.test(secret))throw Error('Invalid identity seed');
   if(!existing)seeds.push({nodeId:binding.nodeId,generation:binding.generation,chatId:binding.chatId,threadId:binding.threadId,secret});
-  await mkdir(this.options.stateDirectory,{recursive:true,mode:0o700});const temporary=`${filename}.${randomUUID()}.tmp`;const file=await open(temporary,'wx',0o600);try{await file.writeFile(JSON.stringify(seeds));await file.sync();}finally{await file.close();}await rename(temporary,filename);const dir=await open(this.options.stateDirectory,'r');try{await dir.sync();}finally{await dir.close();}return secret;
+  await mkdir(this.options.stateDirectory,{recursive:true,mode:0o700});const temporary=`${filename}.${randomUUID()}.tmp`;const file=await open(temporary,'wx',0o600);try{await file.writeFile(JSON.stringify(seeds));await file.sync();}finally{await file.close();}await rename(temporary,filename);await syncDirectory(this.options.stateDirectory);return secret;
  }
  private async rotateIdentitySeed(binding:Readonly<NodeBinding>,previous:Readonly<InfrastructureNodeIdentity>):Promise<string>{
   const filename=path.join(this.options.stateDirectory,'identity-seeds.json');let seeds:Seed[]=[];
@@ -92,7 +93,7 @@ export class InfrastructureController {
   const oldUnbound=previous.binding.chatId===0&&previous.binding.threadId===0;const nextUnbound=binding.chatId===0&&binding.threadId===0;if(oldUnbound===nextUnbound)throw Error('Identity rotation must alternate bound ownership');
   const replacement=randomBytes(48).toString('base64url');if(replacement===seed.secret||replacement===previous.secret)throw Error('Invalid rotated identity seed');
   Object.assign(seed,{generation:binding.generation,chatId:binding.chatId,threadId:binding.threadId,secret:replacement});
-  await mkdir(this.options.stateDirectory,{recursive:true,mode:0o700});const temporary=`${filename}.${randomUUID()}.tmp`;const file=await open(temporary,'wx',0o600);try{await file.writeFile(JSON.stringify(seeds));await file.sync();}finally{await file.close();}await rename(temporary,filename);const directory=await open(this.options.stateDirectory,'r');try{await directory.sync();}finally{await directory.close();}return replacement;
+  await mkdir(this.options.stateDirectory,{recursive:true,mode:0o700});const temporary=`${filename}.${randomUUID()}.tmp`;const file=await open(temporary,'wx',0o600);try{await file.writeFile(JSON.stringify(seeds));await file.sync();}finally{await file.close();}await rename(temporary,filename);await syncDirectory(this.options.stateDirectory);return replacement;
  }
  /** Root startup maintenance only; never exposed through request() or inherited application IPC. */
  cleanupRuntimeCanaryVariables(nodeId:string,generation:number,selftest:(nodeId:string,generation:number,profile:"baseline"|"browser"|"network")=>Promise<unknown>):Promise<void>{

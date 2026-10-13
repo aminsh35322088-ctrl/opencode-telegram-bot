@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { getRuntimePaths } from "../runtime/paths.js";
+import { syncDirectory } from "../utils/sync-directory.js";
 
 export interface NodeBinding {
   slot?: number; clusterId?: string;
@@ -57,8 +58,7 @@ export class NodeBindingStore {
       const handle = await fs.open(temporary, "wx", 0o600);
       try { await handle.writeFile(JSON.stringify(state)); await handle.sync(); } finally { await handle.close(); }
       await fs.rename(temporary, this.filename);
-      const directory = await fs.open(path.dirname(this.filename), "r");
-      try { await directory.sync(); } finally { await directory.close(); }
+      await syncDirectory(path.dirname(this.filename));
       return structuredClone(result);
     });
     this.queue = task.catch(() => undefined);

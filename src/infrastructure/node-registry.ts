@@ -1,6 +1,7 @@
 import type {NodeControlBinding} from "../control-plane/node-control.js";
 import {lstat,readFile,mkdir,open,rename} from "node:fs/promises";
 import {dirname} from "node:path";
+import {syncDirectory} from "../utils/sync-directory.js";
 
 export interface InfrastructureNodeIdentity {binding: NodeControlBinding;endpoint:string;secret:string;}
 /** Root-only identity owner. Consume environment before any application imports. */
@@ -53,7 +54,7 @@ export function captureNodeRegistry(environment:NodeJS.ProcessEnv) {
       const file=await open(`${filename}.tmp`,"w",0o600);
       try{await file.writeFile(JSON.stringify(Array.from(identities.values())));await file.sync();}finally{await file.close();}
       await rename(`${filename}.tmp`,filename);
-      const directory=await open(dirname(filename),"r");try{await directory.sync();}finally{await directory.close();}
+      await syncDirectory(dirname(filename));
     },
     dispose:()=>identities.clear(),
   };

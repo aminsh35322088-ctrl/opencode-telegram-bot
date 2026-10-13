@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from "node:crypto";
 import { chmod, lstat, mkdir, open, readFile, rename } from "node:fs/promises";
 import path from "node:path";
+import { syncDirectory } from "../utils/sync-directory.js";
 
 export type RailwayInfrastructureTokenType = "account" | "workspace";
 export interface StoredRailwayInfrastructureCredential {
@@ -32,8 +33,7 @@ async function atomicWrite(filename: string, data: string | Buffer): Promise<voi
   try { await file.writeFile(data); await file.sync(); } finally { await file.close(); }
   await rename(temporary, filename);
   await chmod(filename, 0o600);
-  const directory = await open(path.dirname(filename), "r");
-  try { await directory.sync(); } finally { await directory.close(); }
+  await syncDirectory(path.dirname(filename));
 }
 
 export class RailwayCredentialStore {

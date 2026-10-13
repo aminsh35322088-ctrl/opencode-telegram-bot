@@ -1,5 +1,6 @@
 import { lstat, mkdir, open, readFile, rename } from "node:fs/promises";
 import path from "node:path";
+import { syncDirectory } from "../utils/sync-directory.js";
 import { randomUUID } from "node:crypto";
 
 export interface RailwayWorkerSettings {
@@ -76,7 +77,6 @@ export class RailwayWorkerSettingsStore {
     const file = await open(temporary, "wx", 0o600);
     try { await file.writeFile(JSON.stringify(value)); await file.sync(); } finally { await file.close(); }
     await rename(temporary, this.filename);
-    const dir = await open(directory, "r");
-    try { await dir.sync(); } finally { await dir.close(); }
+    await syncDirectory(directory);
   }
 }
