@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { parseMarkdownDocument, renderTelegramRichDocument } from "@opencode-telegram/native-runtime";
 import { renderTelegramParts } from "../src/bot/render/pipeline.js";
 
 function serialized(markdown: string): string {
@@ -42,17 +43,23 @@ test("model-authored interactive buttons stay disabled while visible text surviv
   assert.doesNotMatch(output, /\"type\":\"button\"/);
 });
 
-test("ordinary currency is not promoted to math and eligible tables stay compact", () => {
-  const output = serialized([
+test("ordinary currency is not promoted to math and Bot preserves Core-owned table compactness", () => {
+  const markdown = [
     "Price is $100, not an equation.",
     "",
     "| File | State |",
     "| --- | --- |",
     "| core | ready |",
-  ].join("\n"));
+  ].join("\n");
+  const output = serialized(markdown);
+  const coreBlocks = renderTelegramRichDocument(parseMarkdownDocument(markdown), { draft: false }).blocks ?? [];
+  const coreTable = coreBlocks.find((block) => block.type === "table");
+  const botTable = renderTelegramParts(markdown).flatMap((part) => part.blocks).find((block) => block.type === "table");
 
   assert.match(output, /\$100/);
   assert.doesNotMatch(output, /\"expression\":\"100\"/);
   assert.match(output, /\"type\":\"table\"/);
-  assert.match(output, /\"is_compact\":true/);
+  assert.ok(coreTable && coreTable.type === "table");
+  assert.ok(botTable && botTable.type === "table");
+  assert.equal(botTable.is_compact, coreTable.is_compact);
 });

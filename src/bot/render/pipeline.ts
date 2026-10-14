@@ -10,20 +10,8 @@ import { toBlockPlainText } from "./block-plain-text.js";
 import { splitOversizeTelegramBlocks, type BlockSplitLimits } from "./block-splitter.js";
 import type { TelegramChunkerOptions } from "./chunker.js";
 import { liftTextListContent, toRichBlock } from "./rich-blocks.js";
-import type { TelegramBlock, TelegramRenderedBlock, TelegramRichBlock } from "./types.js";
+import type { TelegramBlock, TelegramRenderedBlock } from "./types.js";
 import type { TelegramRenderedPart } from "./types.js";
-
-/**
- * Bot API 10.3 can render native tables with tighter cell padding. Markdown
- * tables are inherently dense data, so opt into compact presentation at the
- * final render boundary while keeping the parser and fallback text unchanged.
- */
-function applyRichBlockPresentation(block: TelegramRichBlock): TelegramRichBlock {
-  if (block.type === "table") {
-    return { ...block, is_compact: true };
-  }
-  return block;
-}
 
 /**
  * Lifts native content out of lists that are written as text, splits blocks
@@ -35,7 +23,7 @@ export function toRenderedBlocks(
   limits?: Partial<BlockSplitLimits>,
 ): TelegramRenderedBlock[] {
   return splitOversizeTelegramBlocks(liftTextListContent(blocks), limits).map((block) => ({
-    block: applyRichBlockPresentation(toRichBlock(block)),
+    block: toRichBlock(block),
     plainText: toBlockPlainText(block),
   }));
 }
@@ -64,7 +52,7 @@ export function renderTelegramBlocks(
           renderTelegramRichDocument(parts.length === 1 ? chunk : part.document, { draft: false })
             .blocks ?? []
         ).map((richBlock, index) => ({
-          block: applyRichBlockPresentation(richBlock),
+          block: richBlock,
           plainText: index === 0 ? part.text : "",
         })),
       );
@@ -93,7 +81,7 @@ export function renderTelegramParts(
         renderTelegramRichDocument(parts.length === 1 ? documentChunk : part.document, {
           draft: false,
         }).blocks ?? []
-      ).map(applyRichBlockPresentation),
+      ),
       fallbackText: part.text,
       html: part.html,
       markdownV2: part.markdownV2,
