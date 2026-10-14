@@ -1,3 +1,4 @@
+import { redactToolActivity } from "./tool-activity-renderer.js";
 import { logger } from "../../utils/logger.js";
 import {
   resolveStreamThrottleMs,
@@ -107,7 +108,7 @@ function splitLongText(text: string, limit: number): string[] {
 
 function buildParts(entries: StreamEntry[]): string[] {
   const text = entries
-    .map((entry) => entry.text.trim())
+    .map((entry) => redactToolActivity(entry.text))
     .filter(Boolean)
     .join("\n\n");
   if (!text) {
@@ -253,9 +254,7 @@ export class ToolCallStreamer {
     }
   }
 
-  private getStateId(sessionId: string, streamKey: ToolStreamKey): string {
-    return `${sessionId}:${streamKey}`;
-  }
+  private getStateId(sessionId: string, _streamKey: ToolStreamKey): string { return `${sessionId}:activity`; }
 
   private getStatesForSession(sessionId: string): StreamState[] {
     return Array.from(this.allStates).filter((state) => state.sessionId === sessionId);

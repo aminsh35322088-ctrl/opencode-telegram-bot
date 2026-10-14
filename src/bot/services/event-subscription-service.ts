@@ -73,6 +73,7 @@ import { scheduledTaskRuntime } from "../../app/services/scheduled-task-runtime-
 import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
 import { ResponseStreamer, type StreamingMessagePayload } from "../streaming/response-streamer.js";
 import { ToolCallStreamer, type ToolStreamKey } from "../streaming/tool-call-streamer.js";
+import { renderToolActivity } from "../streaming/tool-activity-renderer.js";
 import { presentPendingExtensionAutomation } from "./extension-automation-ui.js";
 import { RunningToolTracker, type RunningToolTick } from "../streaming/running-tool-tracker.js";
 import { CompactProgressStreamer } from "../streaming/compact-progress-streamer.js";
@@ -309,11 +310,15 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         const chatId = this.getChatIdForSession(sessionId);
         if (!chatId) throw new Error("No chat ID for session");
 
-        const sentMessage = await this.sessionScopedApi(sessionId).sendMessage(chatId, text, {
-          disable_notification: true,
+        const activity = renderToolActivity(text);
+        const sentMessage = await sendRenderedBotPart({
+          api: this.sessionScopedApi(sessionId),
+          chatId,
+          part: activity,
+          options: { disable_notification: true },
         });
 
-        return sentMessage.message_id;
+        return sentMessage.messageId;
       },
       editText: async (sessionId, messageId, text) => {
         if (!this.botInstance) {
@@ -328,7 +333,13 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         if (!chatId) throw new Error("No chat ID for session");
 
         try {
-          await this.sessionScopedApi(sessionId).editMessageText(chatId, messageId, text);
+          const activity = renderToolActivity(text);
+          await editRenderedBotPart({
+            api: this.sessionScopedApi(sessionId),
+            chatId,
+            messageId,
+            part: activity,
+          });
         } catch (error) {
           const errorMessage =
             error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
@@ -415,15 +426,12 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
     if (isCompactProgressMode()) {
       const cached = this.compactActivityBySession.get(tick.sessionId);
-      if (!cached || cached.callId !== tick.callId) {
-        return;
+      if (cached?.callId === tick.callId) {
+        this.compactProgressStreamer.updateActivity(
+          tick.sessionId,
+          appendDuration(cached.activity, elapsed),
+        );
       }
-
-      this.compactProgressStreamer.updateActivity(
-        tick.sessionId,
-        appendDuration(cached.activity, elapsed),
-      );
-      return;
     }
 
     const toolInfo = this.runningToolInfos.get(this.getToolCacheKey(tick.sessionId, tick.callId));
@@ -471,10 +479,6 @@ class EventSubscriptionService implements BotEventSubscriptionService {
   }
 
   private async refreshSubagentCards(sessionId: string): Promise<void> {
-    if (isCompactProgressMode()) {
-      return;
-    }
-
     const subagents = this.subagentSnapshots.get(sessionId);
     if (!subagents) {
       return;
@@ -870,7 +874,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
               return Promise.all([
                 this.toolMessageBatcher.flushSession(sessionId, "assistant_message_completed"),
-                this.toolCallStreamer.breakSession(sessionId, "assistant_message_completed"),
+                this.toolCallStreamer.flushSession(sessionId, "assistant_message_completed"),
               ]).then(() => undefined);
             },
             prepareStreamingPayload: this.prepareFinalStreamingPayload,
@@ -979,13 +983,11 @@ class EventSubscriptionService implements BotEventSubscriptionService {
           // in compact mode, which would leave the entry tracked forever.
           const durationMs = this.runningToolTracker.release(toolInfo.callId);
 
-          if (!compactMode) {
-            this.finalizeLiveToolLine(toolInfo, status === "error", durationMs);
-          }
+          this.finalizeLiveToolLine(toolInfo, status === "error", durationMs);
 
           // Only a completed call reaches setOnTool, so only it has a final line
           // to carry the duration.
-          if (durationMs !== undefined && !compactMode && status === "completed") {
+          if (durationMs !== undefined && status === "completed") {
             this.completedToolDurations.set(
               this.getToolCacheKey(toolInfo.sessionId, toolInfo.callId),
               durationMs,
@@ -1003,33 +1005,19 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
         // Do not wait for the elapsed-time threshold before showing what the
         // agent invoked. Fast calls must be visible just like long-running ones.
-        if (!compactMode) {
-          const message = formatToolInfo(toolInfo);
-          if (message) {
-            this.toolCallStreamer.replaceByPrefix(
-              toolInfo.sessionId,
-              this.getLiveToolPrefix(toolInfo.callId),
-              `${RUNNING_ICON} ${message}`,
-              this.getToolStreamKey(toolInfo.tool),
-            );
-          }
+        const message = formatToolInfo(toolInfo);
+        if (message) {
+          this.toolCallStreamer.replaceByPrefix(
+            toolInfo.sessionId,
+            this.getLiveToolPrefix(toolInfo.callId),
+            `${RUNNING_ICON} ${message}`,
+            this.getToolStreamKey(toolInfo.tool),
+          );
         }
       }
 
       if (!compactMode) {
         return;
-      }
-
-      // Compact mode edits a single progress message and very fast tools can
-      // otherwise complete before that edit reaches Telegram. Persist one
-      // friendly action announcement per call so no tool invocation is hidden.
-      const compactAnnouncement = formatToolInfo(toolInfo);
-      if (compactAnnouncement) {
-        this.toolMessageBatcher.enqueueUniqueByPrefix(
-          toolInfo.sessionId,
-          compactAnnouncement,
-          `tool-call:${toolInfo.callId}`,
-        );
       }
 
       const activity = this.getCompactToolActivity(toolInfo);
@@ -1064,10 +1052,6 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         return;
       }
 
-      if (isCompactProgressMode()) {
-        return;
-      }
-
       try {
         const message = formatToolInfo(toolInfo);
         if (message) {
@@ -1085,10 +1069,6 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
     summaryAggregator.setOnSubagent(async (sessionId, subagents) => {
       if (!this.botInstance || !this.chatIdInstance) {
-        return;
-      }
-
-      if (isCompactProgressMode()) {
         return;
       }
 
@@ -1150,10 +1130,10 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       }
 
       try {
-        // Breaking the stream drops the live-timer entries with it, so stop
-        // ticking rather than re-creating them in a fresh message.
+        // Stop elapsed timers but keep the run-owned activity message so later
+        // actions continue editing the same expandable history.
         this.clearToolElapsedState(fileInfo.sessionId, "tool_file_boundary");
-        await this.toolCallStreamer.breakSession(fileInfo.sessionId, "tool_file_boundary");
+        await this.toolCallStreamer.flushSession(fileInfo.sessionId, "tool_file_boundary");
 
         const toolMessage = formatToolInfo(fileInfo);
         const caption = this.prepareDocumentCaption(toolMessage || fileInfo.fileData.caption);
@@ -1252,20 +1232,13 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
       if (isCompactProgressMode()) {
         this.compactProgressStreamer.updateThinking(update.sessionId);
-
-        if (update.isFirstUpdate && pinnedMessageManager.isInitialized()) {
-          await pinnedMessageManager.refresh();
-        }
-        return;
       }
 
       if (update.isFirstUpdate) {
         this.clearToolElapsedState(update.sessionId, "thinking_started");
-        void this.toolCallStreamer
-          .breakSession(update.sessionId, "thinking_started")
-          .catch((error) => {
-            logger.error("[Bot] Failed to break tool stream before thinking message", error);
-          });
+        void this.toolCallStreamer.flushSession(update.sessionId, "thinking_started").catch((error) => {
+          logger.error("[Bot] Failed to flush tool activity before thinking message", error);
+        });
       }
 
       if (getShowThinkingContent()) {
@@ -1562,7 +1535,6 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
       if (isCompactProgressMode()) {
         this.compactProgressStreamer.updateActivity(sessionId, t("progress.compact.retrying"));
-        return;
       }
 
       const normalizedMessage = message.trim() || t("common.unknown_error");

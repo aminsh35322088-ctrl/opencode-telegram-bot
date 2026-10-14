@@ -5,8 +5,20 @@ import { runInTopicRuntimeContext } from "../app/services/topic-runtime-context.
 import { getNativeCore, resolveCoreTopicBinding, restoreRemoteCoreRun } from "../core/native-core-service.js";
 import type { TopicRuntimeContext } from "../app/services/topic-runtime-context.js";
 import { hasRemoteTopicRunEvents, startRemoteTopicRunEvents } from "../opencode/topic-event-bus.js";
-interface Options { parentID?: string; sessionID?: string; requestID?: string; answers?: string[][]; parts?: unknown[]; model?: unknown; agent?: string; variant?: string; directory?: string }
+interface Options { parentID?: string; reply?: "once"|"always"|"reject"; sessionID?: string; requestID?: string; answers?: string[][]; parts?: unknown[]; model?: unknown; providerID?: string; modelID?: string; agent?: string; variant?: string; directory?: string }
 const runs = new Map<string,string>();
+export function buildRemoteCompactionPayload(runId:string, model:{providerID:string;modelID:string}) {
+  if(!/^[A-Za-z0-9_-]{1,128}$/.test(runId))throw new Error("Remote compaction requires governed run identity");
+  if(!model.providerID||!model.modelID)throw new Error("Remote compaction requires a concrete model");
+  return {runId,model:{providerID:model.providerID,modelID:model.modelID},events:true};
+}
+export function classifyRemoteCompactionEvent(event:{type?:unknown;properties?:unknown}, expectedSessionId?:string):{state:"completed"}|{state:"failed";message:string}|null {
+  const properties=event.properties&&typeof event.properties==="object"?event.properties as Record<string,unknown>:{};
+  if(event.type==="session.compacted")return typeof properties.sessionID==="string" && properties.sessionID.length>0 && (!expectedSessionId || properties.sessionID===expectedSessionId) ? {state:"completed"} : null;
+  if(event.type!=="session.error")return null;
+  const message=typeof properties.message==="string"&&properties.message.trim()?properties.message.trim():"Remote context compaction failed";
+  return {state:"failed",message};
+}
 export function getRemoteRunId(sessionId: string): string | undefined { return runs.get(sessionId); }
 /** One request-driven recovery attempt; never starts an idle heartbeat or retry loop. */
 const recoveryFlights=new Map<string,Promise<string|null>>();
@@ -70,7 +82,65 @@ export async function invokeTopicSdk(topic: TopicRuntimeContext, operation: stri
       if(!runId)return {handled:true,result:{data:true}};
       return request("stop",{runId});
     }
+    case "session.summarize": {
+      requestOptions?.signal?.throwIfAborted();
+      if(!binding.sessionId||!options.directory||!options.providerID||!options.modelID)throw new Error("Remote compaction lacks bound session/workspace/model");
+      const coreRoute=resolveCoreTopicBinding(topic.chatId,topic.threadId);
+      const runId=(coreRoute?getNativeCore()?.runs.current(coreRoute.bindingId)?.runId:undefined)??randomUUID();
+      if(runs.has(binding.sessionId))throw new Error("Remote Topic already owns an active run");
+      runs.set(binding.sessionId,runId);
+      let settled=false;
+      let resolveTerminal!:()=>void;
+      let rejectTerminal!:(error:Error)=>void;
+      const terminal=new Promise<void>((resolve,reject)=>{resolveTerminal=resolve;rejectTerminal=reject;});
+      void terminal.catch(()=>undefined);
+      const settle=(outcome:{state:"completed"}|{state:"failed";message:string})=>{
+        if(settled)return; settled=true;
+        if(outcome.state==="completed")resolveTerminal(); else rejectTerminal(new Error(outcome.message));
+      };
+      const signal=requestOptions?.signal;
+      const onAbort=()=>settle({state:"failed",message:"Remote context compaction cancelled"});
+      signal?.addEventListener("abort",onAbort,{once:true});
+      if(signal?.aborted)onAbort();
+      let stopEvents:(()=>Promise<void>)|undefined;
+      try {
+        stopEvents=await startRemoteTopicRunEvents(
+          topic,binding.sessionId,options.directory,runId,
+          ()=>{
+            if(runs.get(binding.sessionId!)===runId)runs.delete(binding.sessionId!);
+            if(!settled){settled=true;rejectTerminal(new Error("Remote context compaction stream ended before completion"));}
+          },
+          "prepare",
+          event=>{const outcome=classifyRemoteCompactionEvent(event as {type?:unknown;properties?:unknown},binding.sessionId);if(outcome)settle(outcome);},
+          signal,
+        );
+        await client.request("session.compact",buildRemoteCompactionPayload(runId,{providerID:options.providerID,modelID:options.modelID}),requestOptions);
+        await terminal;
+        return {handled:true,result:{data:undefined}};
+      } catch(error) {
+        await stopEvents?.();
+        if(runs.get(binding.sessionId)===runId)runs.delete(binding.sessionId);
+        throw error;
+      } finally {
+        signal?.removeEventListener("abort",onAbort);
+      }
+    }
+    case "config.providers": return request("models.list");
+    case "app.agents": return request("agents.list");
+    case "command.list": return request("commands.list");
+    case "permission.list": return request("permission.list");
+    case "permission.reply": {
+      if(!options.requestID||!options.reply)throw new Error("Remote Permission lacks reply identity");
+      const runId=binding.sessionId?await recoverRemoteTopicRun(topic,false,requestOptions?.signal):undefined;
+      if(!runId)throw new Error("Remote Permission lacks active run identity");
+      return request("permission.reply",{runId,requestId:options.requestID,reply:options.reply});
+    }
     case "question.list": return request("question.list");
+    case "question.reject": {
+      const runId=binding.sessionId?await recoverRemoteTopicRun({...topic,directory:options.directory??topic.directory},true,requestOptions?.signal):undefined;
+      if(!runId||!options.requestID)throw new Error("Remote Question lacks active run identity");
+      return request("question.reject",{runId,requestId:options.requestID});
+    }
     case "question.reply": {
       const runId=binding.sessionId ? await recoverRemoteTopicRun({...topic,directory:options.directory??topic.directory},true,requestOptions?.signal) : undefined;
       if(!runId || !options.requestID || !options.answers) throw new Error("Remote Question lacks active run identity");
@@ -87,7 +157,7 @@ export async function invokeTopicSdk(topic: TopicRuntimeContext, operation: stri
         const stopEvents=await startRemoteTopicRunEvents(topic,binding.sessionId,options.directory,runId,()=>runs.delete(binding.sessionId!));
         try {
           await client.request("run",{runId,parts:options.parts,...(options.model?{model:options.model}:{}),...(options.agent?{agent:options.agent}:{}),...(options.variant && options.variant!=="default"?{variant:options.variant}:{})},requestOptions);
-        } catch(error) {stopEvents();throw error;}
+        } catch(error) {await stopEvents();throw error;}
         return {handled:true,result:{data:undefined}};
       } catch(error) {runs.delete(binding.sessionId);throw error;}
     }

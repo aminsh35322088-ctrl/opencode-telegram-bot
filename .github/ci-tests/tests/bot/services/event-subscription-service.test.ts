@@ -306,10 +306,26 @@ async function flushPendingDispatch(): Promise<void> {
   }
 }
 
+function collectRenderedText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(collectRenderedText).filter(Boolean).join("\n");
+  if (!value || typeof value !== "object") return "";
+
+  const record = value as Record<string, unknown>;
+  return [
+    collectRenderedText(record.summary),
+    collectRenderedText(record.text),
+    collectRenderedText(record.blocks),
+    collectRenderedText(record.items),
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 function collectSentTexts(api: FakeBotApi): string[] {
   return [
-    ...api.sendMessage.mock.calls.map((call) => String(call[1])),
-    ...api.editMessageText.mock.calls.map((call) => String(call[2])),
+    ...api.sendMessage.mock.calls.map((call) => collectRenderedText(call[1])),
+    ...api.editMessageText.mock.calls.map((call) => collectRenderedText(call[2])),
   ];
 }
 
@@ -477,6 +493,28 @@ describe("bot/services/event-subscription-service", () => {
     expect(options!.reply_markup).toBeUndefined();
 
     keyboardManager.clearSession("session-1");
+  });
+
+  it("keeps one Activity across an intermediate completed assistant tool step", async () => {
+    const { api, summaryAggregator } = await setupService(false);
+    useTrackerFakeTimers();
+    emitBashTool(summaryAggregator, "completed");
+    await flushPendingDispatch();
+    emitAssistantTextPart(summaryAggregator, "I will inspect the next file.");
+    emitAssistantCompleted(summaryAggregator);
+    await flushPendingDispatch();
+    summaryAggregator.processEvent({
+      type: "message.updated",
+      properties: { info: { id: "message-2", sessionID: "session-1", role: "assistant", time: { created: Date.now() } } },
+    } as unknown as Event);
+    summaryAggregator.processEvent({
+      type: "message.part.updated",
+      properties: { part: { id: "next-write", sessionID: "session-1", messageID: "message-2", type: "tool", callID: "next-write-call", tool: "write", state: { status: "completed", input: { filePath: "src/next.ts", content: "next" }, metadata: {} } } },
+    } as unknown as Event);
+    await flushPendingDispatch();
+    const activityMessages = api.sendMessage.mock.calls.filter(call => collectRenderedText(call[1]).includes("🛠 Activity"));
+    expect(activityMessages).toHaveLength(1);
+    expect(api.editMessageText.mock.calls.some(call => collectRenderedText(call[2]).includes("src/next.ts"))).toBe(true);
   });
 
   describe("elapsed time for long tool calls", () => {

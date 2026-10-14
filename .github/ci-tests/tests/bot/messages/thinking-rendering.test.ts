@@ -36,11 +36,9 @@ describe("bot/messages/thinking-rendering", () => {
     expect(defined(payload?.parts[0]?.blocks?.[0]).type).toBe("blockquote");
   });
 
-  it("keeps completed short reasoning open and collapses only long reasoning", () => {
-    const header = t("bot.thinking");
+  it("persists every completed reasoning section as an expandable blockquote", () => {
     const payload = prepareThinkingPayload([{ id: "r1", text: "Line one" }], { final: true });
-
-    expect(defined(payload?.parts[0]?.blocks?.[0]).type).toBe("blockquote");
+    expect(defined(payload?.parts[0]?.blocks?.[0]).type).toBe("expandable_blockquote");
     const longPayload = prepareThinkingPayload([{ id: "r1", text: "x".repeat(321) }], { final: true });
     expect(defined(longPayload?.parts[0]?.blocks?.[0]).type).toBe("expandable_blockquote");
   });

@@ -130,7 +130,7 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
       { startedAt: Date.now(), configuredAgent: currentAgent, configuredProviderID: storedModel.providerID, configuredModelID: storedModel.modelID },
       coreRun.runId,
     );
-    typingIndicatorManager.start(currentSession.id, ctx.api, ctx.chat!.id);
+    typingIndicatorManager.start(currentSession.id, ctx.api, ctx.chat!.id, getTopicRuntimeContext()?.threadId);
     summaryAggregator.beginRun(currentSession.id);
     startSessionStallWatchdog({
       sessionId: currentSession.id,

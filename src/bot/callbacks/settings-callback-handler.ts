@@ -102,6 +102,7 @@ import {
   SETTINGS_COMMANDS_CALLBACK,
   SETTINGS_COMPACT_OUTPUT_CALLBACK,
   SETTINGS_CONTEXT_CALLBACK,
+  SETTINGS_CONTEXT_COMPACT_CALLBACK,
   SETTINGS_DEFAULT_COMPACT_CALLBACK,
   SETTINGS_DEFAULT_DIFF_CALLBACK,
   SETTINGS_DEFAULT_FOOTER_CALLBACK,
@@ -141,6 +142,7 @@ import {
 import { factoryReset, resetHistory } from "../../app/services/telegram-reset-service.js";
 import { clearAllMemories, listMemories, removeMemory } from "../../app/services/memory-service.js";
 import { keyboardManager } from "../keyboards/keyboard-manager.js";
+import { runContextCompaction } from "./context-control-callback-handler.js";
 import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 import type { InlineMenuNavigation } from "../menus/inline-menu.js";
 
@@ -333,6 +335,9 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
       case SETTINGS_CONTEXT_CALLBACK:
         await ctx.answerCallbackQuery();
         await renderSettingsView(ctx, buildContextSettingsView(), "both");
+        return true;
+      case SETTINGS_CONTEXT_COMPACT_CALLBACK:
+        await runContextCompaction(ctx);
         return true;
       case SETTINGS_RAILWAY_CALLBACK:
         await ctx.answerCallbackQuery();
