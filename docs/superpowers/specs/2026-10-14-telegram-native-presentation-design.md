@@ -1,6 +1,6 @@
 # Bot Telegram-Native Presentation Integration Design
 
-Status: Bot implementation complete and CI-green on the ownership-split head; Core #31 artifact handoff remains before merge/deploy.
+Status: independent recovery review complete; Core pre.36 artifact handoff and full local verification complete; exact final Bot CI remains required before the authorized recovery merge/deploy.
 PR: `opencode-telegram-bot#191`
 Core dependency: `opencode-telegram-core#31`
 Date: 2026-10-14
@@ -161,7 +161,7 @@ Core owns long-answer navigation/reference semantics. Names are presentation ide
 
 ### Compact tables
 
-Core PR #31 moves the GFM-table compactness policy into native-runtime. Bot #191 has already removed its table post-process and now preserves the compactness supplied by the pinned Core artifact. With current `pre.34`, GFM compactness may remain unset; after #31 is published/pinned, Core itself supplies the compact policy without any Bot code change.
+Core PR #31 moves the GFM-table compactness policy into native-runtime. Bot #191 has already removed its table post-process and now preserves the compactness supplied by the pinned Core artifact. Bot now pins `pre.36`, where Core itself supplies the compact policy. The installed-artifact regression requires the capability export and compact GFM tables directly from that pinned artifact.
 
 ## Bot-owned styled buttons
 
@@ -296,6 +296,21 @@ The corrected pre-pin revision passed 297/297 top-level Node tests, 2268/2268 CI
 Vitest tests, the 22-test event-subscription suite, lint, typecheck, and build.
 
 Core #31 was reviewed and merged as `6e19b05849ace61271d8fbc1adc14e7e8f85c297`.
-Its pre.36 release includes a complete changelog; Bot artifact adoption and combined
-verification remain prerequisites before this Bot PR is merged. No Stable Bot release
+Its pre.36 release includes a complete changelog. Bot now adopts that exact artifact and
+verified immutable Worker image; combined local verification passed 298/298 Node tests,
+2268/2268 CI-only tests, lint, typecheck and build. Exact final-head CI must pass before merge. No Stable Bot release
 is part of this recovery.
+
+
+## Verified Core artifact handoff
+
+- Core release: `v1.18.33-bot.13-pre.36`, source `6e19b05849ace61271d8fbc1adc14e7e8f85c297`.
+- Merge-source Core CI `38606421199` and release/image workflow `38607228255` succeeded.
+- All seven release checksum entries passed; installed SDK/native metadata and runtime
+  build-info report the locked source. Full release notes contain changes, compatibility,
+  upgrade requirements, verification and remaining prerelease limitations.
+- Worker image: `ghcr.io/aminsh35322088-ctrl/opencode-telegram-worker@sha256:2538ac4b78f0270bbe7226ac3174621065754de307be59eff46defbbc10dd095`; OCI manifest/config checksums and source revision label verified.
+- The Worker RPC implementation is unchanged from production pre.34; existing bound
+  Topics retain their deployed Workers. New allocations use the verified pre.36 image.
+- The user authorized reviewed Core #31/Bot #191 merges and production Bot recovery;
+  Stable Bot publication is explicitly deferred. PR #192 and soak gates are separate.

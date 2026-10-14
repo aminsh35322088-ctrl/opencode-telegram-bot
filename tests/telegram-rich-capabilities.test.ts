@@ -63,3 +63,16 @@ test("ordinary currency is not promoted to math and Bot preserves Core-owned tab
   assert.ok(botTable && botTable.type === "table");
   assert.equal(botTable.is_compact, coreTable.is_compact);
 });
+
+test("pinned Core artifact owns the public presentation contract and compact GFM tables", async () => {
+  const native = await import("@opencode-telegram/native-runtime") as unknown as Record<string, unknown>;
+  assert.deepEqual(native.TELEGRAM_RICH_PRESENTATION_CAPABILITIES, {
+    richMessages: true, details: true, expandableQuotes: true, math: true,
+    dateTime: true, anchors: true, references: true, compactTables: true,
+    richButtons: true, rtlBidi: true,
+  });
+  const markdown = "| File | State |\n| --- | --- |\n| core | ready |";
+  const table = renderTelegramParts(markdown).flatMap(part => part.blocks).find(block => block.type === "table");
+  assert.ok(table && table.type === "table");
+  assert.equal(table.is_compact, true, "compactness must come from the installed Core artifact");
+});

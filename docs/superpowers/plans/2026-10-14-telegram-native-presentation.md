@@ -36,7 +36,7 @@
 - [x] Export `TELEGRAM_RICH_PRESENTATION_CAPABILITIES` from native runtime.
 - [x] Record all-green synchronized Core implementation CI: run `38601561471` on `b33344c939fd646a54238199c052e6252aeae1fd`; Core #31 docs were finalized for independent review.
 - [x] Remove the Bot compact-table post-process now and add a version-agnostic pass-through regression: RED on the old override (`true !== Core undefined`), GREEN after deletion.
-- [ ] After #31 is accepted/published, pin Bot to the new artifact and verify Core itself supplies compact GFM tables.
+- [x] Pin Bot to published Core pre.36 and verify the installed Core artifact supplies compact GFM tables.
 
 ## Task 2 — Persistent reasoning contract
 
@@ -91,7 +91,7 @@
 - [x] Prove model-authored callback button markup does not create `callback_data`/button blocks in the default Bot pipeline.
 - [x] Prove ordinary `$100` is not promoted to math.
 - [x] Keep compact-table integration assertion as a cross-PR migration guard.
-- [ ] After Bot pins Core #31 artifact, prove the compact-table assertion remains green with the Bot local override removed.
+- [x] The installed pre.36 compact-table assertion is green with the Bot local override removed.
 
 ## Task 6 — Semantic Telegram button styles for Bot-owned controls
 
@@ -143,17 +143,17 @@
 - [x] Arbitrary text color documented as unsupported by Telegram Bot API.
 - [ ] Update #191 body with final changed-file map and Core artifact/version.
 - [ ] Add exact final Bot commit SHA and GitHub Actions run ID.
-- [ ] Add exact final test counts for top-level and CI-only suites.
-- [ ] Add Core #31 final commit/CI/artifact evidence.
+- [x] Record final local counts: 298/298 top-level and 2268/2268 CI-only tests.
+- [x] Record Core #31 merge source 6e19b058, merge CI 38606421199 and release/image workflow 38607228255.
 
 ## Task 11 — Final verification
 
 On the final rebased head:
 
 - [x] `npm ci`
-- [x] pinned Core-package verification (`pre.34`; semantic pass-through remains version-agnostic until #31 is published)
-- [x] top-level regression suite: **290/290**
-- [x] CI-only Vitest suite: **2267/2267**
+- [x] pinned Core-package and binary verification (`pre.36`; exact source and checksum alignment verified)
+- [x] top-level regression suite: **298/298**
+- [x] CI-only Vitest suite: **2268/2268**
 - [x] `npm run lint`
 - [x] `npm run typecheck`
 - [x] `npm run build`
@@ -161,7 +161,7 @@ On the final rebased head:
 - [x] inspect full PR diff for secrets/generated files/duplicate parser logic — no duplicate rich grammar remains; table post-process removed
 - [ ] GitHub Actions conclusion = `success`
 - [ ] PR `mergeable=true`
-- [ ] independent Codex/strong-model review after both PRs are complete
+- [x] independent review of Core semantics, Bot lifecycle fixes and final artifact pins; all reported blockers fixed
 
 ## Required merge/release order
 
@@ -172,4 +172,4 @@ On the final rebased head:
 5. Re-run full Bot verification on that pinned artifact.
 6. Only then consider #191 merge/deploy.
 
-The Bot-side override is already removed to keep ownership clean. Until #31 is published, the pass-through regression accepts the currently pinned Core semantics; the merge/deploy gate requires re-verification after the #31 artifact is pinned.
+Core #31 is merged and published as pre.36; its exact source/artifacts/image are pinned and all local checks pass. The final Bot revision must pass GitHub CI before the user-authorized recovery merge/deploy. Stable Bot publication is deferred.
