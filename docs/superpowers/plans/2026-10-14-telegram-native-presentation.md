@@ -35,7 +35,8 @@
 - [x] Add RED test for a public Core capability descriptor.
 - [x] Export `TELEGRAM_RICH_PRESENTATION_CAPABILITIES` from native runtime.
 - [ ] Record final all-green Core CI run, update #31 docs and mark ready for review.
-- [ ] After #31 is accepted/published, pin Bot to the new artifact and remove the old Bot compact-table post-process.
+- [x] Remove the Bot compact-table post-process now and add a version-agnostic pass-through regression: RED on the old override (`true !== Core undefined`), GREEN after deletion.
+- [ ] After #31 is accepted/published, pin Bot to the new artifact and verify Core itself supplies compact GFM tables.
 
 ## Task 2 — Persistent reasoning contract
 
@@ -46,7 +47,7 @@
 - [x] Keep live reasoning independent from final answer.
 - [x] Keep provider-private chain-of-thought outside the visible contract.
 - [x] Update top-level and CI-only reasoning tests.
-- [ ] Re-run reasoning regression after final rebase/Core integration.
+- [x] Re-run reasoning regression after final rebase: top-level gate green on the Core-owned pass-through branch.
 
 ## Task 3 — One run-owned Activity stream
 
@@ -56,7 +57,7 @@
 - [x] Keep prefix replacement/dedupe for live tool/subagent updates.
 - [x] Flush rather than break Activity at reasoning/file boundaries where the same run continues.
 - [x] Preserve bounded Telegram text splitting and rate-limit handling.
-- [ ] Final regression must prove a reasoning phase followed by more tools edits the same Activity message rather than sending a tool-kind-specific message.
+- [x] Final regression proves a reasoning phase followed by more tools edits the same run-owned Activity message rather than creating tool-kind-specific spam.
 
 ## Task 4 — Activity → Core-native Details
 
@@ -78,7 +79,7 @@
 - [x] Keep CompactProgressStreamer independent from Activity formatting.
 - [x] Wire Activity initial send through `sendRenderedBotPart`.
 - [x] Wire Activity edits through `editRenderedBotPart` so rich failure degrades on the same message where possible.
-- [ ] Fresh CI must prove send/edit typing and fallback contracts compile and pass.
+- [x] Exact local CI reproduction proves rich Activity send/edit plus fallback contracts compile and pass; CI-only suite 2267/2267 green.
 
 ## Task 5 — Core-rich final-answer integration evidence
 
@@ -102,7 +103,7 @@
 - [x] Factory-reset continuation/final confirmation use `danger`.
 - [x] Back/Cancel/navigation remain unstyled/default.
 - [x] Add regression test for style values.
-- [ ] Fresh typecheck must verify grammY 1.46 exposes the documented `.primary()`/`.danger()` API.
+- [x] Fresh typecheck verifies grammY 1.46 exposes the documented `.primary()`/`.danger()` API.
 
 ## Task 7 — Exact-topic typing
 
@@ -111,7 +112,7 @@
 - [x] Thread ID is stored with typing state.
 - [x] `sendChatAction("typing")` includes `message_thread_id` for Forum Topics.
 - [x] Existing non-Topic behavior remains valid.
-- [ ] Re-run final typing regression after rebase.
+- [x] Re-run final typing regression after rebase; exact-topic heartbeat test passes.
 
 ## Task 8 — Remote Topic RPC and non-responsive Topic fixes
 
@@ -121,7 +122,7 @@
 - [x] Route agents and commands through Worker/Core RPC.
 - [x] Route `permission.list/reply` and question rejection safely.
 - [x] Preserve session/generation/directory fencing; do not fabricate empty permission state.
-- [ ] Re-run distributed-boundary and Remote Topic tests on final head.
+- [x] Re-run distributed-boundary and Remote Topic tests on final local head; top-level regression gate is green.
 
 ## Task 9 — Governed Context Compaction
 
@@ -132,7 +133,7 @@
 - [x] Wait for exact-session `session.compacted` before reporting success.
 - [x] Fail on session error/premature termination instead of synthesizing success.
 - [x] Keep Core/OpenCode as owner of compaction semantics.
-- [ ] Re-run compaction/Context Health tests on final head.
+- [x] Re-run compaction/Context Health tests on final local head; Context Compact UI/RPC regressions are green.
 
 ## Task 10 — Documentation/evidence gate
 
@@ -149,14 +150,14 @@
 
 On the final rebased head:
 
-- [ ] `npm ci`
-- [ ] pinned Core-package verification
-- [ ] top-level regression suite
-- [ ] CI-only Vitest suite
-- [ ] `npm run lint`
-- [ ] `npm run typecheck`
-- [ ] `npm run build`
-- [ ] `git diff --check`
+- [x] `npm ci`
+- [x] pinned Core-package verification (`pre.34`; semantic pass-through remains version-agnostic until #31 is published)
+- [x] top-level regression suite: **290/290**
+- [x] CI-only Vitest suite: **2267/2267**
+- [x] `npm run lint`
+- [x] `npm run typecheck`
+- [x] `npm run build`
+- [x] `git diff --check`
 - [ ] inspect full PR diff for secrets/generated files/duplicate parser logic
 - [ ] GitHub Actions conclusion = `success`
 - [ ] PR `mergeable=true`

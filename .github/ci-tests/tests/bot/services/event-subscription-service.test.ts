@@ -306,10 +306,26 @@ async function flushPendingDispatch(): Promise<void> {
   }
 }
 
+function collectRenderedText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(collectRenderedText).filter(Boolean).join("\n");
+  if (!value || typeof value !== "object") return "";
+
+  const record = value as Record<string, unknown>;
+  return [
+    collectRenderedText(record.summary),
+    collectRenderedText(record.text),
+    collectRenderedText(record.blocks),
+    collectRenderedText(record.items),
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 function collectSentTexts(api: FakeBotApi): string[] {
   return [
-    ...api.sendMessage.mock.calls.map((call) => String(call[1])),
-    ...api.editMessageText.mock.calls.map((call) => String(call[2])),
+    ...api.sendMessage.mock.calls.map((call) => collectRenderedText(call[1])),
+    ...api.editMessageText.mock.calls.map((call) => collectRenderedText(call[2])),
   ];
 }
 
