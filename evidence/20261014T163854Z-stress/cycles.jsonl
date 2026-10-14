@@ -382,3 +382,14 @@
 {"ts":"2026-10-14T17:54:46.849Z","flow":"W1","step":"new-chat","status":"pass","threadId":10143,"restWaitMs":9202,"topicLatencyMs":10164}
 {"ts":"2026-10-14T17:54:50.559Z","flow":"W2","step":"prompt-stream-tool","status":"pass","drafts":1713,"messages":2579,"modelRequests":429,"modelStreams":429,"modelToolCalls":79}
 {"ts":"2026-10-14T17:54:55.827Z","flow":"W5","step":"stop","status":"pass","draftId":17,"source":"stub-draft","confirmMs":318,"confirmedBy":"bot-log","outputsBefore":3263,"outputsAtConfirm":3264,"lateDelta":0,"streamCalls":1858,"withinD1":true,"withinD2":true}
+{"ts":"2026-10-14T17:55:37.913Z","flow":"W6","step":"delete-chat","status":"fail","reason":"no Topic was created after the delete","elapsed":651,"confirmationId":2584,"liveDraft":18,"topicGone":true,"lateStreams":0,"reuseThreadId":null,"topicLatencyMs":null,"requested":true,"completed":true,"interrupted":false}
+{"ts":"2026-10-14T17:55:43.627Z","flow":"W0","step":"start","status":"pass","replies":2589}
+{"ts":"2026-10-14T17:55:59.209Z","flow":"W1","step":"new-chat","status":"pass","threadId":10144,"restWaitMs":5092,"topicLatencyMs":10477}
+{"ts":"2026-10-14T17:56:03.234Z","flow":"W2","step":"prompt-stream-tool","status":"pass","drafts":1717,"messages":2591,"modelRequests":432,"modelStreams":432,"modelToolCalls":79}
+{"ts":"2026-10-14T17:56:08.507Z","flow":"W5","step":"stop","status":"pass","draftId":19,"source":"stub-draft","confirmMs":323,"confirmedBy":"bot-log","outputsBefore":3282,"outputsAtConfirm":3284,"lateDelta":0,"streamCalls":1864,"withinD1":true,"withinD2":true}
+{"ts":"2026-10-14T17:56:50.255Z","flow":"W6","step":"delete-chat","status":"fail","reason":"no Topic was created after the delete","elapsed":644,"confirmationId":2597,"liveDraft":20,"topicGone":true,"lateStreams":0,"reuseThreadId":null,"topicLatencyMs":null,"requested":true,"completed":true,"interrupted":false}
+{"ts":"2026-10-14T17:56:55.816Z","flow":"W0","step":"start","status":"pass","replies":2602}
+{"ts":"2026-10-14T17:58:01.111Z","flow":"W1","step":"new-chat","status":"fail","reason":"new topic id timed out after 60000ms","restWaitMs":5106,"topicLatencyMs":null}
+{"ts":"2026-10-14T17:58:31.172Z","flow":"W5","step":"stop","status":"not-executed","reason":"issued generation draft timed out after 30000ms"}
+{"ts":"2026-10-14T17:59:01.241Z","flow":"W6","step":"delete-chat","status":"not-executed","reason":"issued generation draft timed out after 30000ms"}
+{"ts":"2026-10-14T17:59:18.783Z","flow":"W0","step":"start","status":"pass","replies":2607}
