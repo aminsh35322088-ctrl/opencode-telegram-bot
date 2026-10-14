@@ -1,0 +1,4 @@
+{"ts":"2026-10-14T15:23:14.625Z","flow":"W0","step":"start","status":"pass","replies":2}
+{"ts":"2026-10-14T15:23:23.609Z","flow":"W1","step":"new-chat","status":"pass","threadId":10000,"restWaitMs":5056,"topicLatencyMs":3924}
+{"ts":"2026-10-14T15:23:24.719Z","flow":"W2","step":"prompt-stream-tool","status":"pass","drafts":0,"messages":3,"modelRequests":1,"modelStreams":1,"modelToolCalls":0}
+{"ts":"2026-10-14T15:23:40.968Z","flow":"W7","step":"restart","status":"pass","answered":true,"pidChanged":true,"withinD5":true,"answeredAfterBoot":true,"pass":true,"beforePid":2320,"afterPid":2472,"readyMs":15944,"threadId":10000,"restartExit":"graceful"}
