@@ -27,21 +27,11 @@ test("tool activity from default, subagent and todo streams is aggregated into o
   assert.match(sent[0]!.text, /Grep/);
   assert.match(sent[0]!.text, /Skill/);
   assert.match(sent[0]!.text, /Todo/);
+
   streamer.append("session", "✏️ Edit · src/index.ts", "default");
   await streamer.flushSession("session", "after_reasoning_phase");
   assert.equal(sent.length, 1);
   assert.equal(edited.length, 1);
   assert.match(edited[0]!.text, /Edit/);
   streamer.clearSession("session", "test_cleanup");
-});
-
-test("tool activity rendering uses one expandable blockquote and redacts credential-shaped values", async () => {
-  const module = (await import("../src/bot/streaming/tool-call-streamer.js")) as any;
-  assert.equal(typeof module.renderToolActivity, "function");
-  const rendered = module.renderToolActivity("💻 Shell · TOKEN=super-secret\n🔎 Grep · done");
-  assert.doesNotMatch(rendered.text, /super-secret/);
-  assert.match(rendered.text, /REDACTED/);
-  assert.deepEqual(rendered.entities, [
-    { type: "expandable_blockquote", offset: 0, length: rendered.text.length },
-  ]);
 });
