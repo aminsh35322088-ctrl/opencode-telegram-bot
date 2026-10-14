@@ -393,3 +393,23 @@
 {"ts":"2026-10-14T17:58:31.172Z","flow":"W5","step":"stop","status":"not-executed","reason":"issued generation draft timed out after 30000ms"}
 {"ts":"2026-10-14T17:59:01.241Z","flow":"W6","step":"delete-chat","status":"not-executed","reason":"issued generation draft timed out after 30000ms"}
 {"ts":"2026-10-14T17:59:18.783Z","flow":"W0","step":"start","status":"pass","replies":2607}
+{"ts":"2026-10-14T18:00:24.055Z","flow":"W1","step":"new-chat","status":"fail","reason":"new topic id timed out after 60000ms","restWaitMs":5082,"topicLatencyMs":null}
+{"ts":"2026-10-14T18:00:54.137Z","flow":"W5","step":"stop","status":"not-executed","reason":"issued generation draft timed out after 30000ms"}
+{"ts":"2026-10-14T18:01:24.179Z","flow":"W6","step":"delete-chat","status":"not-executed","reason":"issued generation draft timed out after 30000ms"}
+{"ts":"2026-10-14T18:01:29.733Z","flow":"W0","step":"start","status":"pass","replies":2612}
+{"ts":"2026-10-14T18:01:37.957Z","flow":"W1","step":"new-chat","status":"pass","threadId":10145,"restWaitMs":5079,"topicLatencyMs":3131}
+{"ts":"2026-10-14T18:01:39.817Z","flow":"W2","step":"prompt-stream-tool","status":"pass","drafts":1721,"messages":2613,"modelRequests":434,"modelStreams":434,"modelToolCalls":79}
+{"ts":"2026-10-14T18:02:05.447Z","flow":"W7","step":"restart","status":"pass","answered":true,"pidChanged":true,"withinD5":true,"answeredAfterBoot":true,"pass":true,"beforePid":6419,"afterPid":6937,"readyMs":25299,"threadId":10145,"restartExit":"graceful"}
+{"ts":"2026-10-14T18:02:11.651Z","flow":"W5","step":"stop","status":"pass","draftId":1,"source":"stub-draft","confirmMs":321,"confirmedBy":"bot-log","outputsBefore":3323,"outputsAtConfirm":3325,"lateDelta":0,"streamCalls":1869,"withinD1":true,"withinD2":true}
+{"ts":"2026-10-14T18:02:53.367Z","flow":"W6","step":"delete-chat","status":"fail","reason":"no Topic was created after the delete","elapsed":629,"confirmationId":2622,"liveDraft":2,"topicGone":true,"lateStreams":0,"reuseThreadId":null,"topicLatencyMs":null,"requested":true,"completed":true,"interrupted":false}
+{"ts":"2026-10-14T18:02:58.874Z","flow":"W0","step":"start","status":"pass","replies":2627}
+{"ts":"2026-10-14T18:03:07.429Z","flow":"W1","step":"new-chat","status":"pass","threadId":10146,"restWaitMs":5095,"topicLatencyMs":3447}
+{"ts":"2026-10-14T18:03:11.151Z","flow":"W2","step":"prompt-stream-tool","status":"pass","drafts":1726,"messages":2629,"modelRequests":440,"modelStreams":440,"modelToolCalls":80}
+{"ts":"2026-10-14T18:03:16.418Z","flow":"W5","step":"stop","status":"pass","draftId":3,"source":"stub-draft","confirmMs":318,"confirmedBy":"bot-log","outputsBefore":3343,"outputsAtConfirm":3345,"lateDelta":0,"streamCalls":1875,"withinD1":true,"withinD2":true}
+{"ts":"2026-10-14T18:03:38.226Z","flow":"W6","step":"delete-chat","status":"pass","elapsed":636,"withinD4":true,"confirmationId":2635,"liveDraft":4,"deletedTopic":10146,"topicGone":true,"reuseThreadId":10147,"topicLatencyMs":6482,"reuseMs":3399,"restWaitMs":5076,"lateStreams":0,"requested":true,"completed":true}
+{"ts":"2026-10-14T18:03:55.861Z","flow":"W0","step":"start","status":"pass","replies":2653}
+{"ts":"2026-10-14T18:04:08.978Z","flow":"W1","step":"new-chat","status":"pass","threadId":10148,"restWaitMs":5091,"topicLatencyMs":8012}
+{"ts":"2026-10-14T18:04:12.091Z","flow":"W2","step":"prompt-stream-tool","status":"pass","drafts":1742,"messages":2655,"modelRequests":445,"modelStreams":445,"modelToolCalls":80}
+{"ts":"2026-10-14T18:04:17.693Z","flow":"W5","step":"stop","status":"pass","draftId":6,"source":"stub-draft","confirmMs":317,"confirmedBy":"bot-log","outputsBefore":3378,"outputsAtConfirm":3380,"lateDelta":0,"streamCalls":1893,"withinD1":true,"withinD2":true}
+{"ts":"2026-10-14T18:04:39.507Z","flow":"W6","step":"delete-chat","status":"pass","elapsed":638,"withinD4":true,"confirmationId":2661,"liveDraft":7,"deletedTopic":10148,"topicGone":true,"reuseThreadId":10149,"topicLatencyMs":6785,"reuseMs":3081,"restWaitMs":5102,"lateStreams":0,"requested":true,"completed":true}
+{"ts":"2026-10-14T18:04:45.203Z","flow":"W0","step":"start","status":"pass","replies":2672}
