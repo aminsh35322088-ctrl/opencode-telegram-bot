@@ -17,9 +17,13 @@ import {
   parseDfOutput,
   parseDuTotal,
   parseMeminfo,
+  parseRollbackScript,
   phaseFor,
   restState,
+  rollbackPreflight,
+  rollbackTimeline,
   restartOutcome,
+  qualifiesCiRun,
   snapshot,
   stopConfirmed,
   streamCalls,
@@ -41,6 +45,7 @@ const IDLE_S = Number(args.get("idle") ?? 0);
 const RUN_DIR = args.get("run-dir");
 const UPDATES = args.get("updates");
 const RESTART_SCRIPT = args.get("restart-script");
+const ROLLBACK_SCRIPT = args.get("rollback-script");
 const REPO_DIR = args.get("repo-dir");
 const TG_PORT = args.get("telegram-port") ?? "8081";
 const TOKEN = args.get("token") ?? "123:soak";
@@ -54,6 +59,7 @@ const MODEL_ROOT = `http://127.0.0.1:${MODEL_PORT}`;
 // part of the rest precondition before a New Chat press.
 const OC_PORT = args.get("opencode-port") ?? process.env.SOAK_OPENCODE_PORT ?? "4096";
 const OC_ROOT = `http://127.0.0.1:${OC_PORT}`;
+const TESTED_SHA = REPO_DIR ? execFileSync("git", ["-C", REPO_DIR, "rev-parse", "HEAD"], { encoding: "utf8" }).trim() : null;
 
 // Update builders live in their own module so their Telegram shape is under
 // test (tests/soak-harness.test.ts); the driver only decides *when* to send.
@@ -66,6 +72,7 @@ const D = {
   stopCleanupMs: 30_000, // D3
   deleteCleanupMs: 60_000, // D4
   restartReadyMs: 120_000, // D5
+  rollbackReadyMs: 300_000, // D6
   topicReusableMs: 10_000, // D7
 };
 
@@ -838,6 +845,183 @@ async function flowRestart(threadId) {
   return record("W7", "restart", "pass", { ...outcome, beforePid, afterPid, readyMs, threadId, restartExit });
 }
 
+async function fetchCiQualification(sha) {
+  const repo = process.env.OC_REPO;
+  const token = process.env.GITHUB_TOKEN;
+  if (!repo || !token) return { qualified: false, runId: null, runNumber: null, conclusion: null, headSha: null, reason: "OC_REPO or GITHUB_TOKEN unavailable" };
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const url = `https://api.github.com/repos/${repo}/actions/workflows/ci.yml/runs?head_sha=${encodeURIComponent(sha)}&per_page=100`;
+    const response = await fetch(url, {
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${token}`,
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      return { qualified: false, runId: null, runNumber: null, conclusion: null, headSha: null, reason: `GitHub API returned HTTP ${response.status}` };
+    }
+    return qualifiesCiRun(await response.json(), sha);
+  } catch (error) {
+    return { qualified: false, runId: null, runNumber: null, conclusion: null, headSha: null, reason: `GitHub API request failed: ${error?.name === "AbortError" ? "timed out after 15000ms" : String(error?.message ?? error)}` };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function gitCommitExists(sha) {
+  if (!REPO_DIR || !/^[0-9a-f]{7,64}$/i.test(sha ?? "")) return false;
+  try {
+    execFileSync("git", ["-C", REPO_DIR, "cat-file", "-e", `${sha}^{commit}`], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function gitIsAncestor(sha, testedSha) {
+  if (!gitCommitExists(sha) || !testedSha) return null;
+  try {
+    execFileSync("git", ["-C", REPO_DIR, "merge-base", "--is-ancestor", sha, testedSha], { stdio: "ignore" });
+    return true;
+  } catch (error) {
+    return error?.status === 1 ? false : null;
+  }
+}
+
+function executeRollbackScript(scriptPath, phase, sha) {
+  const logOffset = botLogSize();
+  let commandError = null;
+  try {
+    execFileSync("bash", [scriptPath, RUN_DIR, REPO_DIR, phase, sha], { stdio: "pipe" });
+  } catch (error) {
+    commandError = String(error?.stderr ?? error?.message ?? error).slice(0, 300);
+  }
+  const logText = botLogSince(logOffset);
+  return { commandError, logText, marker: parseRollbackScript(logText) };
+}
+
+async function observeRollbackBootAndAnswer({ logOffset, startedAt, timeoutMs }) {
+  const deadline = startedAt + timeoutMs;
+  let boot = null;
+  while (boot === null && Date.now() < deadline) {
+    if (botLogSince(logOffset).includes("Starting OpenCode Telegram Bot")) boot = Date.now();
+    else await sleep(200);
+  }
+  if (boot === null) return { boot: null, answer: null, answered: false, state: null };
+  const base = snapshot(await tgState().catch(() => ({})));
+  enqueue(messageUpdate("/start"));
+  const answered = await waitFor((state) => growthObserved(state, base), Math.max(0, deadline - Date.now()), "answer after rollback phase");
+  return { boot, answer: answered.ok ? Date.now() : null, answered: answered.ok, state: answered.ok ? answered.state : null };
+}
+
+async function flowRollback() {
+  const rollbackSha = process.env.ROLLBACK_SHA ?? "";
+  const testedSha = TESTED_SHA;
+  const resolvable = gitCommitExists(rollbackSha);
+  const isAncestor = gitIsAncestor(rollbackSha, testedSha);
+  const ci = /^[0-9a-f]{7,64}$/i.test(rollbackSha) ? await fetchCiQualification(rollbackSha) : {
+    qualified: false, runId: null, runNumber: null, conclusion: null, headSha: null,
+    reason: rollbackSha ? "rollbackSha is not a resolvable commit" : "rollbackSha not supplied",
+  };
+  const preflight = rollbackPreflight({
+    supplied: Boolean(rollbackSha), rollbackSha, testedSha, resolvable, isAncestor, ci,
+  });
+  const facts = {
+    testedSha,
+    rollbackSha: rollbackSha || null,
+    isAncestor: preflight.isAncestor,
+    ciRunId: ci.runId ?? null,
+    ciRunNumber: ci.runNumber ?? null,
+    ciConclusion: ci.conclusion ?? null,
+    ciHeadSha: ci.headSha ?? null,
+    ciReason: ci.reason ?? null,
+  };
+  if (!preflight.ok || !ROLLBACK_SCRIPT || !REPO_DIR) {
+    const reason = !preflight.ok ? preflight.reason : "no qualified rollback target: harness was not given --rollback-script/--repo-dir";
+    return record("W7", "rollback", "not-executed", { ...facts, reason });
+  }
+
+  // The checked-out target may predate this script. Keep a run-local copy so
+  // the restore leg remains available after git checkout changes the repo.
+  const scriptPath = join(RUN_DIR, "bot-rollback.sh");
+  writeFileSync(scriptPath, readFileSync(ROLLBACK_SCRIPT), { mode: 0o755 });
+  const rollbackBeforePid = readBotPid();
+  const rollbackStop = Date.now();
+  const rollbackLogOffset = botLogSize();
+  const rollbackCommand = executeRollbackScript(scriptPath, "rollback", rollbackSha);
+  const rollbackObserved = await observeRollbackBootAndAnswer({
+    logOffset: rollbackLogOffset,
+    startedAt: rollbackStop,
+    timeoutMs: D.rollbackReadyMs,
+  });
+  const rollbackAfterPid = readBotPid();
+  const rollbackAnswerAt = rollbackObserved.answer;
+
+  // Restore is attempted regardless of the rollback command, boot, or answer
+  // result. The workload never resumes against a target revision.
+  const restoreBeforePid = readBotPid();
+  const restoreStop = Date.now();
+  const restoreLogOffset = botLogSize();
+  const restoreCommand = executeRollbackScript(scriptPath, "restore", testedSha);
+  const restoreObserved = await observeRollbackBootAndAnswer({
+    logOffset: restoreLogOffset,
+    startedAt: restoreStop,
+    timeoutMs: D.rollbackReadyMs,
+  });
+  const restoreAfterPid = readBotPid();
+  const events = {
+    stop: rollbackStop,
+    checkout: rollbackCommand.marker.checkout,
+    build: rollbackCommand.marker.build,
+    spawn: rollbackCommand.marker.spawn,
+    boot: rollbackObserved.boot,
+    answer: rollbackAnswerAt,
+    restoreStop,
+    restoreBoot: restoreObserved.boot,
+    restoreAnswer: restoreObserved.answer,
+  };
+  const timeline = rollbackTimeline(events, D.rollbackReadyMs);
+  const restoreServing = timeline.restoreServing && restoreBeforePid !== restoreAfterPid &&
+    restoreCommand.commandError === null && restoreCommand.marker.exit === 0 && restoreObserved.answered;
+  const rollbackPass = rollbackCommand.commandError === null && rollbackCommand.marker.exit === 0 &&
+    rollbackObserved.boot !== null && rollbackObserved.answered && rollbackAfterPid !== rollbackBeforePid &&
+    timeline.bootAfterStop && timeline.answerAfterBoot && timeline.withinD6 && restoreServing;
+  const reason = rollbackCommand.commandError !== null || rollbackCommand.marker.exit !== 0
+    ? `rollback command failed: ${rollbackCommand.commandError ?? `exit=${rollbackCommand.marker.exit ?? "unrecorded"}`}`
+    : rollbackObserved.boot === null
+      ? `the rollback Bot never wrote its boot line within D6 (${D.rollbackReadyMs}ms)`
+      : !rollbackObserved.answered
+        ? `no answer within D6 (${D.rollbackReadyMs}ms)`
+        : rollbackAfterPid === rollbackBeforePid
+          ? `pid did not change (${rollbackBeforePid} -> ${rollbackAfterPid}): the Bot was never stopped`
+          : !timeline.answerAfterBoot
+            ? "growth was observed before the rollback Bot's own boot line"
+            : !timeline.withinD6
+              ? `rollback exceeded D6 (${timeline.rollbackMs}ms > ${D.rollbackReadyMs}ms)`
+              : !restoreServing
+                ? "the tested revision was not restored and verified serving"
+                : null;
+  return record("W7", "rollback", rollbackPass ? "pass" : "fail", {
+    ...facts,
+    reason,
+    ...timeline,
+    rollbackBeforePid,
+    rollbackAfterPid,
+    restoreBeforePid,
+    restoreAfterPid,
+    rollbackExit: rollbackCommand.marker.exit,
+    restoreExit: restoreCommand.marker.exit,
+    rollbackCommandError: rollbackCommand.commandError,
+    restoreCommandError: restoreCommand.commandError,
+    restoreServing,
+    d6Ms: D.rollbackReadyMs,
+  });
+}
+
 async function cycle(index) {
   const resources = [sampleResources({ perCycle: true })];
   const results = [];
@@ -849,6 +1033,7 @@ async function cycle(index) {
   // W7/G7: a controlled restart — every run of the single-cycle stage, and every
   // tenth cycle under stress — deliberately while the Topic still exists.
   if (STAGE === "cycle" || index % 10 === 0) results.push(await flowRestart(threadId));
+  if (STAGE === "cycle" || (STAGE === "soak" && index === 1)) results.push(await flowRollback());
   results.push(await flowStop(threadId));
   results.push(await flowDeleteChat(threadId));
   resources.push(sampleResources({ perCycle: true }));

@@ -40,9 +40,14 @@ on:
         description: "Seed toolCallVerified (true) or let the Bot probe the stub (false)"
         required: false
         default: "true"
+      rollback_sha:
+        description: "Explicit pinned commit to qualify and test as the rollback target"
+        required: false
+        default: ""
 
 permissions:
   contents: write
+  actions: read
 
 # One soak at a time; never cancel an in-flight run.
 concurrency:
@@ -96,8 +101,11 @@ jobs:
           SOAK_IDLE_S: ${{ inputs.idle }}
           SOAK_PERSIST: "1"
           SOAK_PERSIST_INTERVAL: "300"
+          ROLLBACK_SHA: ${{ inputs.rollback_sha }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OC_REPO: ${{ github.repository }}
         run: |
-          chmod +x scripts/soak/run.sh scripts/soak/persist-evidence.sh
+          chmod +x scripts/soak/run.sh scripts/soak/persist-evidence.sh scripts/soak/bot-rollback.sh
           scripts/soak/run.sh "${{ inputs.stage }}" "${{ inputs.duration }}"
 
       - name: Record runner identity

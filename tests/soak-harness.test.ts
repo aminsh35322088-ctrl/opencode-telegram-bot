@@ -728,3 +728,87 @@ test("resource samples measure disk every tick and workspace size only on cycle 
   assert.match(driver, /workspaceBytes = parseDuTotal/);
   assert.match(driver, /topicLatencyMs/);
 });
+
+test("G8 rollback timeline requires a post-boot answer and enforces D6", async () => {
+  const { rollbackTimeline } = await loadScript<{
+    rollbackTimeline: (events: Record<string, number | null>, d6Ms: number) => Record<string, unknown>;
+  }>("scripts/soak/signals.mjs");
+  const complete = {
+    stop: 1000, checkout: 2000, build: 4000, spawn: 5000, boot: 6000, answer: 7000,
+    restoreStop: 8000, restoreBoot: 10000, restoreAnswer: 11000,
+  };
+  assert.deepEqual(rollbackTimeline(complete, 300_000), {
+    rollbackMs: 6000, withinD6: true, checkoutMs: 1000, buildMs: 2000, spawnMs: 1000,
+    bootAfterStop: true, answerAfterBoot: true, restoreMs: 3000, restoreServing: true,
+  });
+  assert.equal(rollbackTimeline({ ...complete, answer: 301_001 }, 300_000).withinD6, false);
+  assert.equal(rollbackTimeline({ ...complete, answer: null }, 300_000).rollbackMs, null);
+  assert.equal(rollbackTimeline({ ...complete, stop: null }, 300_000).withinD6, false);
+  assert.equal(rollbackTimeline({ ...complete, checkout: null, build: null, spawn: null }, 300_000).withinD6, true);
+  assert.equal(rollbackTimeline({ ...complete, boot: 7100 }, 300_000).answerAfterBoot, false);
+  assert.equal(rollbackTimeline({ ...complete, boot: 900 }, 300_000).bootAfterStop, false);
+  assert.equal(rollbackTimeline({ ...complete, restoreAnswer: 9000 }, 300_000).restoreServing, false);
+  assert.equal(rollbackTimeline({ ...complete, restoreBoot: 7000 }, 300_000).restoreServing, false);
+  assert.equal(rollbackTimeline({ ...complete, restoreStop: null }, 300_000).restoreServing, false);
+});
+
+test("only the latest completed CI run for the exact SHA can qualify rollback", async () => {
+  const { qualifiesCiRun } = await loadScript<{
+    qualifiesCiRun: (payload: unknown, sha: string) => Record<string, unknown>;
+  }>("scripts/soak/signals.mjs");
+  const green = { id: 10, run_number: 12, head_sha: "abc123", status: "completed", conclusion: "success" };
+  assert.deepEqual(qualifiesCiRun({ workflow_runs: [green] }, "abc123"), {
+    qualified: true, runId: 10, runNumber: 12, conclusion: "success", headSha: "abc123", reason: "latest ci.yml run succeeded",
+  });
+  assert.equal(qualifiesCiRun({ workflow_runs: [green] }, "ABC123").qualified, false);
+  assert.equal(qualifiesCiRun({ workflow_runs: [
+    { ...green, id: 11, run_number: 13, conclusion: "failure" }, green,
+  ] }, "abc123").qualified, false, "a later failure revokes an earlier green run");
+  assert.equal(qualifiesCiRun({ workflow_runs: [{ ...green, status: "in_progress", conclusion: null }] }, "abc123").qualified, false);
+  assert.equal(qualifiesCiRun({ workflow_runs: [] }, "abc123").qualified, false);
+});
+
+test("rollback preflight rejects every unqualified target and records ancestry without gating", async () => {
+  const { rollbackPreflight } = await loadScript<{
+    rollbackPreflight: (input: Record<string, unknown>) => { ok: boolean; reason: string; isAncestor: boolean | null };
+  }>("scripts/soak/signals.mjs");
+  const base = { supplied: true, rollbackSha: "old", testedSha: "new", resolvable: true, isAncestor: true, ci: { qualified: true, reason: "green" } };
+  assert.deepEqual(rollbackPreflight({ ...base, supplied: false }), {
+    ok: false, reason: "no qualified rollback target: rollbackSha not supplied", isAncestor: true,
+  });
+  assert.equal(rollbackPreflight({ ...base, rollbackSha: "new" }).reason, "no qualified rollback target: rollbackSha equals testedSha");
+  assert.equal(rollbackPreflight({ ...base, resolvable: false }).reason, "no qualified rollback target: rollbackSha is not a resolvable commit");
+  assert.equal(rollbackPreflight({ ...base, ci: { qualified: false, reason: "CI run is in progress" } }).reason,
+    "no qualified rollback target: CI run is in progress");
+  assert.deepEqual(rollbackPreflight({ ...base, isAncestor: false }), { ok: true, reason: "qualified", isAncestor: false });
+  assert.deepEqual(rollbackPreflight(base), { ok: true, reason: "qualified", isAncestor: true });
+});
+
+test("rollback script markers parse phase timings and exit status", async () => {
+  const { parseRollbackScript } = await loadScript<{
+    parseRollbackScript: (logText: string) => Record<string, unknown>;
+  }>("scripts/soak/signals.mjs");
+  assert.deepEqual(parseRollbackScript(
+    "bot-rollback: phase=rollback sha=abc123 checkout=100 build=200 spawn=300\nbot-rollback: exit=0\n",
+  ), { exit: 0, sha: "abc123", checkout: 100, build: 200, spawn: 300 });
+  assert.deepEqual(parseRollbackScript("bot-rollback: phase=restore sha=def456 checkout=12 build=34 spawn=56\n"), {
+    exit: null, sha: "def456", checkout: 12, build: 34, spawn: 56,
+  });
+});
+
+test("G8 source and workflow plumbing pin rollback SHA and call the rollback flow", async () => {
+  const { readFileSync } = await import("node:fs");
+  const rollbackScript = readFileSync(new URL("../scripts/soak/bot-rollback.sh", import.meta.url), "utf8");
+  const workflow = readFileSync(new URL("../.github/workflows/soak.yml", import.meta.url), "utf8");
+  const runScript = readFileSync(new URL("../scripts/soak/run.sh", import.meta.url), "utf8");
+  const driver = readFileSync(new URL("../scripts/soak/driver.mjs", import.meta.url), "utf8");
+  assert.match(rollbackScript, /\$\{4:\?[^}]*sha required/);
+  assert.doesNotMatch(rollbackScript, /HEAD(?:\^|~)/);
+  assert.match(workflow, /rollback_sha:/);
+  assert.match(workflow, /ROLLBACK_SHA:/);
+  assert.match(workflow, /GITHUB_TOKEN: \$\{\{ secrets\.GITHUB_TOKEN \}\}/);
+  assert.match(workflow, /OC_REPO: \$\{\{ github\.repository \}\}/);
+  assert.match(workflow, /chmod \+x[^\n]*bot-rollback\.sh/);
+  assert.match(runScript, /--rollback-script "\$SOAK\/bot-rollback\.sh"/);
+  assert.match(driver, /results\.push\(await flowRollback\(\)\)/);
+});

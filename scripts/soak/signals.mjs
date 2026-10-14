@@ -279,3 +279,82 @@ export function parseDuTotal(text) {
   const bytes = Number(match[1]);
   return Number.isSafeInteger(bytes) ? bytes : null;
 }
+
+function eventTime(events, key) {
+  const value = events?.[key];
+  return Number.isFinite(value) ? value : null;
+}
+
+export function rollbackTimeline(events, d6Ms) {
+  const stop = eventTime(events, "stop");
+  const checkout = eventTime(events, "checkout");
+  const build = eventTime(events, "build");
+  const spawn = eventTime(events, "spawn");
+  const boot = eventTime(events, "boot");
+  const answer = eventTime(events, "answer");
+  const restoreStop = eventTime(events, "restoreStop");
+  const restoreBoot = eventTime(events, "restoreBoot");
+  const restoreAnswer = eventTime(events, "restoreAnswer");
+  const rollbackMs = stop !== null && answer !== null && answer >= stop ? answer - stop : null;
+  const answerAfterBoot = boot !== null && answer !== null && answer >= boot;
+  const restoreServing = restoreStop !== null && restoreBoot !== null && restoreAnswer !== null &&
+    restoreBoot >= restoreStop && restoreAnswer >= restoreBoot;
+  return {
+    rollbackMs,
+    withinD6: rollbackMs !== null && rollbackMs <= d6Ms,
+    checkoutMs: stop !== null && checkout !== null && checkout >= stop ? checkout - stop : null,
+    buildMs: checkout !== null && build !== null && build >= checkout ? build - checkout : null,
+    spawnMs: build !== null && spawn !== null && spawn >= build ? spawn - build : null,
+    bootAfterStop: stop !== null && boot !== null && boot >= stop,
+    answerAfterBoot,
+    restoreMs: restoreStop !== null && restoreAnswer !== null && restoreAnswer >= restoreStop
+      ? restoreAnswer - restoreStop
+      : null,
+    restoreServing,
+  };
+}
+
+export function qualifiesCiRun(payload, sha) {
+  const runs = Array.isArray(payload?.workflow_runs) ? payload.workflow_runs : [];
+  const matching = runs.filter((run) => run?.head_sha === sha)
+    .sort((a, b) => Number(b.run_number ?? 0) - Number(a.run_number ?? 0) ||
+      String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")));
+  const run = matching[0];
+  const result = {
+    qualified: Boolean(run && run.status === "completed" && run.conclusion === "success"),
+    runId: run?.id ?? null,
+    runNumber: run?.run_number ?? null,
+    conclusion: run?.conclusion ?? null,
+    headSha: run?.head_sha ?? null,
+    reason: !run ? "no ci.yml run for exact head_sha" : run.status !== "completed"
+      ? `CI run is ${run.status ?? "not completed"}`
+      : run.conclusion === "success" ? "latest ci.yml run succeeded" : `latest CI run conclusion is ${run.conclusion ?? "unknown"}`,
+  };
+  return result;
+}
+
+export function rollbackPreflight({ supplied, rollbackSha, testedSha, resolvable, isAncestor, ci }) {
+  let reason = null;
+  if (!supplied || !rollbackSha) reason = "rollbackSha not supplied";
+  else if (rollbackSha === testedSha) reason = "rollbackSha equals testedSha";
+  else if (!resolvable) reason = "rollbackSha is not a resolvable commit";
+  else if (!ci?.qualified) reason = ci?.reason ?? "CI qualification unavailable";
+  return {
+    ok: reason === null,
+    reason: reason === null ? "qualified" : `no qualified rollback target: ${reason}`,
+    isAncestor: typeof isAncestor === "boolean" ? isAncestor : null,
+  };
+}
+
+export function parseRollbackScript(logText) {
+  const text = String(logText ?? "");
+  const marker = /bot-rollback: phase=(?:rollback|restore) sha=([^\s]+) checkout=(\d+) build=(\d+) spawn=(\d+)/.exec(text);
+  const exit = /bot-rollback: exit=(\d+)/.exec(text);
+  return {
+    exit: exit ? Number(exit[1]) : null,
+    sha: marker?.[1] ?? null,
+    checkout: marker ? Number(marker[2]) : null,
+    build: marker ? Number(marker[3]) : null,
+    spawn: marker ? Number(marker[4]) : null,
+  };
+}

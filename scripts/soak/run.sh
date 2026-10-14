@@ -217,6 +217,7 @@ node "$SOAK/driver.mjs" --stage "$STAGE" \
   --token "$SOAK_TOKEN" \
   --user-id "$SOAK_USER_ID" \
   --restart-script "$SOAK/bot-restart.sh" \
+  --rollback-script "$SOAK/bot-rollback.sh" \
   --repo-dir "$ROOT"
 DRIVER_RC=$?
 
