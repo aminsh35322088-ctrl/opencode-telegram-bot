@@ -96,7 +96,7 @@ Use one `details` block with a short summary and a paragraph body; count non-emp
 
 - [ ] **Step 3: Write failing rich delivery/fallback tests**
 
-Test initial `sendRichMessage`, subsequent `editMessageText` with `rich_message`, Topic/session-scoped options, rich-send failure → text send, and rich-edit failure → edit the same message ID with fallback text rather than sending a new per-tool message.
+Test initial `sendRichMessage`, subsequent rich edit through `api.raw.editMessageText({ chat_id, message_id, rich_message })`, Topic/session-scoped options, rich-send failure → text send, and rich-edit failure → edit the same message ID with fallback text rather than sending a new per-tool message.
 
 Run: `node --import tsx --test tests/rich-activity-delivery.test.ts`
 
@@ -110,7 +110,7 @@ Create:
 
 `editRichActivity(api: Api, chatId: number, messageId: number, payload: ToolActivityPayload): Promise<void>`
 
-Use grammY `sendRichMessage` for the first send and `editMessageText` with `rich_message` for edits. Preserve `disable_notification`. On rich API failure, fall back to existing plain `sendMessage`/`editMessageText` without changing message ownership.
+Use grammY `api.sendRichMessage(chatId, payload.richMessage, options)` for the first send and `api.raw.editMessageText({ chat_id: chatId, message_id: messageId, rich_message: payload.richMessage })` for edits so no legacy text parameter is required. Preserve `disable_notification` on initial delivery and explicit Topic/thread routing. On rich API failure, fall back to plain `sendMessage`/`editMessageText` without changing message ownership.
 
 - [ ] **Step 5: Wire `event-subscription-service.ts` to the new payload/delivery helpers**
 
