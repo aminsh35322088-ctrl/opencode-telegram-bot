@@ -339,3 +339,23 @@
 {"ts":"2026-10-14T17:43:19.542Z","flow":"W5","step":"stop","status":"pass","draftId":23,"source":"stub-draft","confirmMs":318,"confirmedBy":"bot-log","outputsBefore":2977,"outputsAtConfirm":2979,"lateDelta":0,"streamCalls":1720,"withinD1":true,"withinD2":true}
 {"ts":"2026-10-14T17:43:43.757Z","flow":"W6","step":"delete-chat","status":"pass","elapsed":627,"withinD4":true,"confirmationId":2371,"liveDraft":24,"deletedTopic":10130,"topicGone":true,"reuseThreadId":10131,"topicLatencyMs":8915,"reuseMs":3386,"restWaitMs":5086,"lateStreams":0,"requested":true,"completed":true}
 {"ts":"2026-10-14T17:43:49.303Z","flow":"W0","step":"start","status":"pass","replies":2383}
+{"ts":"2026-10-14T17:45:10.385Z","flow":"W1","step":"new-chat","status":"fail","reason":"new topic id timed out after 60000ms","restWaitMs":20969,"topicLatencyMs":null}
+{"ts":"2026-10-14T17:45:40.421Z","flow":"W5","step":"stop","status":"not-executed","reason":"issued generation draft timed out after 30000ms"}
+{"ts":"2026-10-14T17:46:10.473Z","flow":"W6","step":"delete-chat","status":"not-executed","reason":"issued generation draft timed out after 30000ms"}
+{"ts":"2026-10-14T17:46:15.940Z","flow":"W0","step":"start","status":"pass","replies":2407}
+{"ts":"2026-10-14T17:46:23.864Z","flow":"W1","step":"new-chat","status":"pass","threadId":10132,"restWaitMs":5076,"topicLatencyMs":2835}
+{"ts":"2026-10-14T17:46:27.277Z","flow":"W2","step":"prompt-stream-tool","status":"pass","drafts":1614,"messages":2409,"modelRequests":396,"modelStreams":396,"modelToolCalls":72}
+{"ts":"2026-10-14T17:46:32.854Z","flow":"W5","step":"stop","status":"pass","draftId":27,"source":"stub-draft","confirmMs":316,"confirmedBy":"bot-log","outputsBefore":3033,"outputsAtConfirm":3035,"lateDelta":0,"streamCalls":1749,"withinD1":true,"withinD2":true}
+{"ts":"2026-10-14T17:46:56.804Z","flow":"W6","step":"delete-chat","status":"pass","elapsed":629,"withinD4":true,"confirmationId":2415,"liveDraft":28,"deletedTopic":10132,"topicGone":true,"reuseThreadId":10133,"topicLatencyMs":8612,"reuseMs":3393,"restWaitMs":5108,"lateStreams":0,"requested":true,"completed":true}
+{"ts":"2026-10-14T17:47:14.364Z","flow":"W0","step":"start","status":"pass","replies":2440}
+{"ts":"2026-10-14T17:47:31.911Z","flow":"W1","step":"new-chat","status":"pass","threadId":10134,"restWaitMs":9222,"topicLatencyMs":8308}
+{"ts":"2026-10-14T17:47:35.306Z","flow":"W2","step":"prompt-stream-tool","status":"pass","drafts":1641,"messages":2448,"modelRequests":402,"modelStreams":402,"modelToolCalls":73}
+{"ts":"2026-10-14T17:47:58.923Z","flow":"W7","step":"restart","status":"pass","answered":true,"pidChanged":true,"withinD5":true,"answeredAfterBoot":true,"pass":true,"beforePid":5833,"afterPid":6419,"readyMs":23292,"threadId":10134,"restartExit":"graceful"}
+{"ts":"2026-10-14T17:48:05.112Z","flow":"W5","step":"stop","status":"pass","draftId":1,"source":"stub-draft","confirmMs":319,"confirmedBy":"bot-log","outputsBefore":3087,"outputsAtConfirm":3089,"lateDelta":0,"streamCalls":1778,"withinD1":true,"withinD2":true}
+{"ts":"2026-10-14T17:48:31.198Z","flow":"W6","step":"delete-chat","status":"pass","elapsed":652,"withinD4":true,"confirmationId":2457,"liveDraft":2,"deletedTopic":10134,"topicGone":true,"reuseThreadId":10135,"topicLatencyMs":10764,"reuseMs":3381,"restWaitMs":5082,"lateStreams":0,"requested":true,"completed":true}
+{"ts":"2026-10-14T17:48:36.798Z","flow":"W0","step":"start","status":"pass","replies":2468}
+{"ts":"2026-10-14T17:48:54.506Z","flow":"W1","step":"new-chat","status":"pass","threadId":10136,"restWaitMs":9693,"topicLatencyMs":8002}
+{"ts":"2026-10-14T17:48:56.036Z","flow":"W2","step":"prompt-stream-tool","status":"pass","drafts":1656,"messages":2476,"modelRequests":408,"modelStreams":408,"modelToolCalls":74}
+{"ts":"2026-10-14T17:49:02.541Z","flow":"W5","step":"stop","status":"pass","draftId":4,"source":"stub-draft","confirmMs":318,"confirmedBy":"bot-log","outputsBefore":3121,"outputsAtConfirm":3123,"lateDelta":0,"streamCalls":1795,"withinD1":true,"withinD2":true}
+{"ts":"2026-10-14T17:49:44.557Z","flow":"W6","step":"delete-chat","status":"fail","reason":"no Topic was created after the delete","elapsed":632,"confirmationId":2482,"liveDraft":5,"topicGone":true,"lateStreams":0,"reuseThreadId":null,"topicLatencyMs":null,"requested":true,"completed":true,"interrupted":false}
+{"ts":"2026-10-14T17:49:50.043Z","flow":"W0","step":"start","status":"pass","replies":2487}
