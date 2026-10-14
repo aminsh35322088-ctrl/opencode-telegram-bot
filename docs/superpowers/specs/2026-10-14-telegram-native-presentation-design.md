@@ -18,6 +18,25 @@ Official references:
 - Styled text/entities: https://core.telegram.org/api/entities
 - Bot button styles: https://core.telegram.org/api/bots/buttons
 
+## Bot API capability matrix
+
+| Capability | Bot API | Decision | Bot usage |
+| --- | --- | --- | --- |
+| Rich Messages / rich drafts | 10.1 | Adopt / already partially present | Native answer/reasoning presentation |
+| Rich Details blocks | 10.2 | Adopt | Activity + optional final-answer sections |
+| Expandable block quotation | 10.3 | Adopt | Persisted visible reasoning |
+| Compact rich tables | 10.3 | Adopt | Mobile-friendly technical tables |
+| Rich/styled buttons | 10.3 | Adopt for bot-owned UI only | Primary/success/danger actions |
+| Draft Stop controls + generation-stopped update | 10.3 | Retain/integrate with exact run ownership | Stop UX |
+| Date/time entity / RichTextDateTime | 9.5 / 10.1 | Adopt explicitly | Schedules, deploy/reset/deadline times |
+| Rich math | 10.1–10.2 | Adopt explicitly | Scientific/technical output |
+| Anchors / references | 10.1 | Adopt explicitly | Long answer navigation/evidence |
+| Marked/highlight text | 10.1 | Already supported | Semantic emphasis |
+| Ephemeral messages | 10.2–10.3 | Defer | Low value for private-topic architecture |
+| Rich media/document blocks | 10.1–10.3 | Defer | File lifecycle/upload complexity |
+| Custom arbitrary text colors | — | Not supported | Do not invent |
+| Model-generated callback/Mini App buttons | — | Reject | Security/control ownership |
+
 ## Product contracts
 
 ### 1. Reasoning
