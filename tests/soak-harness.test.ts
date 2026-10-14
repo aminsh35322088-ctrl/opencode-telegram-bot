@@ -735,6 +735,28 @@ test("df and du output parsers fail closed and preserve byte and inode measureme
   assert.equal(parseDuTotal("not bytes\t/workspaces\n"), null);
 });
 
+test("workspace count measures session directories nested under chat directories", async () => {
+  const { countTopicWorkspaces } = await loadScript<{
+    countTopicWorkspaces: (workspaceDir: string) => number | null;
+  }>("scripts/soak/workspace-count.mjs");
+  const { mkdtempSync, mkdirSync, rmSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const root = mkdtempSync(join(tmpdir(), "soak-workspaces-"));
+
+  try {
+    mkdirSync(join(root, "987654321", "session-a"), { recursive: true });
+    mkdirSync(join(root, "987654321", "session-b"), { recursive: true });
+    mkdirSync(join(root, "not-a-chat", "session-c"), { recursive: true });
+    writeFileSync(join(root, "987654321", "metadata.json"), "{}");
+
+    assert.equal(countTopicWorkspaces(root), 2);
+    assert.equal(countTopicWorkspaces(join(root, "missing")), null);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("resource samples measure disk every tick and workspace size only on cycle samples", async () => {
   const { readFileSync } = await import("node:fs");
   const driver = readFileSync(new URL("../scripts/soak/driver.mjs", import.meta.url), "utf8");
@@ -742,10 +764,10 @@ test("resource samples measure disk every tick and workspace size only on cycle 
   assert.match(driver, /out\("df", \["-i", stateDir\]\)/);
   assert.match(driver, /du[^\n]*-sb/);
   assert.match(driver, /const workspaceDir = join\(stateDir, "opencode", "topic-workspaces"\)/);
-  assert.match(driver, /readdirSync\(workspaceDir\)/);
+  assert.match(driver, /countTopicWorkspaces\(workspaceDir\)/);
   assert.match(driver, /diskBytes:[^\n]*sizeB/);
   assert.match(driver, /inodesFree: inodeRow \? Number\(inodeRow\[1\]\)/);
-  assert.match(driver, /workspaceCount = readdirSync\(workspaceDir\)\.length/);
+  assert.match(driver, /workspaceCount = countTopicWorkspaces\(workspaceDir\)/);
   assert.match(driver, /workspaceBytes = parseDuTotal/);
   assert.match(driver, /topicLatencyMs/);
 });
