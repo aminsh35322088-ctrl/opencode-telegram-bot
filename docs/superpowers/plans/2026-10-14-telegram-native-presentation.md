@@ -34,7 +34,7 @@
 - [x] Implement Core GFM `isCompact: true` policy while preserving explicit HTML table semantics.
 - [x] Add RED test for a public Core capability descriptor.
 - [x] Export `TELEGRAM_RICH_PRESENTATION_CAPABILITIES` from native runtime.
-- [ ] Record final all-green Core CI run, update #31 docs and mark ready for review.
+- [x] Record all-green synchronized Core implementation CI: run `38601561471` on `b33344c939fd646a54238199c052e6252aeae1fd`; Core #31 docs were finalized for independent review.
 - [x] Remove the Bot compact-table post-process now and add a version-agnostic pass-through regression: RED on the old override (`true !== Core undefined`), GREEN after deletion.
 - [ ] After #31 is accepted/published, pin Bot to the new artifact and verify Core itself supplies compact GFM tables.
 
@@ -158,7 +158,7 @@ On the final rebased head:
 - [x] `npm run typecheck`
 - [x] `npm run build`
 - [x] `git diff --check`
-- [ ] inspect full PR diff for secrets/generated files/duplicate parser logic
+- [x] inspect full PR diff for secrets/generated files/duplicate parser logic — no duplicate rich grammar remains; table post-process removed
 - [ ] GitHub Actions conclusion = `success`
 - [ ] PR `mergeable=true`
 - [ ] independent Codex/strong-model review after both PRs are complete
@@ -168,8 +168,8 @@ On the final rebased head:
 1. Review and accept Core PR #31.
 2. Publish/pin a Core/native-runtime artifact containing #31.
 3. Update Bot #191 dependency to that exact artifact.
-4. Remove Bot's temporary compact-table post-process.
-5. Re-run full Bot verification.
+4. Verify the existing Core-pass-through regression now observes compact GFM tables directly from the new Core artifact.
+5. Re-run full Bot verification on that pinned artifact.
 6. Only then consider #191 merge/deploy.
 
-This order prevents a temporary regression where Bot removes the compatibility override before Core owns the same policy.
+The Bot-side override is already removed to keep ownership clean. Until #31 is published, the pass-through regression accepts the currently pinned Core semantics; the merge/deploy gate requires re-verification after the #31 artifact is pinned.

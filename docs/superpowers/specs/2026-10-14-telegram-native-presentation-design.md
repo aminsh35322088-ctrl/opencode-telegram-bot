@@ -1,6 +1,6 @@
 # Bot Telegram-Native Presentation Integration Design
 
-Status: approved and in implementation
+Status: Bot implementation complete and CI-green on the ownership-split head; Core #31 artifact handoff remains before merge/deploy.
 PR: `opencode-telegram-bot#191`
 Core dependency: `opencode-telegram-core#31`
 Date: 2026-10-14
@@ -64,7 +64,7 @@ PR #191 owns only:
 | Math | Core | no Bot parser; integration-tested | expression remains visible |
 | Native date/time | Core | no Bot parser; integration-tested | authored visible text remains |
 | Anchors/references | Core | no Bot parser; integration-tested | visible labels remain |
-| Compact tables | Core #31 | Bot consumes Core policy; old Bot override is removed only after the new Core artifact is pinned | existing table/plain fallback |
+| Compact tables | Core #31 | Bot preserves Core output byte-for-byte at the presentation boundary; the old Bot override is already removed | existing table/plain fallback |
 | Styled inline buttons | grammY/Telegram, Bot-owned UI | primary for `Compact Context`; danger for destructive confirmations | style omission does not change callback routing |
 | Custom arbitrary text color | unsupported by Bot API | intentionally not implemented | Telegram theme owns text color |
 | Model-generated callback/Mini-App/destructive buttons | rejected | disabled | visible label may survive as text |
@@ -161,7 +161,7 @@ Core owns long-answer navigation/reference semantics. Names are presentation ide
 
 ### Compact tables
 
-Core PR #31 moves the GFM-table compactness policy into native-runtime. Until a Core artifact containing #31 is pinned, the existing Bot override may remain as compatibility behavior; after pinning, duplicate post-processing must be removed.
+Core PR #31 moves the GFM-table compactness policy into native-runtime. Bot #191 has already removed its table post-process and now preserves the compactness supplied by the pinned Core artifact. With current `pre.34`, GFM compactness may remain unset; after #31 is published/pinned, Core itself supplies the compact policy without any Bot code change.
 
 ## Bot-owned styled buttons
 
@@ -231,7 +231,7 @@ Before #191 can be considered complete, fresh tests must prove:
 - final-answer Details/math/date-time/references pass through Core without Bot parser additions;
 - model-authored interactive buttons remain disabled;
 - `$100` is not turned into math;
-- eligible table output remains compact before and after Core #31 integration;
+- Bot preserves Core-owned table compactness without a local override; after the #31 artifact is pinned, GFM compactness must appear directly from Core;
 - bot-owned styles are primary/danger only on documented deterministic controls;
 - exact-topic typing remains thread-scoped;
 - Remote Topic RPC and Context Compaction regression suites stay green;
