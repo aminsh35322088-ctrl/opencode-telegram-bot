@@ -25,6 +25,11 @@ test("durable soak evidence checkpoints continue after the first Bot restart", (
     /kill -0 "\$BOT_PID"/,
     "W7 replaces the original Bot PID while the soak run and its evidence continue",
   );
+
+  const cleanup = runScript.match(/cleanup\(\) \{[\s\S]*?\n\}\ntrap cleanup/);
+  assert.ok(cleanup, "the run cleanup trap is present");
+  assert.match(cleanup[0], /kill "\$PERSIST_PID"/);
+  assert.match(cleanup[0], /wait "\$PERSIST_PID"/);
 });
 
 test("a thread-bound message update marks is_topic_message so the Bot resolves Topic scope", async () => {

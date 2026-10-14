@@ -56,6 +56,11 @@ PIDS=()
 cleanup() {
   local code=$?
   log "shutting down"
+  if [ -n "${PERSIST_PID:-}" ]; then
+    kill "$PERSIST_PID" 2>/dev/null || true
+    wait "$PERSIST_PID" 2>/dev/null || true
+    PERSIST_PID=""
+  fi
   # Stop the Bot BEFORE the stubs. Killing the stubs first aborts grammy's
   # in-flight long poll with `HttpError: Network request for 'getUpdates'
   # failed!`, which crashes the Bot and turns a clean shutdown into a noisy
