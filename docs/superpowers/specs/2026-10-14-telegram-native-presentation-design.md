@@ -1,6 +1,6 @@
 # Telegram-Native Presentation Design
 
-Status: approved in project chat; implementation plan pending review.
+Status: approved in project chat; implementation plan written and awaiting final plan review.
 PR: #191
 Target: `feat/native-run-presentation`
 Date: 2026-10-14
@@ -312,7 +312,7 @@ PR #191 is intended for deep review by Codex/another strong model. Every adopted
 Required PR documentation:
 
 1. this design spec;
-2. implementation plan/checklist updated as work lands;
+2. `docs/superpowers/plans/2026-10-14-telegram-native-presentation.md` as the authoritative implementation plan/checklist;
 3. Bot API capability matrix (adopted / already present / deferred);
 4. supported authoring syntax + fallback examples;
 5. security/privacy rules;
