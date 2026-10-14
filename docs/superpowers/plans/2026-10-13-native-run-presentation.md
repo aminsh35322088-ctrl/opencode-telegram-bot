@@ -1,75 +1,47 @@
 # Native Run Presentation Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> Status: superseded by the approved Telegram-native presentation design before further implementation.
 
-**Goal:** Make Telegram run presentation match OpenCode-style UX: persistent expandable reasoning, compact expandable tool/activity history, continuous typing, and restart-safe run recovery without changing final-answer rendering.
+This plan originally covered reasoning persistence, aggregated activity, typing, Remote Topic SDK compatibility, and context compaction for PR #191.
 
-**Architecture:** Keep reasoning, activity, and final answer as separate presentation surfaces owned by the same run. Native Telegram draft remains the live surface; completed reasoning and activity become persistent expandable blockquotes. The control-plane scheduler owns typing heartbeats and bounded restart recovery.
+The scope expanded on 2026-10-14 to include Bot API 10.1–10.3 native presentation features. The authoritative design is now:
 
-**Tech Stack:** TypeScript, Cloudflare Workers/Durable Objects SQLite, Telegram Bot API, Node test runner.
+`docs/superpowers/specs/2026-10-14-telegram-native-presentation-design.md`
 
-**Spec:** Conversation-approved behavior on 2026-10-13.
+Do not continue implementation from this file until the new design spec has been reviewed. After approval, regenerate the implementation plan from the new spec so that every code change, compatibility decision, security rule, fallback, and test maps back to a documented requirement.
 
-## Global Constraints
+## Previously completed work to carry forward
 
-- Final answer rendering/finalization behavior must remain unchanged.
-- Completed reasoning is always `expandable_blockquote`; no length/line threshold.
-- Tool/activity UI is aggregated per run and must not expose credentials or unbounded raw output.
-- `typing` must continue while a run is active, including when native draft presentation is enabled.
-- Restart recovery must be bounded/indexed and must not reintroduce Durable Object row-read amplification.
-- Work lands only through a PR; do not merge or deploy.
+- completed visible reasoning persists separately from final answer;
+- every completed reasoning section uses expandable blockquote;
+- one run-owned Activity stream aggregates default/subagent/todo/tool activity;
+- credential-shaped values are redacted from Activity;
+- exact-topic typing uses `message_thread_id`;
+- Remote Topic SDK routes provider/agent/command/permission/question reads and replies through Worker/Core RPC;
+- governed Remote Topic context compaction maps `session.summarize` to `session.compact` and waits for the real `session.compacted` event;
+- `Compact Context` is exposed from Context Health;
+- final-answer generation/finalization remains separate from reasoning/activity.
 
-## Review Focus
+## New plan requirements
 
-- Multiple reasoning phases in one run must persist without merging into the final answer.
-- Repeated updates for the same tool call must update one activity item, not duplicate it.
-- Sensitive tool arguments and oversized stdout must never be rendered verbatim.
-- A Worker/DO restart with queued/finalizing work must schedule exactly bounded recovery work.
-- Native presentation and typing must coexist without Telegram rate-limit amplification.
+The regenerated plan must additionally cover:
 
----
+- Activity migration from expandable quote to native RichBlockDetails;
+- allowlisted `<details><summary>…</summary>…</details>` in final answers;
+- explicit native date/time syntax and fallback;
+- explicit inline/block math syntax and fallback;
+- native anchors/references with safe fallback;
+- compact rich-table hinting;
+- deterministic bot-owned button styling;
+- capability/fallback matrix and Bot API compatibility documentation;
+- full regression tests for Persian/RTL, limits, malformed markup, unsupported rich sends, and content-preserving fallback;
+- documentation updates inside PR #191 sufficient for independent Codex/model review.
 
-### Task 1: Reasoning persistence contract
+## Constraints that still apply
 
-**Files:** `src/cloudflare/run-presentation.ts`, `src/bot/messages/thinking-rendering.ts`, relevant tests.
-
-- [x] Add/adjust failing tests proving completed reasoning always renders as an independent expandable blockquote.
-- [x] Remove short/long final-reasoning branching while preserving native live reasoning.
-- [x] Verify native-generation/presentation tests.
-
-### Task 2: Aggregated expandable activity presentation
-
-**Files:** `src/cloudflare/run-presentation.ts` or a focused activity presenter module, event capture tests.
-
-- [x] Add failing tests for Skill/Grep/Glob/Read/Edit/Write/Shell/Web/Task aggregation, dedupe/update, redaction, bounded summaries, and separation from final answer.
-- [x] Implement a per-run activity buffer and compact summary rendering as a persistent expandable blockquote.
-- [x] Verify activity presentation tests.
-
-### Task 3: Continuous typing with native presentation
-
-**Files:** `src/cloudflare/control-object.ts`, control-object tests.
-
-- [x] Add failing test proving active native presentation still emits/schedules `sendChatAction(typing)`.
-- [x] Remove the native-presentation exclusion while preserving existing 4s/rate-limit heartbeat behavior.
-- [x] Verify typing tests.
-
-### Task 4: Remote Topic SDK compatibility and non-responsive Topic recovery
-
-**Files:** `src/control-plane/topic-sdk-adapter.ts`, `src/infrastructure/node-transport.ts`, adapter/transport tests.
-
-- [x] Reproduce production attach failure for `permission.list` and provider catalog reads.
-- [x] Route those operations through the already-supported authenticated Worker/Core RPC surface; do not fake empty permission state.
-- [x] Preserve generation/session fencing and verify adapter/transport tests.
-
-### Task 5: Integration and PR gate
-
-- [x] Run lint, build, diff-check, targeted suites, and the full test suite.
-- [x] Review diff for final-answer regressions, secrets, and unbounded presentation growth.
-- [x] Commit, push feature branch, open PR against `main` with test evidence and scope notes.
-
-## Compact Context
-
-- expose manual Compact Context from Topic Context Health
-- route SDK `session.summarize` to Worker/Core `session.compact` with the exact governed run identity
-- keep Core run ownership until the real `session.compacted` event arrives; fail on session error/idle/abort
-- refresh existing context state from the native compaction event; do not synthesize summaries in Bot
+- final answer remains separate from reasoning/activity;
+- no private provider chain-of-thought exposure;
+- no arbitrary model-generated callback/destructive buttons;
+- no custom text-color API is invented;
+- no merge or production deployment is part of PR #191;
+- implementation must end with full lint, typecheck, build, test, diff-check, and GitHub Actions evidence.
