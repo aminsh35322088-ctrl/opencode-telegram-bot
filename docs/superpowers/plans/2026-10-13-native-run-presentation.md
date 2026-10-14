@@ -45,3 +45,7 @@ The regenerated plan must additionally cover:
 - no custom text-color API is invented;
 - no merge or production deployment is part of PR #191;
 - implementation must end with full lint, typecheck, build, test, diff-check, and GitHub Actions evidence.
+
+## Plan regeneration gate
+
+This file intentionally stops here. Once the design spec is reviewed, replace this document with a task-by-task implementation plan generated from that spec before touching product code. This keeps the PR auditable: design → plan → implementation → evidence.
