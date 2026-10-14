@@ -1,345 +1,276 @@
-# Telegram-Native Presentation Design
+# Bot Telegram-Native Presentation Integration Design
 
-Status: approved in project chat; implementation plan written and awaiting final plan review.
-PR: #191
-Target: `feat/native-run-presentation`
+Status: approved and in implementation
+PR: `opencode-telegram-bot#191`
+Core dependency: `opencode-telegram-core#31`
 Date: 2026-10-14
 
 ## Purpose
 
-Make the bot feel native to modern Telegram instead of treating Telegram as a plain-text terminal. The design preserves final-answer semantics while adopting the useful parts of Bot API 10.1–10.3 that improve readability, topic-local interaction, long-run observability, and reviewability.
+Make the Telegram bot a first-class OpenCode client without duplicating Telegram semantic parsing/rendering that already belongs to Core. The Bot owns run lifecycle, Topic routing and trusted product UI; Core owns the Telegram document grammar and Rich Message mapping.
 
-The implementation is progressive enhancement: every adopted Rich Message feature must have a deterministic readable fallback and must not change run ownership, security boundaries, or the final-answer lifecycle.
+This document is deliberately self-contained so Codex or another independent reviewer can audit PR #191 without reconstructing decisions from chat history.
 
-Official references:
+Official Telegram references:
 
-- Bot API changelog: https://core.telegram.org/bots/api-changelog
-- Bot API reference: https://core.telegram.org/bots/api
-- Bot features / Rich Messages: https://core.telegram.org/bots/features
-- Bot button styles: https://core.telegram.org/api/bots/buttons
+- https://core.telegram.org/bots/api
+- https://core.telegram.org/bots/api-changelog
+- https://grammy.dev/ref/core/inlinekeyboard
 
-## Implementation discovery: Core pre.34 already owns the rich grammar
+## Ownership boundary
 
-The Bot is pinned to `@opencode-telegram/native-runtime` from Core `v1.18.33-bot.13-pre.34`.
+### Core owns semantic Telegram presentation
 
-That runtime already parses and renders the Rich Message primitives this PR wants to use:
+Core/native-runtime is authoritative for:
 
+- Rich Messages and Rich drafts;
 - `details` blocks;
-- inline and block mathematical expressions;
-- `RichTextDateTime` via explicit `tg-time` syntax;
-- anchors, anchor links, references and reference links;
-- compact table metadata;
-- rich-message buttons and Telegram button styles;
-- expandable block quotations;
-- normal Rich Message blocks and draft thinking blocks.
+- normal and expandable quotations;
+- inline/block math;
+- native date/time;
+- anchors, references and reference links;
+- rich tables;
+- rich buttons in explicitly trusted mode;
+- marked/spoiler/code and semantic inline formatting;
+- Persian/RTL and bidi isolation;
+- Telegram chunking/limits and readable fallback projection.
 
-Therefore the Bot MUST NOT duplicate these grammars in a second parser. Final-answer syntax remains owned by Core/native-runtime. Bot-side work is limited to:
+Core PR #31 closes the remaining ownership gap by making ordinary GFM Markdown tables compact by default and publishing a tested `TELEGRAM_RICH_PRESENTATION_CAPABILITIES` contract.
 
-1. enabling/proving safe usage through the existing `renderTelegramParts()` pipeline;
-2. keeping model-authored interactive buttons disabled by leaving `allowInteractiveButtons` off;
-3. producing trusted Activity UI directly as a Rich `details` block;
-4. styling only bot-owned deterministic keyboard/buttons;
-5. preserving complete fallback text when rich delivery fails.
+Bot MUST NOT add a second parser for these constructs.
 
-The Bot's older local render helpers remain compatibility/test utilities; they are not to become a competing authoritative parser.
+### Bot owns lifecycle and trusted UI integration
 
-## Bot API capability matrix
+PR #191 owns only:
 
-| Capability | Bot API | Core pre.34 | Decision | Bot usage |
-| --- | --- | --- | --- | --- |
-| Rich Messages / rich drafts | 10.1 | Present | Adopt / already present | Native answer/reasoning presentation |
-| Rich Details blocks | 10.2 | Present | Adopt | Activity + model-authored optional answer sections |
-| Expandable block quotation | 10.3 | Present | Adopt | Persisted visible reasoning |
-| Compact rich tables | 10.3 | Present | Adopt / already wired in Bot pipeline | Mobile-friendly technical tables |
-| Rich/styled buttons | 10.3 | Present | Adopt for bot-owned UI only | Primary/success/danger actions |
-| Draft Stop controls + generation-stopped update | 10.3 | Present in runtime path | Retain with exact run ownership | Stop UX |
-| Date/time entity / RichTextDateTime | 9.5 / 10.1 | Present | Adopt explicitly | Schedules, deploy/reset/deadline times |
-| Rich math | 10.1–10.2 | Present | Adopt explicitly | Scientific/technical output |
-| Anchors / references | 10.1 | Present | Adopt explicitly | Long answer navigation/evidence |
-| Marked/highlight text | 10.1 | Present | Already supported | Semantic emphasis |
-| Ephemeral messages | 10.2–10.3 | Not required | Defer | Low value for private-topic architecture |
-| Rich media/document blocks | 10.1–10.3 | Present | Defer in model-authored answers | File lifecycle/upload complexity |
-| Custom arbitrary text colors | — | — | Not supported | Do not invent |
-| Model-generated callback/Mini App buttons | — | Parser can gate | Reject | Security/control ownership |
+- visible reasoning lifecycle and persistence;
+- one run-owned Activity history across tools/subagents/todos;
+- Activity dedupe, live replacement and secret redaction;
+- sending/editing Activity through Core-native `details` plus existing rich→plain fallback;
+- exact-Topic `typing...` heartbeat;
+- Stop/run attribution;
+- Remote Topic SDK/RPC compatibility;
+- governed Context Compaction UI and session/run ownership;
+- deterministic bot-owned keyboard styles;
+- final-answer transport integration with Core renderer.
 
-## Product contracts
+## Capability matrix
 
-### 1. Reasoning
+| Capability | Owner | #191 behavior | Fallback / security |
+| --- | --- | --- | --- |
+| Rich Messages / rich drafts | Core | consumed | plain/entity fallback |
+| Details | Core semantic, Bot Activity state | Activity collapsed by default; optional final-answer details pass through Core | summary + body remain visible |
+| Expandable quote | Core semantic, Bot reasoning lifecycle | every completed visible reasoning section persists expandable | plain reasoning if rich rejected |
+| Math | Core | no Bot parser; integration-tested | expression remains visible |
+| Native date/time | Core | no Bot parser; integration-tested | authored visible text remains |
+| Anchors/references | Core | no Bot parser; integration-tested | visible labels remain |
+| Compact tables | Core #31 | Bot consumes Core policy; old Bot override is removed only after the new Core artifact is pinned | existing table/plain fallback |
+| Styled inline buttons | grammY/Telegram, Bot-owned UI | primary for `Compact Context`; danger for destructive confirmations | style omission does not change callback routing |
+| Custom arbitrary text color | unsupported by Bot API | intentionally not implemented | Telegram theme owns text color |
+| Model-generated callback/Mini-App/destructive buttons | rejected | disabled | visible label may survive as text |
+| Ephemeral messages | deferred | no present private-Topic benefit | n/a |
+| Arbitrary rich media generated by model | deferred | file lifecycle/security out of scope | n/a |
 
-Reasoning remains independent from Activity and the final answer.
+## Reasoning contract
 
-Lifecycle:
+Reasoning is a separate presentation surface from Activity and final answer.
 
-1. visible/native live reasoning streams while the model is thinking;
-2. the live presentation may use Telegram draft/thinking primitives;
-3. when a visible reasoning section completes, it persists as its own message;
-4. every completed reasoning section uses Telegram `expandable_blockquote`, regardless of length;
-5. reasoning is never merged into the final answer;
-6. private provider chain-of-thought is never promoted into visible reasoning merely because the transport supports rich blocks.
+1. Visible/native reasoning streams while the model is thinking.
+2. Only provider/OpenCode reasoning explicitly exposed for display is eligible; raw private provider chain-of-thought is never promoted.
+3. Completed visible reasoning is persisted as its own Telegram message.
+4. Every completed reasoning section uses `expandable_blockquote`; the previous 320-character / four-line threshold is removed.
+5. Reasoning never enters the final-answer buffer.
+6. Multiple reasoning phases remain independent from the one run-owned Activity history.
 
-The previous short/long threshold is removed.
+Invariant:
 
-### 2. Activity / tool history
+```text
+reasoning presentation != Activity presentation != final answer presentation
+```
 
-All model/tool execution activity for one run is represented by one run-owned Activity presentation rather than per-tool message spam.
+## Activity contract
 
-Examples: Skill, Grep, Glob, Read, Edit, Write, Shell, Web, Task/Sub-agent, Todo and related status lines.
+Activity includes Bot-observed Skill/Grep/Glob/Read/Edit/Write/Shell/Web/Task/Sub-agent/Todo and related status/retry lines.
 
-Activity uses `InputRichBlockDetails`:
+The Bot keeps one logical Activity stream for the run:
 
-- collapsed by default (`is_open` omitted);
-- summary stays short, e.g. `🛠 Activity · 12 actions`;
-- body contains the ordered activity history;
-- repeated updates for the same call replace/update the existing item rather than duplicating it;
-- the same Activity message continues across multiple reasoning phases in the same run;
-- Activity remains separate from reasoning and final answer;
-- credentials and secret-shaped values are redacted before both rich and fallback rendering;
-- unbounded stdout, file contents and raw tool payloads are not embedded verbatim.
+- default/subagent/todo stream keys resolve to one run-owned state;
+- repeated calls identified by prefixes replace their existing line instead of duplicating it;
+- a reasoning phase flushes Activity but does not break/recreate it;
+- file boundaries flush rather than discard the Activity history;
+- a new run generation retires the previous stream;
+- Telegram message-size bounds may require continuation messages, but tool kinds do not create separate spam messages.
 
-Delivery contract:
+### Native Details rendering
 
-- initial Activity uses `sendRichMessage`;
-- updates use `editMessageText` with `rich_message`;
-- if a rich send/edit is rejected, use the existing safe text path so content is never lost;
-- Topic routing must remain session/thread scoped.
+Activity rendering is implemented in a focused Bot adapter, not a new Markdown parser:
 
-### 3. Final answer
+1. redact the trusted Bot-owned Activity text;
+2. build a Core `AgentDocument` with one `details` block;
+3. place Activity body in a plain paragraph so tool text cannot manufacture HTML/interactive blocks;
+4. call Core `renderTelegramRichDocument`;
+5. deliver with the Bot's existing `sendRenderedBotPart` / `editRenderedBotPart` fallback-aware path.
 
-The main answer remains visible by default and keeps the current generation/finalization path.
+Default summary: `🛠 Activity`.
 
-Core/native-runtime already supports explicit optional sections such as:
+`is_open` is omitted so Telegram collapses the Details block by default.
+
+### Activity privacy
+
+Before rich rendering **and** fallback rendering, redact at minimum:
+
+- `Authorization: Bearer …`;
+- token/API-key/password/secret/credential-shaped assignments, including prefixed environment variable names;
+- Telegram bot-token-shaped values.
+
+Do not embed unbounded raw stdout/file contents/tool payloads. Existing streamer length bounds remain authoritative.
+
+## Final-answer contract
+
+The main answer stays visible and its generation/finalization pipeline remains unchanged.
+
+Core already supports optional model-authored rich constructs such as:
 
 ```html
-<details>
-<summary>Technical details</summary>
-
-Markdown/body content
+<details><summary>Technical details</summary>
+Optional body
 </details>
 ```
 
-Rules:
+PR #191 does **not** implement a parallel parser. It only integration-tests that the Bot's `renderTelegramParts()` path preserves the Core output.
 
-- the main answer is never automatically collapsed;
-- model output goes through Core's allowlisted parser, not raw Bot API JSON;
-- nested details obey the existing native-runtime/message nesting budgets;
-- code, lists, tables, Persian/RTL text and links inside details preserve Core semantics;
-- malformed/unsupported markup remains visible through fallback projection;
-- Bot does not turn on `allowInteractiveButtons` for model-authored answers.
+Model-authored interactive buttons remain disabled because the Bot calls Core parsing without `allowInteractiveButtons`.
 
-### 4. Native date/time
+## Native capabilities intentionally consumed from Core
 
-Use Core's explicit native date/time syntax only when the model intentionally emits it. Supported form:
+### Details
 
-```html
-<tg-time unix="1760457600" format="D">fallback text</tg-time>
-```
+Useful for optional answer sections and Bot-owned Activity. Main conclusions are never automatically hidden.
 
-Core validates integer timestamps and Telegram-supported format strings before producing `RichTextDateTime`. Invalid input remains visible as text.
+### Math
 
-Use cases: deploy times, reset times, scheduled task times, soak deadlines and worker lifecycle timestamps.
+Core handles explicit/native math and Markdown math. The Bot does not heuristically reinterpret ordinary currency text such as `$100`.
 
-Do not auto-convert arbitrary numbers/dates.
+### Date/time
 
-### 5. Native math
+Core handles explicit `tg-time` input. Bot does not auto-convert arbitrary numbers/dates.
 
-Use Core's existing math support. Explicit HTML is supported:
+### Anchors/references
 
-```html
-<tg-math>E = mc^2</tg-math>
-```
+Core owns long-answer navigation/reference semantics. Names are presentation identifiers only, never callback identifiers.
 
-Core also supports Markdown math through its `remark-math` path, including block formulas. Tests must prove ordinary currency such as `$100` is not converted into math without a valid matching construct.
+### Compact tables
 
-### 6. Anchors and references
+Core PR #31 moves the GFM-table compactness policy into native-runtime. Until a Core artifact containing #31 is pinned, the existing Bot override may remain as compatibility behavior; after pinning, duplicate post-processing must be removed.
 
-Use Core's existing anchor/reference grammar for long technical answers and evidence navigation.
+## Bot-owned styled buttons
 
-Goals:
+Telegram/grammY now supports semantic button styles. PR #191 uses them only where the Bot itself owns callback semantics:
 
-- source/evidence sections can be referenced without duplicating large text;
-- long answers can link internally to named sections;
-- unresolved/invalid references remain visible;
-- names are presentation identifiers only and never callback/executable data.
+- `🧠 Compact Context` → `primary`;
+- delete-all-memory confirmation → `danger`;
+- clear-history confirmation → `danger`;
+- factory-reset continuation/final confirmation → `danger`;
+- Back/Cancel/navigation → default styling.
 
-### 7. Compact rich tables
+Styles are presentation-only. Callback data is unchanged.
 
-The Bot pipeline already applies `is_compact: true` to native rich tables. Keep that behavior and add explicit regression coverage.
+## Exact-Topic typing contract
 
-Rules:
+While a run is active, `sendChatAction("typing")` is refreshed for the exact Forum Topic using `message_thread_id`. Native thinking/drafts do not suppress the typing heartbeat. The heartbeat stops when the run is terminal/cancelled.
 
-- Core/native-runtime remains authoritative for parsing/chunking;
-- existing table width/column safety remains authoritative;
-- large/unsupported tables keep readable fallback behavior;
-- compact mode is presentation-only;
-- Persian/RTL table text keeps current direction handling.
+## Remote Topic compatibility contract
 
-### 8. Deterministic button styling
+Remote Topic SDK calls used by normal prompt/session flows must route through authenticated, fenced Worker/Core RPCs rather than fake local fallbacks. #191 carries routing for provider/model catalog, agents, commands, permissions/questions and associated safe mutations already supported by Core.
 
-Use Telegram button styles only for bot-owned deterministic UI.
+No operation may silently return a fabricated empty permission state.
 
-Recommended mapping:
+## Context Compaction contract
 
-- primary navigation/action → `primary`;
-- confirmed/positive action → `success`;
-- destructive action → `danger`;
-- neutral/back/cancel → default.
+`Context Health` exposes `🧠 Compact Context`.
 
-Initial high-value targets are destructive confirmation/delete controls and primary/positive confirmation actions. Avoid style churn on every neutral navigation button.
+- Bot calls SDK `session.summarize`;
+- Remote adapter maps it to governed Worker/Core `session.compact` with exact run/session identity;
+- Core/OpenCode owns summary/compaction semantics;
+- call resolves only when the exact session emits the real `session.compacted` event;
+- `session.error`, premature termination/abort or foreign-session events cannot report success;
+- Topic/session/model/directory identity remains unchanged.
 
-Security rule: model output never creates arbitrary callbacks, URLs, Mini App buttons or destructive actions. Callback data remains generated by the Bot's existing routing layer. Core's `allowInteractiveButtons` stays disabled for model-authored final answers.
+## Compatibility and fallback
 
-### 9. Text color
+Rich presentation is progressive enhancement:
 
-Arbitrary text color is intentionally NOT implemented because Bot API has no custom text-color property for normal RichText. Telegram chooses theme-aware text colors.
+1. native Rich Message send/edit first;
+2. existing entity/plain fallback on schema/client/API rejection;
+3. content is never intentionally discarded because a RichBlock is unsupported.
 
-Use semantic presentation instead:
+Activity uses the same fallback-aware delivery helpers as other rendered Bot parts, so a rejected Details send/edit degrades without changing the run-owned message identity where an edit is possible.
 
-- bold/italic/underline/strikethrough;
-- `marked` highlight;
-- code/preformatted;
-- spoiler;
-- quote / expandable quote;
-- headings/details/tables;
-- Telegram-defined button styles.
+Telegram clients may visually differ; semantic content and fallback text are the compatibility contract.
 
-No custom `#RRGGBB` syntax will be invented.
+## Security invariants
 
-## Existing contracts retained by PR #191
+- never expose provider-private chain-of-thought;
+- no raw model-provided Bot API JSON;
+- no model-generated callback data, privileged destructive action or Mini App launch;
+- Activity tool text is inserted as plain Core AST text, not reparsed markup;
+- secret redaction happens before rich and fallback rendering;
+- URL sanitization and native-runtime nesting/message limits remain authoritative;
+- invalid rich markup must degrade to visible content, not make an answer disappear.
 
-- exact-topic `typing...` using `message_thread_id` while a run is active;
-- Remote Topic SDK compatibility for models/providers, agents, commands, permissions and question flows;
-- governed Remote Topic context compaction via Core/Worker `session.compact`;
-- `Compact Context` exposed from Context Health;
-- final-answer rendering/finalization remains separate from reasoning/activity;
-- Stop continues to target the exact active run.
+## Test contract
 
-## Compatibility strategy
+Before #191 can be considered complete, fresh tests must prove:
 
-Rich features are progressive enhancement:
+- Activity default/subagent/todo data aggregates into one run-owned stream;
+- Activity renders to one collapsed native Details block for a bounded part;
+- Activity rich and fallback representations redact secret-shaped values;
+- rich Activity send/edit uses existing fallback-aware delivery;
+- reasoning always completes as expandable quote and remains separate;
+- reasoning phases do not reset Activity;
+- final-answer Details/math/date-time/references pass through Core without Bot parser additions;
+- model-authored interactive buttons remain disabled;
+- `$100` is not turned into math;
+- eligible table output remains compact before and after Core #31 integration;
+- bot-owned styles are primary/danger only on documented deterministic controls;
+- exact-topic typing remains thread-scoped;
+- Remote Topic RPC and Context Compaction regression suites stay green;
+- Persian/RTL, chunking, Stop attribution and final-answer behavior do not regress;
+- lint, typecheck, build, top-level tests, CI-only tests and `git diff --check` pass on the final rebased head.
 
-1. native Rich Message path first;
-2. existing readable text/entity fallback on rich send/edit failure;
-3. never silently drop summary/body/action history because a block is unsupported.
+## Documentation / review contract
 
-Bot API milestones relevant to this PR:
+PR #191 must contain enough evidence for an independent strong-model review:
 
-- 10.1: Rich Messages, rich drafts, RichText types, `sendRichMessage`, `sendRichMessageDraft` and rich edits;
-- 10.2: outgoing InputRichBlock types including Details and mathematical-expression blocks;
-- 10.3: RichMessage buttons, compact tables and expandable block quotations.
+1. this Bot ownership/specification document;
+2. implementation plan with checkboxes tied to actual green tests;
+3. explicit Core PR #31 dependency and final consumed artifact/version;
+4. capability matrix and owner for every adopted feature;
+5. security/privacy/fallback rules;
+6. production root-cause evidence for typing and Remote Topic failures;
+7. exact test counts, final commit SHA and GitHub Actions run ID;
+8. known limitations and deferred features;
+9. explicit note that arbitrary text colors are unsupported by Telegram Bot API;
+10. no claim of completion based on stale pre-rebase or historical CI results.
 
-Telegram clients may render these primitives differently; fallback text must remain complete.
+## Non-goals / deferred
 
-## Security and privacy
-
-- Never expose raw provider-private chain-of-thought.
-- Redact token/API-key/password/secret/credential-shaped values from Activity.
-- Do not render unbounded tool input/output.
-- Model-authored markup is parsed by Core's allowlist, never accepted as raw Bot API objects.
-- `allowInteractiveButtons` remains false for model-authored final answers.
-- Model output cannot generate callback data, privileged buttons, Mini App launches or destructive actions.
-- Existing URL sanitization remains authoritative.
-- Invalid rich constructs degrade to visible content instead of failing the entire answer.
-
-## Renderer architecture
-
-### Authoritative final-answer path
-
-`src/bot/render/pipeline.ts` delegates Markdown parsing, direction handling, chunking and Rich Message rendering to `@opencode-telegram/native-runtime`.
-
-Core pre.34 owns:
-
-- the semantic AgentDocument AST;
-- rich HTML/Markdown parsing;
-- Details/date-time/math/anchor/reference/button grammar;
-- Telegram RichText/RichBlock conversion;
-- bidi/Persian handling;
-- rich document chunking and plain/entity projections.
-
-The Bot SHOULD NOT reimplement those semantics in `block-parser.ts`/`rich-blocks.ts` unless a compatibility-only path specifically requires it.
-
-### Trusted Activity path
-
-Activity is Bot-owned runtime state, not model-authored answer Markdown. `tool-call-streamer.ts` keeps aggregation/dedupe semantics. A focused Activity renderer produces:
-
-- trusted `InputRichMessageWithoutUpload` containing one `details` block;
-- the same redacted content as a plain fallback string;
-- a bounded action count for the details summary.
-
-`event-subscription-service.ts` owns Topic-scoped send/edit delivery and fallback.
-
-### Bot-owned button path
-
-Existing menu/confirmation builders remain the sole source of callback data. Styling changes presentation only; routing semantics do not change.
-
-## Fallback semantics
-
-- Activity details → `🛠 Activity · N actions\n\n<body>`;
-- final-answer details → Core plain projection includes summary/body;
-- date/time → supplied visible text;
-- inline/block math → visible expression in Core plain projection;
-- anchors → no executable fallback side effect;
-- references → visible reference text/label;
-- compact table → existing table/plain projection;
-- styled button → same label/callback without style if style is unavailable.
-
-## Testing contract
-
-No implementation is complete until tests cover at least:
-
-- Activity renders as one native Details block and redacts secrets in rich and fallback forms;
-- Activity updates reuse one message across tool kinds and reasoning phases;
-- rich Activity send/edit failure preserves content via text fallback;
-- final-answer `<details>` passes end-to-end through `renderTelegramParts()` with Markdown/code/list/table body content;
-- malformed/unclosed Details remain visible;
-- nested Details respect native-runtime limits;
-- Persian/RTL inside Details remains valid;
-- reasoning always persists as expandable blockquote;
-- reasoning/activity/final answer remain separate;
-- valid/invalid explicit date-time behavior;
-- inline/block math plus ordinary currency non-regression;
-- anchors/references valid plus unresolved fallback;
-- compact table hint without changing fallback semantics;
-- model-authored interactive buttons stay disabled;
-- selected bot-owned buttons receive only deterministic primary/success/danger styles;
-- UTF-16/entity and block/character limit regression coverage;
-- all existing typing, Stop, Remote Topic and compaction tests remain green;
-- full lint, typecheck, build, top-level tests, CI-only tests and diff-check.
-
-## Documentation contract for PR #191
-
-PR #191 is intended for deep review by Codex/another strong model. Every adopted behavior must be reviewable without chat history.
-
-Required PR documentation:
-
-1. this design spec;
-2. `docs/superpowers/plans/2026-10-14-telegram-native-presentation.md` as the authoritative implementation plan/checklist;
-3. Bot API capability matrix (adopted / already present / deferred);
-4. supported authoring syntax + fallback examples;
-5. security/privacy rules;
-6. Telegram/client compatibility notes;
-7. production root-cause evidence for typing/Remote Topic fixes;
-8. full test evidence and final GitHub Actions run IDs;
-9. explicit deferred/non-goal decisions;
-10. explicit note of which capabilities are implemented by Core pre.34 versus Bot-owned code.
-
-## Deferred after evaluation
-
-- arbitrary text colors: unsupported by Bot API;
-- model-generated callback/destructive buttons: rejected for safety/control ownership;
-- model-generated Mini App actions: rejected for scope/security;
-- ephemeral messages: low value for the current private-topic architecture;
-- arbitrary rich media/document embedding in model final answers: file lifecycle/upload complexity;
-- premium-dependent custom emoji generation: inconsistent availability and unnecessary for coding UX.
+- custom arbitrary RichText colors;
+- model-authored privileged interactive controls;
+- Mini App generation from model output;
+- premium custom-emoji dependence;
+- ephemeral-message workflow without a concrete multi-user need;
+- new rich-media upload lifecycle;
+- moving Bot Activity aggregation or Topic lifecycle into Core.
 
 ## Success criteria
 
-The change is successful when Telegram behaves like a first-class OpenCode client:
+Telegram behaves as a native OpenCode client while ownership remains clean:
 
-- live reasoning remains visible and persists after completion;
-- Activity is compact by default but fully inspectable;
-- optional answer detail can collapse without hiding the main conclusion;
-- dates, math, references and tables use native Telegram presentation where Core safely supports them;
-- Topic typing/Stop/Remote Topic lifecycle remains correct;
-- unsupported rich features never cause answer loss;
-- Bot does not duplicate functionality already owned by Core/native-runtime;
-- the PR itself contains enough design, implementation, compatibility, security and verification evidence for an independent reviewer to audit it.
+- reasoning is live, persistent and independently expandable;
+- Activity is compact/collapsible and inspectable without message spam;
+- final answer remains readable and may use Core-native optional Details;
+- Topic typing, Stop, Remote RPC and compaction remain correct;
+- Core owns Telegram grammar; Bot owns lifecycle/UI integration;
+- unsupported rich features never cause content loss;
+- documentation and CI evidence are sufficient for Codex/another reviewer to audit both PR #191 and Core PR #31 without this chat history.
