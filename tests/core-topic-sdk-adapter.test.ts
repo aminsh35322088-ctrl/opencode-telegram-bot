@@ -53,3 +53,10 @@ test('remote compaction payload and terminal events preserve synchronous SDK sem
  assert.deepEqual(classifyRemoteCompactionEvent({type:'session.error',properties:{message:'provider failed'}}),{state:'failed',message:'provider failed'});
  assert.equal(classifyRemoteCompactionEvent({type:'message.part.updated',properties:{}}),null);
 });
+
+
+test('remote compaction success requires the exact session in its terminal event',()=>{
+ assert.equal(classifyRemoteCompactionEvent({type:'session.compacted',properties:{}},'owned'),null);
+ assert.equal(classifyRemoteCompactionEvent({type:'session.compacted',properties:{sessionID:'foreign'}},'owned'),null);
+ assert.deepEqual(classifyRemoteCompactionEvent({type:'session.compacted',properties:{sessionID:'owned'}},'owned'),{state:'completed'});
+});

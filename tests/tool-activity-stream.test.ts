@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { renderToolActivity } from "../src/bot/streaming/tool-activity-renderer.js";
 import { ToolCallStreamer } from "../src/bot/streaming/tool-call-streamer.js";
 
 test("tool activity from default, subagent and todo streams is aggregated into one Telegram message", async () => {
@@ -35,3 +36,29 @@ test("tool activity from default, subagent and todo streams is aggregated into o
   assert.match(edited[0]!.text, /Edit/);
   streamer.clearSession("session", "test_cleanup");
 });
+
+
+for (const [name, text] of [
+  ["credential crossing a Telegram chunk boundary", "x".repeat(3985) + " TOKEN=SENSITIVE_TAIL"],
+  ["redaction expansion before message bounds", "token=x ".repeat(490)],
+] as const) {
+  test(`tool activity protects ${name} across rich and fallback transport`, async () => {
+    const delivered: ReturnType<typeof renderToolActivity>[] = [];
+    const streamer = new ToolCallStreamer({
+      throttleMs: 60_000,
+      sendText: async (_session, part) => { delivered.push(renderToolActivity(part)); return delivered.length; },
+      editText: async (_session, _id, part) => { delivered.push(renderToolActivity(part)); },
+      deleteText: async () => {},
+    });
+    try {
+      streamer.append("session", text);
+      await streamer.flushSession("session", "security_regression");
+      assert.ok(delivered.length > 0);
+      for (const part of delivered) {
+        assert.doesNotMatch(part.fallbackText, /SENSITIVE|E_TAIL/);
+        assert.doesNotMatch(JSON.stringify(part.blocks), /SENSITIVE|E_TAIL/);
+        assert.ok(part.fallbackText.length <= 4096, `fallback exceeds Telegram limit: ${part.fallbackText.length}`);
+      }
+    } finally { streamer.clearSession("session", "cleanup"); }
+  });
+}

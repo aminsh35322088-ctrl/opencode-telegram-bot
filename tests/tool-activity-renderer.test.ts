@@ -25,3 +25,12 @@ test("tool activity renders as one collapsed native Details block with redacted 
   assert.doesNotMatch(rendered.fallbackText, /super-secret|abc\.def\.ghi/);
   assert.match(rendered.fallbackText, /REDACTED/);
 });
+
+
+test("tool activity redacts quoted JSON and environment credential assignments", () => {
+  const rendered = renderToolActivity(`curl -d '{"api_key":"SENSITIVE_JSON","nested":{"password": "PRIVATE_JSON"}}' TOKEN=ENV_SECRET`);
+  for (const output of [rendered.fallbackText, JSON.stringify(rendered.blocks)]) {
+    assert.doesNotMatch(output, /SENSITIVE_JSON|PRIVATE_JSON|ENV_SECRET/);
+    assert.match(output, /REDACTED/);
+  }
+});

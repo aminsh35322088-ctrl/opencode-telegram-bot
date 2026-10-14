@@ -12,10 +12,10 @@ export function buildRemoteCompactionPayload(runId:string, model:{providerID:str
   if(!model.providerID||!model.modelID)throw new Error("Remote compaction requires a concrete model");
   return {runId,model:{providerID:model.providerID,modelID:model.modelID},events:true};
 }
-export function classifyRemoteCompactionEvent(event:{type?:unknown;properties?:unknown}):{state:"completed"}|{state:"failed";message:string}|null {
-  if(event.type==="session.compacted")return {state:"completed"};
-  if(event.type!=="session.error")return null;
+export function classifyRemoteCompactionEvent(event:{type?:unknown;properties?:unknown}, expectedSessionId?:string):{state:"completed"}|{state:"failed";message:string}|null {
   const properties=event.properties&&typeof event.properties==="object"?event.properties as Record<string,unknown>:{};
+  if(event.type==="session.compacted")return typeof properties.sessionID==="string" && properties.sessionID.length>0 && (!expectedSessionId || properties.sessionID===expectedSessionId) ? {state:"completed"} : null;
+  if(event.type!=="session.error")return null;
   const message=typeof properties.message==="string"&&properties.message.trim()?properties.message.trim():"Remote context compaction failed";
   return {state:"failed",message};
 }
@@ -83,6 +83,7 @@ export async function invokeTopicSdk(topic: TopicRuntimeContext, operation: stri
       return request("stop",{runId});
     }
     case "session.summarize": {
+      requestOptions?.signal?.throwIfAborted();
       if(!binding.sessionId||!options.directory||!options.providerID||!options.modelID)throw new Error("Remote compaction lacks bound session/workspace/model");
       const coreRoute=resolveCoreTopicBinding(topic.chatId,topic.threadId);
       const runId=(coreRoute?getNativeCore()?.runs.current(coreRoute.bindingId)?.runId:undefined)??randomUUID();
@@ -97,7 +98,11 @@ export async function invokeTopicSdk(topic: TopicRuntimeContext, operation: stri
         if(settled)return; settled=true;
         if(outcome.state==="completed")resolveTerminal(); else rejectTerminal(new Error(outcome.message));
       };
-      let stopEvents:(()=>void)|undefined;
+      const signal=requestOptions?.signal;
+      const onAbort=()=>settle({state:"failed",message:"Remote context compaction cancelled"});
+      signal?.addEventListener("abort",onAbort,{once:true});
+      if(signal?.aborted)onAbort();
+      let stopEvents:(()=>Promise<void>)|undefined;
       try {
         stopEvents=await startRemoteTopicRunEvents(
           topic,binding.sessionId,options.directory,runId,
@@ -106,15 +111,18 @@ export async function invokeTopicSdk(topic: TopicRuntimeContext, operation: stri
             if(!settled){settled=true;rejectTerminal(new Error("Remote context compaction stream ended before completion"));}
           },
           "prepare",
-          event=>{const outcome=classifyRemoteCompactionEvent(event as {type?:unknown;properties?:unknown});if(outcome)settle(outcome);},
+          event=>{const outcome=classifyRemoteCompactionEvent(event as {type?:unknown;properties?:unknown},binding.sessionId);if(outcome)settle(outcome);},
+          signal,
         );
         await client.request("session.compact",buildRemoteCompactionPayload(runId,{providerID:options.providerID,modelID:options.modelID}),requestOptions);
         await terminal;
         return {handled:true,result:{data:undefined}};
       } catch(error) {
-        stopEvents?.();
+        await stopEvents?.();
         if(runs.get(binding.sessionId)===runId)runs.delete(binding.sessionId);
         throw error;
+      } finally {
+        signal?.removeEventListener("abort",onAbort);
       }
     }
     case "config.providers": return request("models.list");
@@ -149,7 +157,7 @@ export async function invokeTopicSdk(topic: TopicRuntimeContext, operation: stri
         const stopEvents=await startRemoteTopicRunEvents(topic,binding.sessionId,options.directory,runId,()=>runs.delete(binding.sessionId!));
         try {
           await client.request("run",{runId,parts:options.parts,...(options.model?{model:options.model}:{}),...(options.agent?{agent:options.agent}:{}),...(options.variant && options.variant!=="default"?{variant:options.variant}:{})},requestOptions);
-        } catch(error) {stopEvents();throw error;}
+        } catch(error) {await stopEvents();throw error;}
         return {handled:true,result:{data:undefined}};
       } catch(error) {runs.delete(binding.sessionId);throw error;}
     }

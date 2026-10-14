@@ -5,7 +5,7 @@ import {
 import type { TelegramRenderedPart } from "../render/types.js";
 
 const ACTIVITY_AUTHORIZATION = /(authorization\s*:\s*bearer\s+)[^\s]+/gi;
-const ACTIVITY_SECRET_ASSIGNMENT = /(\b(?:[a-z0-9_-]*?(?:api[_-]?key|token|password|secret|credential)[a-z0-9_-]*)\b\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s]+)/gi;
+const ACTIVITY_SECRET_ASSIGNMENT = /(\b(?:[a-z0-9_-]*?(?:api[_-]?key|token|password|secret|credential)[a-z0-9_-]*)\b["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s]+)/gi;
 const ACTIVITY_TELEGRAM_TOKEN = /\b\d{6,}:[A-Za-z0-9_-]{20,}\b/g;
 
 const ACTIVITY_SUMMARY = "🛠 Activity";

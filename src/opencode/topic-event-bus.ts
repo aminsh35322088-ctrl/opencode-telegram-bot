@@ -196,18 +196,23 @@ export function setTopicEventBusIdleTimeoutForTests(timeoutMs: number): void { s
 
 const remoteRunStreams = new Map<string,AbortController>();
 /** Active-run stream feeds existing subscribers under authenticated Topic context. No idle reconnect loop. */
-export async function startRemoteTopicRunEvents(topic: TopicRuntimeContext, sessionId: string, directory: string, runId: string, onEnd:()=>void, mode:"prepare"|"resume"="prepare", onEvent?:(event:Event)=>void|Promise<void>): Promise<()=>void> {
+export async function startRemoteTopicRunEvents(topic: TopicRuntimeContext, sessionId: string, directory: string, runId: string, onEnd:()=>void, mode:"prepare"|"resume"="prepare", onEvent?:(event:Event)=>void|Promise<void>, parentSignal?:AbortSignal): Promise<()=>Promise<void>> {
+  parentSignal?.throwIfAborted();
   const client = await resolveTopicNodeClient(topic.chatId,topic.threadId);
   if (!client) throw new Error("Remote Topic missing node binding");
   if(remoteRunStreams.has(sessionId)) throw new Error("Remote Topic stream already active");
   const controller = new AbortController(); remoteRunStreams.set(sessionId,controller);
+  const onParentAbort=()=>controller.abort(parentSignal?.reason);
+  parentSignal?.addEventListener("abort",onParentAbort,{once:true});
+  if(parentSignal?.aborted)onParentAbort();
   try {
-    if(mode==="prepare")await client.request("run.prepare",{runId});
+    controller.signal.throwIfAborted();
+    if(mode==="prepare")await client.request("run.prepare",{runId},{signal:controller.signal});
     else {
       const status=await client.request<{continuation?:string;externalRunId?:string}|null>("status");
       if(status?.continuation!=="live"||status.externalRunId!==runId)throw new Error("Remote run cannot be recovered from signed status");
     }
-  }catch(error){controller.abort();if(remoteRunStreams.get(sessionId)===controller)remoteRunStreams.delete(sessionId);throw error;}
+  }catch(error){controller.abort();if(remoteRunStreams.get(sessionId)===controller)remoteRunStreams.delete(sessionId);parentSignal?.removeEventListener("abort",onParentAbort);throw error;}
   const normalized = normalizeDirectory(directory);
   const legacy = directoryListeners.get(normalized);
   legacy?.controller.abort(); directoryListeners.delete(normalized);
@@ -215,9 +220,12 @@ export async function startRemoteTopicRunEvents(topic: TopicRuntimeContext, sess
   let acknowledge!:()=>void;
   let rejectReady!:(error:unknown)=>void;
   const ready = new Promise<void>((resolve,reject)=>{acknowledge=()=>{acknowledged=true;resolve();};rejectReady=reject;});
+  const onReadyAbort=()=>rejectReady(controller.signal.reason??new Error("Remote stream cancelled"));
+  controller.signal.addEventListener("abort",onReadyAbort,{once:true});
+  if(controller.signal.aborted)onReadyAbort();
   const timer = setTimeout(()=>{controller.abort();rejectReady(new Error("Remote stream readiness timed out"));},15_000);
   const generation = busGeneration;
-  void (async()=>{
+  const streamTask = (async()=>{
     try {
       for await (const raw of client.events(runId,0,{signal:controller.signal,onReady:acknowledge})) {
         if(controller.signal.aborted || generation!==busGeneration) break;
@@ -235,10 +243,11 @@ export async function startRemoteTopicRunEvents(topic: TopicRuntimeContext, sess
         }
       }
     } catch(error) {rejectReady(error); if(!controller.signal.aborted) logger.warn("[TopicEventBus] Remote active stream failed",error);}
-    finally {if(!acknowledged)rejectReady(new Error("Remote stream ended before readiness"));clearTimeout(timer);controller.abort();if(remoteRunStreams.get(sessionId)===controller)remoteRunStreams.delete(sessionId);onEnd();}
+    finally {if(!acknowledged)rejectReady(new Error("Remote stream ended before readiness"));clearTimeout(timer);controller.abort();parentSignal?.removeEventListener("abort",onParentAbort);if(remoteRunStreams.get(sessionId)===controller)remoteRunStreams.delete(sessionId);onEnd();}
   })();
-  await ready; clearTimeout(timer);
-  return ()=>controller.abort();
+  void streamTask.catch(()=>undefined);
+  try { await ready; } catch(error) { controller.abort();await streamTask;throw error; } finally { clearTimeout(timer);controller.signal.removeEventListener("abort",onReadyAbort); }
+  return async ()=>{controller.abort();await streamTask;};
 }
 
 export function hasRemoteTopicRunEvents(sessionId:string):boolean{return remoteRunStreams.has(sessionId);}

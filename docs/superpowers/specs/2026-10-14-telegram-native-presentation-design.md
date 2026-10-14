@@ -274,3 +274,28 @@ Telegram behaves as a native OpenCode client while ownership remains clean:
 - Core owns Telegram grammar; Bot owns lifecycle/UI integration;
 - unsupported rich features never cause content loss;
 - documentation and CI evidence are sufficient for Codex/another reviewer to audit both PR #191 and Core PR #31 without this chat history.
+
+## Independent recovery review (2026-10-14)
+
+Before the authorized production merge, independent review found and corrected:
+
+- Redact Activity entries before Telegram chunking, so credentials spanning a chunk
+  boundary cannot leak a suffix and redaction expansion is included in message bounds.
+  Quoted JSON keys/escaped quoted values now participate in assignment redaction.
+- Flush run-owned Activity at intermediate assistant message completion, retaining the
+  same Telegram message across subsequent tool steps until actual run retirement.
+- Carry compaction cancellation into prepare/readiness and the active event stream;
+  reject the terminal wait on cancellation and join stream teardown before releasing
+  the run. Cleanup uncertainty retains ownership under the existing Core task fence.
+- Require the exact session identity in a compaction-success event.
+
+Tests first reproduced each failure: leaked `E_TAIL`, unredacted quoted JSON secret,
+8,342-character fallback, indefinitely pending cancelled compaction, early release
+before delayed stream teardown, and two Activity sends during one tool loop.
+The corrected pre-pin revision passed 297/297 top-level Node tests, 2268/2268 CI-only
+Vitest tests, the 22-test event-subscription suite, lint, typecheck, and build.
+
+Core #31 was reviewed and merged as `6e19b05849ace61271d8fbc1adc14e7e8f85c297`.
+Its pre.36 release includes a complete changelog; Bot artifact adoption and combined
+verification remain prerequisites before this Bot PR is merged. No Stable Bot release
+is part of this recovery.

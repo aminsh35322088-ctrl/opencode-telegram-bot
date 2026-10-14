@@ -874,7 +874,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
               return Promise.all([
                 this.toolMessageBatcher.flushSession(sessionId, "assistant_message_completed"),
-                this.toolCallStreamer.breakSession(sessionId, "assistant_message_completed"),
+                this.toolCallStreamer.flushSession(sessionId, "assistant_message_completed"),
               ]).then(() => undefined);
             },
             prepareStreamingPayload: this.prepareFinalStreamingPayload,
