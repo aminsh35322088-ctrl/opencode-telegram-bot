@@ -267,3 +267,4 @@
 {"ts":"2026-10-14T16:25:41.527Z","flow":"W1","step":"new-chat","status":"pass","threadId":10104,"restWaitMs":23746,"topicLatencyMs":2432}
 {"ts":"2026-10-14T16:25:43.659Z","flow":"W2","step":"prompt-stream-tool","status":"pass","drafts":1263,"messages":1881,"modelRequests":312,"modelStreams":312,"modelToolCalls":57}
 {"ts":"2026-10-14T16:25:49.193Z","flow":"W5","step":"stop","status":"pass","draftId":11,"source":"stub-draft","confirmMs":308,"confirmedBy":"bot-log","outputsBefore":2370,"outputsAtConfirm":2372,"lateDelta":0,"streamCalls":1370,"withinD1":true,"withinD2":true}
+{"ts":"2026-10-14T16:26:05.265Z","flow":"W6","step":"delete-chat","status":"pass","elapsed":308,"withinD4":true,"confirmationId":1887,"liveDraft":12,"deletedTopic":10104,"topicGone":true,"reuseThreadId":10105,"topicLatencyMs":2448,"reuseMs":2431,"restWaitMs":5042,"lateStreams":0,"requested":true,"completed":true}
