@@ -26511,3 +26511,5 @@ bot-restart: started new pid=8532
 [2026-10-14T18:39:32.537Z] [INFO] [Aggregator] Session became idle: ses_ec449cb68ffeZqeqFFkYEtMcqL
 [2026-10-14T18:39:32.538Z] [INFO] [Attach] Marked attached session idle: key=987654321:10199, session=ses_ec449cb68ffeZqeqFFkYEtMcqL
 [2026-10-14T18:39:34.546Z] [INFO] [LLM Usage] session=ses_ec449cb68ffeZqeqFFkYEtMcqL model=soak/soak-model promptChars=55 elapsedMs=15042 input=0 output=0 reasoning=0 cost=0
+[2026-10-14T18:39:42.355Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked directory=/home/runner/work/opencode-telegram-bot/opencode-telegram-bot type=server.heartbeat
+[2026-10-14T18:39:52.355Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked directory=/home/runner/work/opencode-telegram-bot/opencode-telegram-bot type=server.heartbeat
