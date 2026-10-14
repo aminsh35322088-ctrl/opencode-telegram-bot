@@ -825,6 +825,8 @@ test("G8 source and workflow plumbing pin rollback SHA and call the rollback flo
   const driver = readFileSync(new URL("../scripts/soak/driver.mjs", import.meta.url), "utf8");
   assert.match(rollbackScript, /\$\{4:\?[^}]*sha required/);
   assert.doesNotMatch(rollbackScript, /HEAD(?:\^|~)/);
+  assert.match(workflow, /bash scripts\/soak\/run\.sh/);
+  assert.doesNotMatch(workflow, /chmod \+x[^\n]*scripts\/soak\/run\.sh/);
   assert.match(workflow, /rollback_sha:/);
   assert.match(workflow, /ROLLBACK_SHA:/);
   assert.match(workflow, /GITHUB_TOKEN: \$\{\{ secrets\.GITHUB_TOKEN \}\}/);

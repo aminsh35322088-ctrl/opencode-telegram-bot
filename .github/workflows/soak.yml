@@ -105,8 +105,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OC_REPO: ${{ github.repository }}
         run: |
-          chmod +x scripts/soak/run.sh scripts/soak/persist-evidence.sh scripts/soak/bot-rollback.sh
-          scripts/soak/run.sh "${{ inputs.stage }}" "${{ inputs.duration }}"
+          chmod +x scripts/soak/bot-rollback.sh
+          bash scripts/soak/run.sh "${{ inputs.stage }}" "${{ inputs.duration }}"
 
       - name: Record runner identity
         if: always()
