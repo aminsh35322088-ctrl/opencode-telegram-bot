@@ -394,3 +394,16 @@
 {"ts":"2026-10-14T17:39:24.344Z","kind":"chat","stream":true,"toolProbe":false,"tokens":600,"tool":false,"long":false}
 {"ts":"2026-10-14T17:39:25.210Z","kind":"chat","stream":true,"toolProbe":false,"tokens":600,"tool":true,"long":false}
 {"ts":"2026-10-14T17:39:36.541Z","kind":"chat","stream":true,"toolProbe":false,"tokens":600,"tool":false,"long":false}
+{"ts":"2026-10-14T17:39:49.661Z","kind":"models","stream":false,"toolProbe":false,"tokens":0}
+{"ts":"2026-10-14T17:39:50.299Z","kind":"chat","stream":true,"toolProbe":false,"tokens":600,"tool":false,"long":false}
+{"ts":"2026-10-14T17:39:56.496Z","kind":"chat","stream":true,"toolProbe":false,"tokens":600,"tool":false,"long":true}
+{"ts":"2026-10-14T17:39:58.159Z","kind":"chat","stream":true,"toolProbe":false,"tokens":600,"tool":false,"long":false}
+{"ts":"2026-10-14T17:40:26.582Z","kind":"chat","stream":true,"toolProbe":false,"tokens":600,"tool":false,"long":false}
+{"ts":"2026-10-14T17:40:27.363Z","kind":"chat","stream":true,"toolProbe":false,"tokens":600,"tool":true,"long":false}
+{"ts":"2026-10-14T17:40:38.762Z","kind":"chat","stream":true,"toolProbe":false,"tokens":600,"tool":false,"long":false}
+{"ts":"2026-10-14T17:43:15.360Z","kind":"chat","stream":true,"toolProbe":false,"tokens":600,"tool":false,"long":false}
+{"ts":"2026-10-14T17:43:21.922Z","kind":"chat","stream":true,"toolProbe":false,"tokens":600,"tool":false,"long":true}
+{"ts":"2026-10-14T17:43:23.293Z","kind":"chat","stream":true,"toolProbe":false,"tokens":600,"tool":false,"long":false}
+{"ts":"2026-10-14T17:43:52.849Z","kind":"chat","stream":true,"toolProbe":false,"tokens":600,"tool":false,"long":false}
+{"ts":"2026-10-14T17:43:53.768Z","kind":"chat","stream":true,"toolProbe":false,"tokens":600,"tool":true,"long":false}
+{"ts":"2026-10-14T17:44:05.096Z","kind":"chat","stream":true,"toolProbe":false,"tokens":600,"tool":false,"long":false}
