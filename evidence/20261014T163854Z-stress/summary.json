@@ -1,0 +1,33 @@
+{
+  "stage": "stress",
+  "startedAt": "2026-10-14T16:39:04.750Z",
+  "finishedAt": "2026-10-14T18:39:39.021Z",
+  "elapsedS": 7234,
+  "counts": {
+    "pass": 532,
+    "fail": 16,
+    "not-executed": 12
+  },
+  "unrecognized": 0,
+  "cycles": 111,
+  "resources": {
+    "pid": 8532,
+    "selfRssKb": 173012,
+    "childRssKb": 0,
+    "totalRssKb": 173012,
+    "childCount": 0,
+    "children": [],
+    "cpuTimeS": 8,
+    "memTotalKb": 16373444,
+    "memAvailableKb": 9901560,
+    "diskBytes": 154894188544,
+    "usedB": 83418611712,
+    "availB": 71458799616,
+    "pcent": 54,
+    "inodesFree": 17893974,
+    "workspaceCount": null,
+    "workspaceBytes": null,
+    "loadavg": "0.74 0.95 0.85",
+    "cpus": 4
+  }
+}
