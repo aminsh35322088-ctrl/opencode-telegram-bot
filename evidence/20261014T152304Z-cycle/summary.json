@@ -1,0 +1,33 @@
+{
+  "stage": "cycle",
+  "startedAt": "2026-10-14T15:23:14.224Z",
+  "finishedAt": "2026-10-14T15:29:12.565Z",
+  "elapsedS": 358,
+  "counts": {
+    "pass": 6,
+    "fail": 1,
+    "not-executed": 0
+  },
+  "unrecognized": 0,
+  "cycles": 1,
+  "resources": {
+    "pid": 2700,
+    "selfRssKb": 156376,
+    "childRssKb": 0,
+    "totalRssKb": 156376,
+    "childCount": 0,
+    "children": [],
+    "cpuTimeS": 2,
+    "memTotalKb": 16373452,
+    "memAvailableKb": 14546356,
+    "diskBytes": 154894188544,
+    "usedB": 64341622784,
+    "availB": 90535788544,
+    "pcent": 42,
+    "inodesFree": 18389960,
+    "workspaceCount": null,
+    "workspaceBytes": null,
+    "loadavg": "0.15 0.19 0.12",
+    "cpus": 4
+  }
+}
