@@ -521,8 +521,14 @@ test("D2 counts streaming output only, because finalising the stopped draft is l
 });
 
 test("the RC soak alternates long active and idle phases, and continuous stages stay continuous", async () => {
-  const { phaseFor } = await loadScript<{
+  const { phaseFor, phaseForStage } = await loadScript<{
     phaseFor: (elapsedS: number, activeS: number, idleS: number) => "active" | "idle";
+    phaseForStage: (
+      stage: string,
+      elapsedS: number,
+      activeS: number,
+      idleS: number,
+    ) => "active" | "idle";
   }>("scripts/soak/signals.mjs");
 
   // Registered as "cycles spread over 24 h with active and idle phases"
@@ -535,6 +541,13 @@ test("the RC soak alternates long active and idle phases, and continuous stages 
   assert.equal(phaseFor(3600, 2700, 900), "active", "the next window restarts the cycle");
   assert.equal(phaseFor(6300, 2700, 900), "idle", "phase windows repeat");
   assert.equal(phaseFor(4500, 2700, 900), "active", "window arithmetic is modulo, not cumulative");
+
+  assert.equal(phaseForStage("soak", 2700, 2700, 900), "idle");
+  assert.equal(phaseForStage("stress", 2700, 2700, 900), "active");
+  assert.equal(phaseForStage("stress", 7200, 2700, 900), "active");
+  assert.equal(phaseForStage("cycle", 2700, 2700, 900), "active");
+  const driver = readFileSync(new URL("../scripts/soak/driver.mjs", import.meta.url), "utf8");
+  assert.match(driver, /phaseForStage\(STAGE, \(Date\.now\(\) - startedAt\) \/ 1000, ACTIVE_S, IDLE_S\)/);
 
   // A stress stage registers no phase plan and must keep running back-to-back
   // cycles: no idle window may ever appear from an absent or incomplete plan.

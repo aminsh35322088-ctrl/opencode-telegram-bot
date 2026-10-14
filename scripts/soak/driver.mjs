@@ -19,7 +19,7 @@ import {
   parseDuTotal,
   parseMeminfo,
   parseRollbackScript,
-  phaseFor,
+  phaseForStage,
   restState,
   rollbackPreflight,
   rollbackTimeline,
@@ -1075,7 +1075,7 @@ async function main() {
     const deadline = startedAt + DURATION_S * 1000;
     let i = 0;
     while (Date.now() < deadline) {
-      if (phaseFor((Date.now() - startedAt) / 1000, ACTIVE_S, IDLE_S) === "idle") {
+      if (phaseForStage(STAGE, (Date.now() - startedAt) / 1000, ACTIVE_S, IDLE_S) === "idle") {
         // Idle phase: no cycle may start, but the rest state must still be
         // measured — that is the entire point of the phase for §8 (RSS,
         // cumulative CPU and headroom while nothing is running). No record
