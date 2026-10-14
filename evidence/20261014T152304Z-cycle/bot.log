@@ -390,3 +390,64 @@ bot-rollback: exit=0
 [2026-10-14T15:29:11.133Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=config-plugin directory=/home/runner/.local/state/opencode-telegram-soak/20261014T152304Z-cycle/opencode/topic-workspaces/987654321/cba9dec9-6530-49f4-8f73-daaff706d0e3 type=plugin.added
 [2026-10-14T15:29:11.133Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=config-provider directory=/home/runner/.local/state/opencode-telegram-soak/20261014T152304Z-cycle/opencode/topic-workspaces/987654321/cba9dec9-6530-49f4-8f73-daaff706d0e3 type=plugin.added
 [2026-10-14T15:29:11.134Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked session=variant directory=/home/runner/.local/state/opencode-telegram-soak/20261014T152304Z-cycle/opencode/topic-workspaces/987654321/cba9dec9-6530-49f4-8f73-daaff706d0e3 type=plugin.added
+[2026-10-14T15:29:14.695Z] [ERROR] Failed to send typing action: GrammyError: Call to 'sendChatAction' failed! (400: Unsupported method)
+    at toGrammyError (/home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/core/error.js:47:12)
+    at ApiClient.callApi (/home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/core/client.js:101:48)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+[2026-10-14T15:29:16.364Z] [WARN] [Aggregator] Session retry: session=ses_ec4f7e354ffeuDtPnJUk1oSq5S, attempt=1, message=Connection reset by server
+[2026-10-14T15:29:16.522Z] [WARN] [ResponseStreamer] Native rendering failed, continuing this message as plain text: session=ses_ec4f7e354ffeuDtPnJUk1oSq5S, message=msg_13b081fe9001c8gKcCGEHEvKAu, reason=throttle_elapsed HttpError: Network request for 'sendRichMessageDraft' failed!
+    at toHttpError (/home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/core/error.js:82:12)
+    at ApiClient.call (/home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/core/client.js:58:50)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async withTelegramRateLimitRetry.maxRetries (file:///home/runner/work/opencode-telegram-bot/opencode-telegram-bot/dist/bot/index.js:136:80)
+    at async withTelegramRateLimitRetry (file:///home/runner/work/opencode-telegram-bot/opencode-telegram-bot/dist/utils/telegram-rate-limit-retry.js:118:20)
+    at async file:///home/runner/work/opencode-telegram-bot/opencode-telegram-bot/dist/bot/index.js:136:16
+    at async ApiClient.callApi (/home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/core/client.js:97:22)
+    at async sendDraftBotPart (file:///home/runner/work/opencode-telegram-bot/opencode-telegram-bot/dist/bot/messages/telegram-text.js:362:5)
+    at async ResponseStreamer.syncMessages (file:///home/runner/work/opencode-telegram-bot/opencode-telegram-bot/dist/bot/streaming/response-streamer.js:410:32)
+    at async ResponseStreamer.flushState (file:///home/runner/work/opencode-telegram-bot/opencode-telegram-bot/dist/bot/streaming/response-streamer.js:331:17)
+[2026-10-14T15:29:16.524Z] [ERROR] [ResponseStreamer] Stream marked as broken: session=ses_ec4f7e354ffeuDtPnJUk1oSq5S, message=msg_13b081fe9001c8gKcCGEHEvKAu, reason=throttle_elapsed, error=Network request for 'sendMessageDraft' failed! HttpError: Network request for 'sendMessageDraft' failed!
+    at toHttpError (/home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/core/error.js:82:12)
+    at ApiClient.call (/home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/core/client.js:58:50)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async withTelegramRateLimitRetry.maxRetries (file:///home/runner/work/opencode-telegram-bot/opencode-telegram-bot/dist/bot/index.js:136:80)
+    at async withTelegramRateLimitRetry (file:///home/runner/work/opencode-telegram-bot/opencode-telegram-bot/dist/utils/telegram-rate-limit-retry.js:118:20)
+    at async file:///home/runner/work/opencode-telegram-bot/opencode-telegram-bot/dist/bot/index.js:136:16
+    at async ApiClient.callApi (/home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/core/client.js:97:22)
+    at async sendDraftBotPart (file:///home/runner/work/opencode-telegram-bot/opencode-telegram-bot/dist/bot/messages/telegram-text.js:357:9)
+    at async ResponseStreamer.syncMessages (file:///home/runner/work/opencode-telegram-bot/opencode-telegram-bot/dist/bot/streaming/response-streamer.js:410:32)
+    at async ResponseStreamer.flushState (file:///home/runner/work/opencode-telegram-bot/opencode-telegram-bot/dist/bot/streaming/response-streamer.js:331:17)
+[2026-10-14T15:29:17.366Z] [ERROR] [ToolCallStreamer] Stream marked as broken: session=ses_ec4f7e354ffeuDtPnJUk1oSq5S, reason=throttle_elapsed, error=Network request for 'sendMessage' failed! HttpError: Network request for 'sendMessage' failed!
+    at toHttpError (/home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/core/error.js:82:12)
+    at ApiClient.call (/home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/core/client.js:58:50)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async withTelegramRateLimitRetry.maxRetries (file:///home/runner/work/opencode-telegram-bot/opencode-telegram-bot/dist/bot/index.js:136:80)
+    at async withTelegramRateLimitRetry (file:///home/runner/work/opencode-telegram-bot/opencode-telegram-bot/dist/utils/telegram-rate-limit-retry.js:118:20)
+    at async file:///home/runner/work/opencode-telegram-bot/opencode-telegram-bot/dist/bot/index.js:136:16
+    at async ApiClient.callApi (/home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/core/client.js:97:22)
+    at async ToolCallStreamer.sendText (file:///home/runner/work/opencode-telegram-bot/opencode-telegram-bot/dist/bot/services/event-subscription-service.js:213:37)
+    at async ToolCallStreamer.syncMessages (file:///home/runner/work/opencode-telegram-bot/opencode-telegram-bot/dist/bot/streaming/tool-call-streamer.js:332:31)
+    at async ToolCallStreamer.syncState (file:///home/runner/work/opencode-telegram-bot/opencode-telegram-bot/dist/bot/streaming/tool-call-streamer.js:282:17)
+[2026-10-14T15:29:18.568Z] [WARN] [Aggregator] Session retry: session=ses_ec4f7e354ffeuDtPnJUk1oSq5S, attempt=2, message=Cannot connect to API: Unable to connect. Is the computer able to access the url?
+[2026-10-14T15:29:18.695Z] [ERROR] Failed to send typing action: HttpError: Network request for 'sendChatAction' failed!
+    at toHttpError (/home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/core/error.js:82:12)
+    at ApiClient.call (/home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/core/client.js:58:50)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async withTelegramRateLimitRetry.maxRetries (file:///home/runner/work/opencode-telegram-bot/opencode-telegram-bot/dist/bot/index.js:136:80)
+    at async withTelegramRateLimitRetry (file:///home/runner/work/opencode-telegram-bot/opencode-telegram-bot/dist/utils/telegram-rate-limit-retry.js:118:20)
+    at async file:///home/runner/work/opencode-telegram-bot/opencode-telegram-bot/dist/bot/index.js:136:16
+    at async ApiClient.callApi (/home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/core/client.js:97:22)
+[2026-10-14T15:29:19.213Z] [INFO] [RuntimeWatchdog] phase=heartbeat reason=interval pid=2700 uptimeSec=31 rssMb=154 heapUsedMb=44 serviceWorkingSetMb=154 serviceMemoryTotalMb=154 serviceMemoryLimitMb=unknown serviceMemoryPressure=unknown activeChildProcesses=0 serviceProcessCount=115 childKinds={} cpuLimit=unknown cpuLoad1=0.13 session=none sessionState=not-found busyForMs=0 sessionCheckMs=0 health=healthy healthLatencyMs=2 eventLoopLagMs=1
+[2026-10-14T15:29:19.245Z] [INFO] [TopicTelemetry] event=unresolved_core_route_blocked directory=/home/runner/work/opencode-telegram-bot/opencode-telegram-bot type=server.heartbeat
+[2026-10-14T15:29:19.569Z] [ERROR] [ToolCallStreamer] Stream marked as broken: session=ses_ec4f7e354ffeuDtPnJUk1oSq5S, reason=throttle_elapsed, error=Network request for 'sendMessage' failed! HttpError: Network request for 'sendMessage' failed!
+    at toHttpError (/home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/core/error.js:82:12)
+    at ApiClient.call (/home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/core/client.js:58:50)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async withTelegramRateLimitRetry.maxRetries (file:///home/runner/work/opencode-telegram-bot/opencode-telegram-bot/dist/bot/index.js:136:80)
+    at async withTelegramRateLimitRetry (file:///home/runner/work/opencode-telegram-bot/opencode-telegram-bot/dist/utils/telegram-rate-limit-retry.js:118:20)
+    at async file:///home/runner/work/opencode-telegram-bot/opencode-telegram-bot/dist/bot/index.js:136:16
+    at async ApiClient.callApi (/home/runner/work/opencode-telegram-bot/opencode-telegram-bot/node_modules/grammy/out/core/client.js:97:22)
+    at async ToolCallStreamer.sendText (file:///home/runner/work/opencode-telegram-bot/opencode-telegram-bot/dist/bot/services/event-subscription-service.js:213:37)
+    at async ToolCallStreamer.syncMessages (file:///home/runner/work/opencode-telegram-bot/opencode-telegram-bot/dist/bot/streaming/tool-call-streamer.js:332:31)
+    at async ToolCallStreamer.syncState (file:///home/runner/work/opencode-telegram-bot/opencode-telegram-bot/dist/bot/streaming/tool-call-streamer.js:282:17)
+[2026-10-14T15:29:20.261Z] [INFO] [LLM Usage] session=ses_ec4f7e354ffeuDtPnJUk1oSq5S model=soak/soak-model promptChars=55 elapsedMs=10014 input=0 output=0 reasoning=0 cost=0

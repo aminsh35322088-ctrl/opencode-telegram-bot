@@ -99,3 +99,5 @@
 {"ts":"2026-10-14T15:29:13.361Z","method":"sendRichMessageDraft","ok":true,"note":"draft:3"}
 {"ts":"2026-10-14T15:29:14.224Z","method":"sendChatAction","ok":false,"note":"unsupported"}
 {"ts":"2026-10-14T15:29:14.416Z","method":"sendRichMessageDraft","ok":true,"note":"draft:3"}
+{"ts":"2026-10-14T15:29:14.695Z","method":"sendChatAction","ok":false,"note":"unsupported"}
+{"ts":"2026-10-14T15:29:15.470Z","method":"sendRichMessageDraft","ok":true,"note":"draft:3"}
