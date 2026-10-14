@@ -185,7 +185,7 @@ echo "$BOT_PID" > "$RUN_DIR/bot.pid"
 # handoff keeps whatever was actually observed instead of losing it all.
 if [ "${SOAK_PERSIST:-1}" = "1" ]; then
   (
-    while kill -0 "$BOT_PID" 2>/dev/null && [ -d "$RUN_DIR" ]; do
+    while [ -d "$RUN_DIR" ]; do
       sleep "${SOAK_PERSIST_INTERVAL:-300}"
       bash "$SOAK/persist-evidence.sh" "$RUN_DIR" "$ROOT" >>"$RUN_DIR/persist.log" 2>&1 || true
     done

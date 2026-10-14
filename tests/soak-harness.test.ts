@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 // The soak harness drives the real Bot through raw Telegram updates. Two of its
@@ -10,6 +11,21 @@ import { test } from "node:test";
 async function loadScript<T = Record<string, unknown>>(relative: string): Promise<T> {
   return (await import(new URL(`../${relative}`, import.meta.url).href)) as T;
 }
+
+test("durable soak evidence checkpoints continue after the first Bot restart", () => {
+  const runScript = readFileSync(new URL("../scripts/soak/run.sh", import.meta.url), "utf8");
+  const checkpointLoop = runScript.match(
+    /# Durable checkpoints:[\s\S]*?PERSIST_PID=\$!\n/,
+  )?.[0];
+
+  assert.ok(checkpointLoop, "the persistent evidence loop is present");
+  assert.match(checkpointLoop, /while \[ -d "\$RUN_DIR" \]; do/);
+  assert.doesNotMatch(
+    checkpointLoop,
+    /kill -0 "\$BOT_PID"/,
+    "W7 replaces the original Bot PID while the soak run and its evidence continue",
+  );
+});
 
 test("a thread-bound message update marks is_topic_message so the Bot resolves Topic scope", async () => {
   const { createUpdateBuilders } = await loadScript<{
