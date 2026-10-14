@@ -3,10 +3,11 @@
 // for observable outcomes, enforces the registered deadlines and records
 // evidence. A flow that cannot be observed is reported "not-executed", never
 // as a pass.
-import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { createUpdateBuilders } from "./updates.mjs";
+import { countTopicWorkspaces } from "./workspace-count.mjs";
 import {
   cputimeSeconds,
   deleteOutcome,
@@ -18,7 +19,7 @@ import {
   parseDuTotal,
   parseMeminfo,
   parseRollbackScript,
-  phaseFor,
+  phaseForStage,
   restState,
   rollbackPreflight,
   rollbackTimeline,
@@ -168,7 +169,7 @@ function sampleResources({ perCycle = false } = {}) {
   let workspaceBytes = null;
   if (perCycle && stateDir) {
     try {
-      workspaceCount = readdirSync(workspaceDir).length;
+      workspaceCount = countTopicWorkspaces(workspaceDir);
     } catch {
       workspaceCount = null;
     }
@@ -1074,7 +1075,7 @@ async function main() {
     const deadline = startedAt + DURATION_S * 1000;
     let i = 0;
     while (Date.now() < deadline) {
-      if (phaseFor((Date.now() - startedAt) / 1000, ACTIVE_S, IDLE_S) === "idle") {
+      if (phaseForStage(STAGE, (Date.now() - startedAt) / 1000, ACTIVE_S, IDLE_S) === "idle") {
         // Idle phase: no cycle may start, but the rest state must still be
         // measured — that is the entire point of the phase for §8 (RSS,
         // cumulative CPU and headroom while nothing is running). No record

@@ -229,6 +229,10 @@ export function phaseFor(elapsedS, activeS, idleS) {
   return elapsedS % windowS < activeS ? "active" : "idle";
 }
 
+export function phaseForStage(stage, elapsedS, activeS, idleS) {
+  return stage === "soak" ? phaseFor(elapsedS, activeS, idleS) : "active";
+}
+
 // §8's Headroom column must be a measurement. /proc/meminfo gives both facts
 // directly: MemTotal is the ceiling and MemAvailable the headroom now. Missing
 // keys, unreadable files and garbage stay null so the table reports "not

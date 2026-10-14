@@ -247,4 +247,4 @@ This section describes the expected user-visible result, not just the current im
 
 ## Project state
 
-The Bot and Core are actively developed together but released separately. The exact Core runtime, SDK, and native-runtime versions consumed by this Bot are recorded in core-release.lock.json. That lock currently pins v1.18.33-bot.13-pre.34; prerelease status and remaining Core release gates are documented in the Core repository. README feature descriptions are a map of intended/current product behavior; deployment health and the running release remain the operational source of truth.
+The Bot and Core are actively developed together but released separately. The exact Core runtime, SDK, and native-runtime versions consumed by this Bot are recorded in core-release.lock.json. That lock currently pins v1.18.33-bot.13-pre.35; prerelease status and remaining Core release gates are documented in the Core repository. README feature descriptions are a map of intended/current product behavior; deployment health and the running release remain the operational source of truth.

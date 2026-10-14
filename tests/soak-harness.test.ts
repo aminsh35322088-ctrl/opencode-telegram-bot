@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 // The soak harness drives the real Bot through raw Telegram updates. Two of its
@@ -10,6 +11,26 @@ import { test } from "node:test";
 async function loadScript<T = Record<string, unknown>>(relative: string): Promise<T> {
   return (await import(new URL(`../${relative}`, import.meta.url).href)) as T;
 }
+
+test("durable soak evidence checkpoints continue after the first Bot restart", () => {
+  const runScript = readFileSync(new URL("../scripts/soak/run.sh", import.meta.url), "utf8");
+  const checkpointLoop = runScript.match(
+    /# Durable checkpoints:[\s\S]*?PERSIST_PID=\$!\n/,
+  )?.[0];
+
+  assert.ok(checkpointLoop, "the persistent evidence loop is present");
+  assert.match(checkpointLoop, /while \[ -d "\$RUN_DIR" \]; do/);
+  assert.doesNotMatch(
+    checkpointLoop,
+    /kill -0 "\$BOT_PID"/,
+    "W7 replaces the original Bot PID while the soak run and its evidence continue",
+  );
+
+  const cleanup = runScript.match(/cleanup\(\) \{[\s\S]*?\n\}\ntrap cleanup/);
+  assert.ok(cleanup, "the run cleanup trap is present");
+  assert.match(cleanup[0], /kill "\$PERSIST_PID"/);
+  assert.match(cleanup[0], /wait "\$PERSIST_PID"/);
+});
 
 test("a thread-bound message update marks is_topic_message so the Bot resolves Topic scope", async () => {
   const { createUpdateBuilders } = await loadScript<{
@@ -500,8 +521,14 @@ test("D2 counts streaming output only, because finalising the stopped draft is l
 });
 
 test("the RC soak alternates long active and idle phases, and continuous stages stay continuous", async () => {
-  const { phaseFor } = await loadScript<{
+  const { phaseFor, phaseForStage } = await loadScript<{
     phaseFor: (elapsedS: number, activeS: number, idleS: number) => "active" | "idle";
+    phaseForStage: (
+      stage: string,
+      elapsedS: number,
+      activeS: number,
+      idleS: number,
+    ) => "active" | "idle";
   }>("scripts/soak/signals.mjs");
 
   // Registered as "cycles spread over 24 h with active and idle phases"
@@ -514,6 +541,13 @@ test("the RC soak alternates long active and idle phases, and continuous stages 
   assert.equal(phaseFor(3600, 2700, 900), "active", "the next window restarts the cycle");
   assert.equal(phaseFor(6300, 2700, 900), "idle", "phase windows repeat");
   assert.equal(phaseFor(4500, 2700, 900), "active", "window arithmetic is modulo, not cumulative");
+
+  assert.equal(phaseForStage("soak", 2700, 2700, 900), "idle");
+  assert.equal(phaseForStage("stress", 2700, 2700, 900), "active");
+  assert.equal(phaseForStage("stress", 7200, 2700, 900), "active");
+  assert.equal(phaseForStage("cycle", 2700, 2700, 900), "active");
+  const driver = readFileSync(new URL("../scripts/soak/driver.mjs", import.meta.url), "utf8");
+  assert.match(driver, /phaseForStage\(STAGE, \(Date\.now\(\) - startedAt\) \/ 1000, ACTIVE_S, IDLE_S\)/);
 
   // A stress stage registers no phase plan and must keep running back-to-back
   // cycles: no idle window may ever appear from an absent or incomplete plan.
@@ -714,6 +748,28 @@ test("df and du output parsers fail closed and preserve byte and inode measureme
   assert.equal(parseDuTotal("not bytes\t/workspaces\n"), null);
 });
 
+test("workspace count measures session directories nested under chat directories", async () => {
+  const { countTopicWorkspaces } = await loadScript<{
+    countTopicWorkspaces: (workspaceDir: string) => number | null;
+  }>("scripts/soak/workspace-count.mjs");
+  const { mkdtempSync, mkdirSync, rmSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const root = mkdtempSync(join(tmpdir(), "soak-workspaces-"));
+
+  try {
+    mkdirSync(join(root, "987654321", "session-a"), { recursive: true });
+    mkdirSync(join(root, "987654321", "session-b"), { recursive: true });
+    mkdirSync(join(root, "not-a-chat", "session-c"), { recursive: true });
+    writeFileSync(join(root, "987654321", "metadata.json"), "{}");
+
+    assert.equal(countTopicWorkspaces(root), 2);
+    assert.equal(countTopicWorkspaces(join(root, "missing")), null);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("resource samples measure disk every tick and workspace size only on cycle samples", async () => {
   const { readFileSync } = await import("node:fs");
   const driver = readFileSync(new URL("../scripts/soak/driver.mjs", import.meta.url), "utf8");
@@ -721,10 +777,10 @@ test("resource samples measure disk every tick and workspace size only on cycle 
   assert.match(driver, /out\("df", \["-i", stateDir\]\)/);
   assert.match(driver, /du[^\n]*-sb/);
   assert.match(driver, /const workspaceDir = join\(stateDir, "opencode", "topic-workspaces"\)/);
-  assert.match(driver, /readdirSync\(workspaceDir\)/);
+  assert.match(driver, /countTopicWorkspaces\(workspaceDir\)/);
   assert.match(driver, /diskBytes:[^\n]*sizeB/);
   assert.match(driver, /inodesFree: inodeRow \? Number\(inodeRow\[1\]\)/);
-  assert.match(driver, /workspaceCount = readdirSync\(workspaceDir\)\.length/);
+  assert.match(driver, /workspaceCount = countTopicWorkspaces\(workspaceDir\)/);
   assert.match(driver, /workspaceBytes = parseDuTotal/);
   assert.match(driver, /topicLatencyMs/);
 });
@@ -804,6 +860,8 @@ test("G8 source and workflow plumbing pin rollback SHA and call the rollback flo
   const driver = readFileSync(new URL("../scripts/soak/driver.mjs", import.meta.url), "utf8");
   assert.match(rollbackScript, /\$\{4:\?[^}]*sha required/);
   assert.doesNotMatch(rollbackScript, /HEAD(?:\^|~)/);
+  assert.match(workflow, /bash scripts\/soak\/run\.sh/);
+  assert.doesNotMatch(workflow, /chmod \+x[^\n]*scripts\/soak\/run\.sh/);
   assert.match(workflow, /rollback_sha:/);
   assert.match(workflow, /ROLLBACK_SHA:/);
   assert.match(workflow, /GITHUB_TOKEN: \$\{\{ secrets\.GITHUB_TOKEN \}\}/);
