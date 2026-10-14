@@ -688,3 +688,43 @@ test("cycle() collects every flow's record, W1's included", async () => {
     "the W1 pass path must return its record: a bare { threadId } carries no status",
   );
 });
+
+test("df and du output parsers fail closed and preserve byte and inode measurements", async () => {
+  const { parseDfOutput, parseDuTotal } = await loadScript<{
+    parseDfOutput: (text: string) => {
+      sizeB: number | null;
+      usedB: number | null;
+      availB: number | null;
+      pcent: number | null;
+      target: string | null;
+    };
+    parseDuTotal: (text: string) => number | null;
+  }>("scripts/soak/signals.mjs");
+
+  assert.deepEqual(
+    parseDfOutput("  1B-blocks      Used       Avail Use% Mounted on\n1000000 250000 750000 25% /state\n"),
+    { sizeB: 1_000_000, usedB: 250_000, availB: 750_000, pcent: 25, target: "/state" },
+  );
+  assert.deepEqual(parseDfOutput("Filesystem Inodes IUsed IFree IUse% Mounted on\n/dev/root 1000 250 750 25% /state\n"), {
+    sizeB: null, usedB: null, availB: null, pcent: null, target: null,
+  });
+  assert.deepEqual(parseDfOutput(""), { sizeB: null, usedB: null, availB: null, pcent: null, target: null });
+  assert.equal(parseDuTotal("123456\t/workspaces\n"), 123456);
+  assert.equal(parseDuTotal("du: cannot access '/missing': No such file or directory\n"), null);
+  assert.equal(parseDuTotal("not bytes\t/workspaces\n"), null);
+});
+
+test("resource samples measure disk every tick and workspace size only on cycle samples", async () => {
+  const { readFileSync } = await import("node:fs");
+  const driver = readFileSync(new URL("../scripts/soak/driver.mjs", import.meta.url), "utf8");
+  assert.match(driver, /df[^\n]*-B1[^\n]*--output=size,used,avail,pcent,target/);
+  assert.match(driver, /out\("df", \["-i", stateDir\]\)/);
+  assert.match(driver, /du[^\n]*-sb/);
+  assert.match(driver, /const workspaceDir = join\(stateDir, "opencode", "topic-workspaces"\)/);
+  assert.match(driver, /readdirSync\(workspaceDir\)/);
+  assert.match(driver, /diskBytes:[^\n]*sizeB/);
+  assert.match(driver, /inodesFree: inodeRow \? Number\(inodeRow\[1\]\)/);
+  assert.match(driver, /workspaceCount = readdirSync\(workspaceDir\)\.length/);
+  assert.match(driver, /workspaceBytes = parseDuTotal/);
+  assert.match(driver, /topicLatencyMs/);
+});

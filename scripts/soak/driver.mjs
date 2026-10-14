@@ -3,7 +3,7 @@
 // for observable outcomes, enforces the registered deadlines and records
 // evidence. A flow that cannot be observed is reported "not-executed", never
 // as a pass.
-import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { createUpdateBuilders } from "./updates.mjs";
@@ -14,6 +14,8 @@ import {
   growthObserved,
   newThreadId,
   outputCalls,
+  parseDfOutput,
+  parseDuTotal,
   parseMeminfo,
   phaseFor,
   restState,
@@ -143,15 +145,38 @@ function readBotPid() {
   return Number.isFinite(pid) ? pid : null;
 }
 
-function sampleResources() {
-  const pid = readBotPid();
-  if (!pid) return { pid: null };
+function sampleResources({ perCycle = false } = {}) {
+  const stateDir = process.env.OPENCODE_TELEGRAM_HOME ?? "";
+  const workspaceDir = join(stateDir, "opencode", "topic-workspaces");
   const out = (cmd, cmdArgs) => {
     try {
       return execFileSync(cmd, cmdArgs, { encoding: "utf8" }).trim();
     } catch {
       return "";
     }
+  };
+  const disk = stateDir ? parseDfOutput(out("df", ["-B1", "--output=size,used,avail,pcent,target", stateDir])) : null;
+  const inodeRow = stateDir ? /\n[^\n]*?\s+\d+\s+\d+\s+(\d+)\s+\d+%\s+[^\n]+$/.exec(`\n${out("df", ["-i", stateDir])}`) : null;
+  let workspaceCount = null;
+  let workspaceBytes = null;
+  if (perCycle && stateDir) {
+    try {
+      workspaceCount = readdirSync(workspaceDir).length;
+    } catch {
+      workspaceCount = null;
+    }
+    workspaceBytes = parseDuTotal(out("du", ["-sb", workspaceDir]));
+  }
+  const pid = readBotPid();
+  if (!pid) return {
+    pid: null,
+    diskBytes: disk?.sizeB ?? null,
+    usedB: disk?.usedB ?? null,
+    availB: disk?.availB ?? null,
+    pcent: disk?.pcent ?? null,
+    inodesFree: inodeRow ? Number(inodeRow[1]) : null,
+    workspaceCount,
+    workspaceBytes,
   };
   // Direct-children only is not enough evidence: the Bot's OpenCode server is
   // not always a direct child, which reported childCount=0 while the runtime
@@ -224,6 +249,13 @@ function sampleResources() {
     cpuTimeS,
     memTotalKb,
     memAvailableKb,
+    diskBytes: disk?.sizeB ?? null,
+    usedB: disk?.usedB ?? null,
+    availB: disk?.availB ?? null,
+    pcent: disk?.pcent ?? null,
+    inodesFree: inodeRow ? Number(inodeRow[1]) : null,
+    workspaceCount,
+    workspaceBytes,
     loadavg: out("cat", ["/proc/loadavg"]).split(" ").slice(0, 3).join(" "),
     cpus: Number(out("nproc", [])) || 0,
   };
@@ -336,14 +368,16 @@ async function flowNewChat() {
   }
   const pre = await tgState().catch(() => ({}));
   const base = snapshot(pre);
+  const pressedAt = Date.now();
   enqueue(messageUpdate(NEW_CHAT));
   const r = await waitFor((s) => newThreadId(s, base), 60_000, "new topic id");
-  if (!r.ok) return record("W1", "new-chat", "fail", { reason: r.reason, restWaitMs: rest.waitedMs });
+  if (!r.ok) return record("W1", "new-chat", "fail", { reason: r.reason, restWaitMs: rest.waitedMs, topicLatencyMs: null });
+  const topicLatencyMs = Date.now() - pressedAt;
   // The record is returned along with the threadId: cycle() must be able to
   // count W1 like every other flow, and a bare { threadId } carries no status
   // to count (run 38397066002's W1 failure reached cycles.jsonl and never
   // reached summary.json — the workflow then reported success).
-  const pass = record("W1", "new-chat", "pass", { threadId: r.value, restWaitMs: rest.waitedMs });
+  const pass = record("W1", "new-chat", "pass", { threadId: r.value, restWaitMs: rest.waitedMs, topicLatencyMs });
   return { ...pass, threadId: r.value };
 }
 
@@ -620,8 +654,10 @@ async function flowDeleteChat(threadId) {
     });
   }
   const reuseBase = snapshot(await tgState());
+  const reusePressedAt = Date.now();
   enqueue(messageUpdate(NEW_CHAT));
   const created = await waitFor((s) => newThreadId(s, reuseBase), 30_000, "topic after delete");
+  const topicLatencyMs = created.ok ? Date.now() - reusePressedAt : null;
   const reuseThreadId = created.ok ? created.value : null;
   if (!reuseThreadId || reuseThreadId === threadId) {
     return record("W6", "delete-chat", "fail", {
@@ -634,6 +670,7 @@ async function flowDeleteChat(threadId) {
       topicGone: gone,
       lateStreams,
       reuseThreadId,
+      topicLatencyMs,
       ...outcome,
     });
   }
@@ -654,6 +691,7 @@ async function flowDeleteChat(threadId) {
       topicGone: gone,
       lateStreams,
       reuseThreadId,
+      topicLatencyMs,
       ...outcome,
     });
   }
@@ -670,6 +708,7 @@ async function flowDeleteChat(threadId) {
     // to read that observation rather than infer it from status=pass.
     topicGone: gone,
     reuseThreadId,
+    topicLatencyMs,
     reuseMs,
     restWaitMs: reuseRest.waitedMs,
     lateStreams,
@@ -800,7 +839,7 @@ async function flowRestart(threadId) {
 }
 
 async function cycle(index) {
-  const resources = [sampleResources()];
+  const resources = [sampleResources({ perCycle: true })];
   const results = [];
   results.push(await flowStart());
   const chat = await flowNewChat();
@@ -812,7 +851,7 @@ async function cycle(index) {
   if (STAGE === "cycle" || index % 10 === 0) results.push(await flowRestart(threadId));
   results.push(await flowStop(threadId));
   results.push(await flowDeleteChat(threadId));
-  resources.push(sampleResources());
+  resources.push(sampleResources({ perCycle: true }));
 
   const failed = results.filter((r) => r.status === "fail");
   const summary = {

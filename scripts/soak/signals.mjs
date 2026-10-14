@@ -254,3 +254,28 @@ export function cputimeSeconds(text) {
   const seconds = Number(match[4]) + (match[5] ? Number(match[5]) : 0);
   return days * 86400 + hours * 3600 + minutes * 60 + seconds;
 }
+
+// GNU df with --output emits one header and one data row. Missing or malformed
+// fields stay null so an unavailable measurement can never look like zero use.
+export function parseDfOutput(text) {
+  const empty = { sizeB: null, usedB: null, availB: null, pcent: null, target: null };
+  const lines = String(text ?? "").trim().split(/\r?\n/);
+  if (lines.length < 2) return empty;
+  const row = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)%\s+(.+?)\s*$/.exec(lines.at(-1));
+  if (!row) return empty;
+  const sizeB = Number(row[1]);
+  const usedB = Number(row[2]);
+  const availB = Number(row[3]);
+  const target = row[5];
+  if (![sizeB, usedB, availB].every(Number.isSafeInteger) || !target) return empty;
+  return { sizeB, usedB, availB, pcent: Number(row[4]), target };
+}
+
+// `du -sb` prints a byte total followed by the path. Some GNU versions append
+// a tab and names may contain spaces, so parse only the leading numeric field.
+export function parseDuTotal(text) {
+  const match = /^(\d+)\s+.+$/m.exec(String(text ?? "").trim());
+  if (!match) return null;
+  const bytes = Number(match[1]);
+  return Number.isSafeInteger(bytes) ? bytes : null;
+}
