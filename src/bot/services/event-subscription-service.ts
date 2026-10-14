@@ -72,7 +72,8 @@ import { foregroundSessionState } from "../../app/managers/foreground-session-st
 import { scheduledTaskRuntime } from "../../app/services/scheduled-task-runtime-service.js";
 import { assistantRunState } from "../../app/managers/assistant-run-state-manager.js";
 import { ResponseStreamer, type StreamingMessagePayload } from "../streaming/response-streamer.js";
-import { ToolCallStreamer, renderToolActivity, type ToolStreamKey } from "../streaming/tool-call-streamer.js";
+import { ToolCallStreamer, type ToolStreamKey } from "../streaming/tool-call-streamer.js";
+import { renderToolActivity } from "../streaming/tool-activity-renderer.js";
 import { presentPendingExtensionAutomation } from "./extension-automation-ui.js";
 import { RunningToolTracker, type RunningToolTick } from "../streaming/running-tool-tracker.js";
 import { CompactProgressStreamer } from "../streaming/compact-progress-streamer.js";
@@ -263,10 +264,8 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         const chatId = this.getChatIdForSession(sessionId);
         if (!chatId) throw new Error("No chat ID for session");
 
-        const activity = renderToolActivity(text);
-        const sentMessage = await this.sessionScopedApi(sessionId).sendMessage(chatId, activity.text, {
+        const sentMessage = await this.sessionScopedApi(sessionId).sendMessage(chatId, text, {
           disable_notification: true,
-          entities: activity.entities,
         });
 
         return sentMessage.message_id;
@@ -311,11 +310,15 @@ class EventSubscriptionService implements BotEventSubscriptionService {
         const chatId = this.getChatIdForSession(sessionId);
         if (!chatId) throw new Error("No chat ID for session");
 
-        const sentMessage = await this.sessionScopedApi(sessionId).sendMessage(chatId, text, {
-          disable_notification: true,
+        const activity = renderToolActivity(text);
+        const sentMessage = await sendRenderedBotPart({
+          api: this.sessionScopedApi(sessionId),
+          chatId,
+          part: activity,
+          options: { disable_notification: true },
         });
 
-        return sentMessage.message_id;
+        return sentMessage.messageId;
       },
       editText: async (sessionId, messageId, text) => {
         if (!this.botInstance) {
@@ -331,7 +334,12 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
         try {
           const activity = renderToolActivity(text);
-          await this.sessionScopedApi(sessionId).editMessageText(chatId, messageId, activity.text, { entities: activity.entities });
+          await editRenderedBotPart({
+            api: this.sessionScopedApi(sessionId),
+            chatId,
+            messageId,
+            part: activity,
+          });
         } catch (error) {
           const errorMessage =
             error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();

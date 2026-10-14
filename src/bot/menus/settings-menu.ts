@@ -64,7 +64,7 @@ export function formatMessageFormatModeValue(mode: MessageFormatMode): string { 
 
 function settingButton(label: string, value: string): string { return `${label}: ${value}`; }
 function appendSettingsBackButton(keyboard: InlineKeyboard): InlineKeyboard { return keyboard.row().text("← Back", SETTINGS_BACK_CALLBACK); }
-function contextSettingsKeyboard(): InlineKeyboard { return new InlineKeyboard().text("🧠 Compact Context", SETTINGS_CONTEXT_COMPACT_CALLBACK).row().text("← Back", SETTINGS_BACK_CALLBACK); }
+function contextSettingsKeyboard(): InlineKeyboard { return new InlineKeyboard().text("🧠 Compact Context", SETTINGS_CONTEXT_COMPACT_CALLBACK).primary().row().text("← Back", SETTINGS_BACK_CALLBACK); }
 function formatTopicModel(): string {
   const model = getCurrentTopicSettings()?.model;
   return model ? `${model.providerID}/${model.modelID}` : "Inherited default";
@@ -368,7 +368,7 @@ export function buildMemoryClearConfirmationView(): { text: string; keyboard: In
       "❌ This action cannot be undone.",
     ].join("\n"),
     keyboard: new InlineKeyboard()
-      .text("✅ Delete All", SETTINGS_MEMORY_CLEAR_CONFIRM_CALLBACK).row()
+      .text("✅ Delete All", SETTINGS_MEMORY_CLEAR_CONFIRM_CALLBACK).danger().row()
       .text("← Back", SETTINGS_MEMORY_CLEAR_CANCEL_CALLBACK),
   };
 }
@@ -384,7 +384,7 @@ export function buildResetHistoryConfirmationView(): { text: string; keyboard: I
       "❌ This action cannot be undone.",
     ].join("\n"),
     keyboard: new InlineKeyboard()
-      .text("✅ Clear All History", SETTINGS_RESET_HISTORY_CONFIRM_CALLBACK).row()
+      .text("✅ Clear All History", SETTINGS_RESET_HISTORY_CONFIRM_CALLBACK).danger().row()
       .text("← Back", SETTINGS_RESET_HISTORY_CANCEL_CALLBACK),
   };
 }
@@ -401,7 +401,7 @@ export function buildFactoryResetConfirmationView(): { text: string; keyboard: I
       "❌ This action cannot be undone.",
     ].join("\n"),
     keyboard: new InlineKeyboard()
-      .text("✅ Continue", SETTINGS_FACTORY_RESET_CONFIRM_CALLBACK).row()
+      .text("✅ Continue", SETTINGS_FACTORY_RESET_CONFIRM_CALLBACK).danger().row()
       .text("← Back", SETTINGS_FACTORY_RESET_CANCEL_CALLBACK),
   };
 }
@@ -419,7 +419,7 @@ export function buildFactoryResetFinalView(): { text: string; keyboard: InlineKe
       "Proceed only if you are certain.",
     ].join("\n"),
     keyboard: new InlineKeyboard()
-      .text("🔴 Confirm Factory Reset", SETTINGS_FACTORY_RESET_FINAL_CALLBACK).row()
+      .text("🔴 Confirm Factory Reset", SETTINGS_FACTORY_RESET_FINAL_CALLBACK).danger().row()
       .text("← Back", SETTINGS_FACTORY_RESET_CANCEL_CALLBACK),
   };
 }
