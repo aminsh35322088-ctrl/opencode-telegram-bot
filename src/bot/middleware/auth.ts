@@ -17,7 +17,7 @@ import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { runInTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 import { cancelCurrentRun } from "../../app/services/current-run-cancellation-service.js";
-import { resolveCoreTopicBinding } from "../../core/native-core-service.js";
+import { resolveCoreTopicBinding, refreshCoreTopicBinding } from "../../core/native-core-service.js";
 import path from "node:path";
 
 const SESSION_CONTINUE_CALLBACK_PREFIX = "session:continue:";
@@ -208,7 +208,7 @@ export async function authMiddleware(ctx: Context, next: NextFunction): Promise<
   if (topic) {
     const binding = await findTelegramTopicBindingByThread(topic.chatId, topic.threadId);
     if (binding) {
-      const coreBinding = resolveCoreTopicBinding(topic.chatId, topic.threadId);
+      const coreBinding = await refreshCoreTopicBinding(binding) ? resolveCoreTopicBinding(topic.chatId, topic.threadId) : null;
       if (!coreBinding || coreBinding.sessionId !== binding.sessionId || coreBinding.normalizedDirectory !== path.resolve(binding.directory)) {
         logger.warn(`[TelegramTopics] Rejected stale Topic metadata: chat=${topic.chatId}, thread=${topic.threadId}`);
         return;

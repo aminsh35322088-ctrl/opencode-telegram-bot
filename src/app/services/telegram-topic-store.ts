@@ -4,6 +4,7 @@ import { logger } from "../../utils/logger.js";
 import { topicTelemetry } from "../../utils/topic-observability.js";
 import {
   registerCoreTopicBinding,
+  unregisterRemoteTopicBinding,
   rotateCoreTopicBinding,
 } from "../../core/native-core-service.js";
 
@@ -220,5 +221,6 @@ export async function removeTelegramTopicBinding(
       (binding) => !(binding.chatId === chatId && binding.sessionId === sessionId),
     ),
   );
+  unregisterRemoteTopicBinding(chatId,sessionId);
   topicTelemetry("binding_removed", { chatId, sessionId });
 }
