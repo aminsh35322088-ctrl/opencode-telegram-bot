@@ -21,7 +21,7 @@ export class RemoteTopicAuthority {
   private readonly routes = new Map<string, BindingIdentity>();
   private readonly owners = new Map<string, Pick<NodeBinding, "nodeId" | "generation">>();
   private registrationTail: Promise<unknown> = Promise.resolve();
-  private readonly uncertainWorkers = new Set<string>();
+  private readonly uncertainWorkers = new Map<string, number>();
   private workerKey(node: Pick<NodeBinding, "nodeId" | "generation">): string {
     return `${node.nodeId}:${node.generation}`;
   }
@@ -182,7 +182,8 @@ export class RemoteTopicAuthority {
     if (!this.bindings.registry.getExact(identity))
       throw new Error("Remote Topic binding changed or was fenced");
     const node = await this.readyNode(identity);
-    if (!this.bindings.registry.getExact(identity)) throw new Error("Remote Topic binding changed during owner lookup");
+    if (!this.bindings.registry.getExact(identity))
+      throw new Error("Remote Topic binding changed during owner lookup");
     const owner = this.owners.get(identity.bindingId);
     if (owner?.nodeId !== node.nodeId || owner.generation !== node.generation)
       throw new Error("Remote Worker generation changed");
@@ -200,11 +201,30 @@ export class RemoteTopicAuthority {
     );
     if (route.kind !== "topic" || route.threadId <= 1 || !identity) return false;
     const node = await this.assertNode(identity);
-    if (
-      this.uncertainWorkers.has(this.workerKey(node)) ||
-      this.queues.get(identity.bindingId)?.poisoned
-    )
+    if (this.queues.get(identity.bindingId)?.poisoned)
       throw new Error("Remote control task cleanup is uncertain");
+    const key = this.workerKey(node);
+    const uncertainSince = this.uncertainWorkers.get(key);
+    if (uncertainSince !== undefined) {
+      // A prepare receipt can reserve its run for 30s without a native execution.
+      // After that window, only a fresh signed idle result may lift uncertainty.
+      if (Date.now() - uncertainSince < 30_000)
+        throw new Error("Remote control task cleanup is uncertain");
+      const client = new TopicNodeClient(node, async () => {
+        await this.assertNode(identity);
+      });
+      const status = await client.request("status", {}, { signal: AbortSignal.timeout(5_000) });
+      const proof = status as { continuation?: unknown; externalRunId?: unknown } | null;
+      if (
+        !proof ||
+        proof.continuation !== "idle" ||
+        proof.externalRunId !== null ||
+        this.queues.get(identity.bindingId)?.poisoned ||
+        this.uncertainWorkers.get(key) !== uncertainSince
+      )
+        throw new Error("Remote control task cleanup is uncertain");
+      this.uncertainWorkers.delete(key);
+    }
     return true;
   }
   async beginRun(id: string, externalRunId?: string): Promise<RunIdentity> {
@@ -288,9 +308,9 @@ export class RemoteTopicAuthority {
         );
         if (result !== true && result !== null) throw new Error("Remote stop was not confirmed");
       } catch {
-        this.uncertainWorkers.add(this.workerKey(capturedNode));
+        this.uncertainWorkers.set(this.workerKey(capturedNode), Date.now());
       }
-      if (queue.poisoned) this.uncertainWorkers.add(this.workerKey(capturedNode));
+      if (queue.poisoned) this.uncertainWorkers.set(this.workerKey(capturedNode), Date.now());
       throw error;
     }
   }

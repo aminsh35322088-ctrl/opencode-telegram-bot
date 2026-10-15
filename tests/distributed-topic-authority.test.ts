@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { after, test } from "node:test";
+import { after, test, mock } from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -36,13 +36,25 @@ nodeBindings.find = async () => ({ ...worker });
 nodeBindings.list = async () => [{ ...worker }];
 const calls: Array<{ operation: string; payload: unknown }> = [];
 let rejectStop = false;
+let nativeStatus: unknown = null;
+let statusGate: Promise<void> | null = null;
+let statusStarted: (() => void) | null = null;
 installSecureNodeTransport({
   request: async (_binding, envelope) => {
     calls.push({ operation: envelope.operation, payload: envelope.payload });
     if (rejectStop && envelope.operation === "stop") throw new Error("synthetic stop failure");
-    const result = envelope.operation === "status" ? null
-      : envelope.operation === "session.status" ? {}
-      : ["session.messages", "question.list", "permission.list"].includes(envelope.operation) ? [] : true;
+    if (envelope.operation === "status") {
+      statusStarted?.();
+      await statusGate;
+    }
+    const result =
+      envelope.operation === "status"
+        ? nativeStatus
+        : envelope.operation === "session.status"
+          ? {}
+          : ["session.messages", "question.list", "permission.list"].includes(envelope.operation)
+            ? []
+            : true;
     return { ok: true, result };
   },
   stream: async function* (_binding, _envelope, options) {
@@ -145,19 +157,37 @@ test("distributed auth admits real Topic message and Reply Keyboard text", async
 
 test("auth restores the actual distributed attach path before admitting Topic input", async () => {
   const { authMiddleware } = await import("../src/bot/middleware/auth.js");
-  const { setTelegramTopicRuntimeDependencies } = await import("../src/bot/services/telegram-topic-runtime.js");
+  const { setTelegramTopicRuntimeDependencies } =
+    await import("../src/bot/services/telegram-topic-runtime.js");
   let subscribed = false;
-  setTelegramTopicRuntimeDependencies({ ensureEventSubscription: async directory => {
-    assert.equal(directory, topic.directory); subscribed = true;
-  }, retireSessionRuntime: () => {} });
+  setTelegramTopicRuntimeDependencies({
+    ensureEventSubscription: async (directory) => {
+      assert.equal(directory, topic.directory);
+      subscribed = true;
+    },
+    retireSessionRuntime: () => {},
+  });
   calls.length = 0;
   let reached = false;
-  const ctx = { from: { id: 42 }, chat: { id: 42 }, message: { chat: { id: 42 }, message_id: 2, message_thread_id: 7, is_topic_message: true, text: "hello after restart" }, api: {} };
-  await authMiddleware(ctx as never, async () => { reached = true; });
+  const ctx = {
+    from: { id: 42 },
+    chat: { id: 42 },
+    message: {
+      chat: { id: 42 },
+      message_id: 2,
+      message_thread_id: 7,
+      is_topic_message: true,
+      text: "hello after restart",
+    },
+    api: {},
+  };
+  await authMiddleware(ctx as never, async () => {
+    reached = true;
+  });
   assert.equal(reached, true);
   assert.equal(subscribed, true);
-  assert.ok(calls.some(call => call.operation === "session.status"));
-  assert.ok(calls.some(call => call.operation === "question.list"));
+  assert.ok(calls.some((call) => call.operation === "session.status"));
+  assert.ok(calls.some((call) => call.operation === "question.list"));
   assert.equal(core.getNativeCore(), null);
 });
 
@@ -282,9 +312,89 @@ test("timed out remote tasks stop exactly their Worker run and uncertain cleanup
       core.beginCoreRunForSession(topic.sessionId, topic.directory),
       /cleanup is uncertain/,
     );
-    worker = { ...worker, generation: worker.generation + 1 };
-    await core.registerCoreTopicBinding(topic);
+    const now = Date.now();
+    const clock = mock.method(Date, "now", () => now + 31_000);
+    try {
+      nativeStatus = { continuation: "live", externalRunId: "still-active" };
+      await assert.rejects(
+        core.beginCoreRunForSession(topic.sessionId, topic.directory),
+        /cleanup is uncertain/,
+      );
+      nativeStatus = null;
+      await assert.rejects(
+        core.beginCoreRunForSession(topic.sessionId, topic.directory),
+        /cleanup is uncertain/,
+      );
+      nativeStatus = { continuation: "pending", externalRunId: "still-staging" };
+      await assert.rejects(
+        core.beginCoreRunForSession(topic.sessionId, topic.directory),
+        /cleanup is uncertain/,
+      );
+      nativeStatus = { continuation: "idle", externalRunId: null };
+      calls.length = 0;
+      const recovered = await core.beginCoreRunForSession(topic.sessionId, topic.directory);
+      assert.deepEqual(
+        calls.map((call) => call.operation),
+        ["status"],
+      );
+      core.finishCoreRunForSession(topic.sessionId);
+      assert.ok(recovered.runId);
+    } finally {
+      nativeStatus = null;
+      clock.mock.restore();
+    }
   });
+});
+
+test("fresh uncertainty during a signed status read cannot be erased by older idle evidence", async () => {
+  const { RemoteTopicAuthority } = await import("../src/control-plane/remote-topic-authority.js");
+  const authority = new RemoteTopicAuthority();
+  const identity = core.resolveCoreTopicBinding(topic.chatId, topic.threadId)!;
+  await authority.registerBinding(identity);
+  const run = await authority.beginRun(identity.bindingId);
+  let now = Date.now();
+  const clock = mock.method(Date, "now", () => now);
+  rejectStop = true;
+  let release!: () => void;
+  try {
+    await assert.rejects(
+      authority.dispatchTask(run, "first", async () => {
+        throw new Error("first failure");
+      }),
+      /first failure/,
+    );
+    now += 31_000;
+    statusGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      statusStarted = resolve;
+    });
+    nativeStatus = { continuation: "idle", externalRunId: null };
+    const admission = authority.modelAllowed(
+      { kind: "topic", botId: identity.botId, chatId: topic.chatId, threadId: topic.threadId },
+      "prompt",
+    );
+    const denied = assert.rejects(admission, /cleanup is uncertain/);
+    await started;
+    now++;
+    await assert.rejects(
+      authority.dispatchTask(run, "second", async () => {
+        throw new Error("new failure");
+      }),
+      /new failure/,
+    );
+    release();
+    await denied;
+  } finally {
+    release?.();
+    statusGate = null;
+    statusStarted = null;
+    nativeStatus = null;
+    rejectStop = false;
+    clock.mock.restore();
+    authority.shutdown();
+  }
 });
 
 test("distributed Telegram output remains scoped and stops after Topic deletion", async () => {
