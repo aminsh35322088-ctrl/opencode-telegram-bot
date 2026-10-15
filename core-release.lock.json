@@ -1,23 +1,23 @@
 {
   "schemaVersion": 1,
   "repository": "aminsh35322088-ctrl/opencode-telegram-core",
-  "tag": "v1.18.33-bot.13-pre.36",
-  "telegramCoreVersion": "1.18.33-bot.13-pre.36",
-  "telegramCoreCommit": "6e19b05849ace61271d8fbc1adc14e7e8f85c297",
+  "tag": "v1.18.33-bot.13-pre.37",
+  "telegramCoreVersion": "1.18.33-bot.13-pre.37",
+  "telegramCoreCommit": "385f1b70494ad4889d8532eda74afd426db79447",
   "upstreamVersion": "1.18.33",
   "upstreamCommit": "51ef4be1d3c122f18fefb510dca8d778571f4f18",
   "assets": {
     "runtime": {
       "name": "opencode-telegram-core-linux-x64.tar.gz",
-      "sha256": "d43b31255ee778299b78c06fd57722304902609a1ad42d003ee1e4b65f7374d2"
+      "sha256": "00c43701099c22c0f0b6a37921580810da3ef0f76840aaf011aeaf4700cb079b"
     },
     "sdk": {
       "name": "opencode-telegram-core-sdk-node.tar.gz",
-      "sha256": "a2981a7da598ffee657da61c81698710f001b67aebbfad3afa92fa6aaba37f6b"
+      "sha256": "a888fe620a5d8f0538bc020c3767f2e3a85bf152f0388dddb3b05dbcdc461e96"
     },
     "nativeRuntime": {
       "name": "opencode-telegram-native-runtime-node.tar.gz",
-      "sha256": "db382c63400b9d8c846facf84e888670995e09b2f62c529bbbddb7b140993901"
+      "sha256": "f1f79a0c9720e7a0b31940b1491b8c14bdaab656594f85afdc40853c7030c115"
     }
   }
 }
