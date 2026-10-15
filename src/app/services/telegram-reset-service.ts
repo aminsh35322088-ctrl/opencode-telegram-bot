@@ -76,6 +76,15 @@ async function deleteBindings(api: Api, bindings: TelegramTopicBinding[]): Promi
   return { deleted, failed };
 }
 async function verifyManagedSessionsDeleted(bindings: TelegramTopicBinding[]): Promise<number> {
+  // Called only after every deletion succeeded. Distributed deletion awaits
+  // Worker retirement and metadata cleanup; Root has no local session server.
+  // Recheck metadata rather than querying an unrelated/unavailable local Core.
+  if (process.env.CONTROL_APPLICATION_IPC === "1") {
+    const current = await listTelegramTopicBindings();
+    return bindings.filter((binding) => current.some((item) =>
+      item.chatId === binding.chatId && item.threadId === binding.threadId && item.sessionId === binding.sessionId,
+    )).length;
+  }
   let remaining = 0;
   for (const binding of bindings) {
     try {

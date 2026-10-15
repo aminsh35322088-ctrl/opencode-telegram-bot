@@ -152,11 +152,50 @@ describe("telegram-reset-service", () => {
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     delete process.env.GITHUB_TOKEN;
     delete process.env.GH_TOKEN;
     delete process.env.RAILWAY_TOKEN;
     delete process.env.RAILWAY_API_TOKEN;
     await fs.rm(tempRoot, { recursive: true, force: true });
+  });
+
+  it.each(["history", "factory"])("completes %s reset after distributed retirement without querying local OpenCode", async (kind) => {
+    vi.stubEnv("CONTROL_APPLICATION_IPC", "1");
+    mocks.listBindingsMock.mockResolvedValueOnce([binding]).mockResolvedValue([]);
+    mocks.sessionGetMock.mockRejectedValue(new TypeError("fetch failed"));
+
+    const result = kind === "factory"
+      ? await factoryReset({} as Api, 5)
+      : await resetHistory({} as Api, 5);
+
+    expect(result.failed).toBe(0);
+    expect(result.deleted).toBe(1);
+    expect(mocks.sessionGetMock).not.toHaveBeenCalled();
+    expect(mocks.clearRuntimeStatesMock).toHaveBeenCalled();
+  });
+
+  it("refuses distributed reset when the deleted binding still exists", async () => {
+    vi.stubEnv("CONTROL_APPLICATION_IPC", "1");
+    mocks.listBindingsMock.mockResolvedValue([binding]);
+
+    const result = await factoryReset({} as Api, 5);
+
+    expect(result.failed).toBe(1);
+    expect(mocks.sessionGetMock).not.toHaveBeenCalled();
+    expect(mocks.resetAppStateForFactoryMock).not.toHaveBeenCalled();
+  });
+
+  it("preserves persistent state when distributed Topic retirement fails", async () => {
+    vi.stubEnv("CONTROL_APPLICATION_IPC", "1");
+    mocks.listBindingsMock.mockResolvedValue([binding]);
+    mocks.deleteTopicMock.mockRejectedValueOnce(new Error("retirement failed"));
+
+    const result = await factoryReset({} as Api, 5);
+
+    expect(result.failed).toBe(1);
+    expect(mocks.resetAppStateForFactoryMock).not.toHaveBeenCalled();
+    expect(mocks.clearRuntimeStatesMock).not.toHaveBeenCalled();
   });
 
   it("preflights all active Topics before deleting any history", async () => {
