@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { nodeBindings } from "./node-bindings.js";
 import { resolveTopicNodeClient } from "./topic-node-client.js";
 import { runInTopicRuntimeContext } from "../app/services/topic-runtime-context.js";
-import { getNativeCore, resolveCoreTopicBinding, restoreRemoteCoreRun } from "../core/native-core-service.js";
+import { currentCoreRun, resolveCoreTopicBinding, restoreRemoteCoreRun } from "../core/native-core-service.js";
 import type { TopicRuntimeContext } from "../app/services/topic-runtime-context.js";
 import { hasRemoteTopicRunEvents, startRemoteTopicRunEvents } from "../opencode/topic-event-bus.js";
 interface Options { parentID?: string; reply?: "once"|"always"|"reject"; sessionID?: string; requestID?: string; answers?: string[][]; parts?: unknown[]; model?: unknown; providerID?: string; modelID?: string; agent?: string; variant?: string; directory?: string }
@@ -36,7 +36,7 @@ export async function recoverRemoteTopicRun(topic:TopicRuntimeContext, reconnect
     if(!topic.directory)throw new Error("Remote reconnect lacks Topic workspace route");
     const key=`${binding.nodeId}:${binding.generation}:${binding.sessionId}`;
     const existing=recoveryFlights.get(key);if(existing)return existing;
-    if(getNativeCore())await runInTopicRuntimeContext({...topic,sessionId:binding.sessionId},()=>restoreRemoteCoreRun(binding.sessionId!,topic.directory!,runId));
+    if(resolveCoreTopicBinding(topic.chatId,topic.threadId))await runInTopicRuntimeContext({...topic,sessionId:binding.sessionId},()=>restoreRemoteCoreRun(binding.sessionId!,topic.directory!,runId));
     const operation=startRemoteTopicRunEvents(topic,binding.sessionId,topic.directory,runId,()=>{if(runs.get(binding.sessionId!)===runId)runs.delete(binding.sessionId!);},"resume").then(()=>runId).finally(()=>{if(recoveryFlights.get(key)===operation)recoveryFlights.delete(key);});
     recoveryFlights.set(key,operation);return operation;
   }
@@ -86,7 +86,7 @@ export async function invokeTopicSdk(topic: TopicRuntimeContext, operation: stri
       requestOptions?.signal?.throwIfAborted();
       if(!binding.sessionId||!options.directory||!options.providerID||!options.modelID)throw new Error("Remote compaction lacks bound session/workspace/model");
       const coreRoute=resolveCoreTopicBinding(topic.chatId,topic.threadId);
-      const runId=(coreRoute?getNativeCore()?.runs.current(coreRoute.bindingId)?.runId:undefined)??randomUUID();
+      const runId=(coreRoute?currentCoreRun(coreRoute.bindingId)?.runId:undefined)??randomUUID();
       if(runs.has(binding.sessionId))throw new Error("Remote Topic already owns an active run");
       runs.set(binding.sessionId,runId);
       let settled=false;
@@ -149,7 +149,7 @@ export async function invokeTopicSdk(topic: TopicRuntimeContext, operation: stri
     case "session.promptAsync": {
       if(!binding.sessionId || !options.parts || !options.directory) throw new Error("Remote prompt lacks bound session/workspace");
       const coreRoute=resolveCoreTopicBinding(topic.chatId,topic.threadId);
-      const runId=(coreRoute?getNativeCore()?.runs.current(coreRoute.bindingId)?.runId:undefined)??randomUUID();
+      const runId=(coreRoute?currentCoreRun(coreRoute.bindingId)?.runId:undefined)??randomUUID();
       if(runs.has(binding.sessionId)) throw new Error("Remote Topic already owns an active run");
       runs.set(binding.sessionId,runId);
       try {

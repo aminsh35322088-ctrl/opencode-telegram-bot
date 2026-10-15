@@ -1,4 +1,5 @@
 import path from "node:path";
+import { RemoteTopicAuthority } from "../control-plane/remote-topic-authority.js";
 import { nodeBindings } from "../control-plane/node-bindings.js";
 import type { Api } from "grammy";
 import type { FilePartInput, TextPartInput } from "@opencode-ai/sdk/v2";
@@ -157,6 +158,7 @@ const workerFactory: WorkerFactory = (binding, generation) =>
   });
 
 let nativeCore: TelegramNativeCore | null = null;
+let remoteAuthority: RemoteTopicAuthority | null = null;
 const runsBySession = new Map<string, RunIdentity>();
 let coreAdmissionTail: Promise<void> = Promise.resolve();
 
@@ -174,7 +176,8 @@ async function withCoreAdmissionLock<T>(task: () => Promise<T>): Promise<T> {
   }
 }
 
-function requireCore(): TelegramNativeCore {
+function requireCore(): TelegramNativeCore | RemoteTopicAuthority {
+  if (remoteAuthority) return remoteAuthority;
   if (!nativeCore) throw new Error("OpenCode Telegram Core is not initialized");
   return nativeCore;
 }
@@ -195,16 +198,16 @@ export function resolveCoreSessionRoute(sessionId: string, directory?: string): 
 }
 
 export function isCurrentCoreSessionRoute(route: BindingIdentity): boolean {
-  return nativeCore?.bindings.registry.getExact(route) != null;
+  return (remoteAuthority ?? nativeCore)?.bindings.registry.getExact(route) != null;
 }
 
 export function resolveCoreTopicBinding(chatId: number, threadId: number): BindingIdentity | null {
-  if (!nativeCore || threadId <= 1) return null;
-  return nativeCore.bindings.registry.getById(coreBindingId(chatId, threadId));
+  if (threadId <= 1) return null;
+  return (remoteAuthority ?? nativeCore)?.bindings.registry.getById(coreBindingId(chatId, threadId)) ?? null;
 }
 
 export async function resolveCoreEventRoute(sessionId: string | null, directory: string | null): Promise<BindingIdentity | null> {
-  return nativeCore?.events.resolve(sessionId, directory ? normalizeDirectory(directory) : null) ?? null;
+  return (remoteAuthority ?? nativeCore)?.events.resolve(sessionId, directory ? normalizeDirectory(directory) : null) ?? null;
 }
 
 async function cleanupCoreBinding(api: Api, identity: BindingIdentity): Promise<void> {
@@ -287,6 +290,8 @@ export async function initializeNativeCore(
 }
 
 export async function shutdownNativeCore(): Promise<void> {
+  remoteAuthority?.shutdown();
+  remoteAuthority = null;
   const core = nativeCore;
   nativeCore = null;
   runsBySession.clear();
@@ -294,6 +299,11 @@ export async function shutdownNativeCore(): Promise<void> {
 }
 
 export async function registerCoreTopicBinding(input: CoreTopicBindingInput): Promise<void> {
+  if (process.env.CONTROL_APPLICATION_IPC === "1") {
+    remoteAuthority ??= new RemoteTopicAuthority();
+    await remoteAuthority.refresh(toBindingIdentity(input));
+    return;
+  }
   if (!nativeCore) return;
   const identity = toBindingIdentity(input);
   const existing = nativeCore.bindings.registry.getById(identity.bindingId);
@@ -311,6 +321,12 @@ export async function rotateCoreTopicBinding(
   input: CoreTopicBindingInput,
   next: { sessionId: string; directory: string },
 ): Promise<void> {
+  if (remoteAuthority) {
+    const current = remoteAuthority.bindings.registry.getById(coreBindingId(input.chatId,input.threadId));
+    if (!current || current.sessionId !== input.sessionId || current.normalizedDirectory !== normalizeDirectory(input.directory)) throw new Error("Refusing stale remote binding rotation");
+    await remoteAuthority.rotateBinding(current.bindingId, {sessionId:next.sessionId,normalizedDirectory:normalizeDirectory(next.directory)});
+    return;
+  }
   if (!nativeCore) return;
   const bindingId = coreBindingId(input.chatId, input.threadId);
   const current = nativeCore.bindings.registry.getById(bindingId);
@@ -459,7 +475,8 @@ export async function runCoreIdleMaintenance(
   task: () => Promise<boolean>,
 ): Promise<boolean> {
   return withCoreAdmissionLock(async () => {
-    const core = requireCore();
+    const core = nativeCore;
+    if (!core) return false;
     const hasActiveRun = core.bindings.registry.list().some(
       (binding) => core.runs.current(binding.bindingId) != null,
     );
@@ -512,13 +529,13 @@ export async function runCoreSessionTask<T>(
 }
 
 export function finishCoreRun(run: RunIdentity): boolean {
-  const core = nativeCore;
+  const core = remoteAuthority ?? nativeCore;
   if (!core) return false;
   return core.finishRun(run);
 }
 
 export function finishCoreRunForSession(sessionId: string): boolean {
-  const core = nativeCore;
+  const core = remoteAuthority ?? nativeCore;
   const run = runsBySession.get(sessionId);
   if (!core || !run) return false;
   runsBySession.delete(sessionId);
@@ -541,4 +558,23 @@ export async function restoreRemoteCoreRun(sessionId:string,directory:string,ext
     if(!await core.modelAllowed({kind:"topic",botId:route.botId,chatId:route.chatId,threadId:route.threadId},"remote_recovery"))throw new Error("Recovered run Core admission rejected");
     const run=await core.beginRun(route.bindingId,externalRunId);runsBySession.set(sessionId,run);return run;
   });
+}
+
+
+/** Root-side routing/correlation, with no local Core worker or OpenCode process. */
+export async function initializeDistributedTopicAuthority(bindings: readonly CoreTopicBindingInput[]): Promise<void> {
+  if (nativeCore) throw new Error("Cannot mix local Core with distributed Topic authority");
+  remoteAuthority ??= new RemoteTopicAuthority();
+  for (const binding of bindings) await remoteAuthority.refresh(toBindingIdentity(binding));
+}
+export async function refreshCoreTopicBinding(input: CoreTopicBindingInput): Promise<boolean> {
+  if (remoteAuthority) return remoteAuthority.refresh(toBindingIdentity(input));
+  return isCurrentCoreSessionRoute(toBindingIdentity(input, resolveCoreTopicBinding(input.chatId,input.threadId)?.bindingGeneration ?? 1));
+}
+export function currentCoreRun(bindingId: string): RunIdentity | null { return (remoteAuthority ?? nativeCore)?.runs.current(bindingId) ?? null; }
+export function unregisterRemoteTopicBinding(chatId:number,sessionId:string):void { remoteAuthority?.revokeSession(chatId,sessionId); }
+
+export async function assertCurrentRemoteCoreBinding(identity: BindingIdentity): Promise<void> {
+  if (!remoteAuthority) throw new Error("Remote Topic authority unavailable");
+  await remoteAuthority.assertNode(identity);
 }

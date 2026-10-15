@@ -224,6 +224,9 @@ export async function startBotApp(): Promise<void> {
     await initializeNativeCore(bot.api, coreBindings);
     shutdownLocalCore = shutdownNativeCore;
   } else {
+    const {initializeDistributedTopicAuthority, shutdownNativeCore}=await import("../../core/native-core-service.js");
+    await initializeDistributedTopicAuthority(coreBindings);
+    shutdownLocalCore = shutdownNativeCore;
     // Control Plane owns Telegram and orchestration only. All OpenCode/Core
     // execution lives inside provisioned topic-node Worker services.
     for(const binding of coreBindings)logger.info(`[DistributedInventory] topic chat=${binding.chatId} thread=${binding.threadId} session=${binding.sessionId}`);

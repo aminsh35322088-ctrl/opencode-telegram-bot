@@ -78,6 +78,7 @@ test('remote Topic cleanup never deletes a recycled Worker session through the l
     assert.equal(forumDeletes,1);
     assert.equal(await fs.stat(workspace).then(()=>true,()=>false),false);
   } finally {
+    await shutdownNativeCore();
     nodeBindings.find=originalFind;nodeBindings.list=originalList;topicNodeLifecycle.retire=originalRetire;
     opencodeClient.session.delete=originalDelete;
     if(previousIpc===undefined)delete process.env.CONTROL_APPLICATION_IPC;else process.env.CONTROL_APPLICATION_IPC=previousIpc;
