@@ -312,6 +312,7 @@ class SummaryAggregator {
   private onSessionErrorCallback: SessionErrorCallback | null = null;
   private onSessionRetryCallback: SessionRetryCallback | null = null;
   private onSessionIdleCallback: SessionIdleCallback | null = null;
+  private readonly idleSessions = new Set<string>();
   private onPermissionCallback: PermissionCallback | null = null;
   private permissionQueue: Promise<void> = Promise.resolve();
   private onPermissionRepliedCallback: PermissionRepliedCallback | null = null;
@@ -532,7 +533,7 @@ class SummaryAggregator {
         this.handleSessionStatus(event);
         break;
       case "session.idle":
-        this.handleSessionIdle(event);
+        this.handleSessionIdle(event.properties.sessionID);
         break;
       case "session.compacted":
         this.handleSessionCompacted(event);
@@ -591,6 +592,7 @@ class SummaryAggregator {
   clear(): void {
     this.stopTypingIndicator();
     this.currentSessionId = null;
+    this.idleSessions.clear();
     this.textMessageStates.clear();
     this.thinkingMessageStates.clear();
     this.messages.clear();
@@ -714,6 +716,7 @@ class SummaryAggregator {
 
   beginRun(sessionId: string): void {
     if (!sessionId) return;
+    this.idleSessions.delete(sessionId);
     this.clearSubagentStateForParent(sessionId);
     const generation = assistantRunState.getRunGeneration(sessionId);
     if (generation !== null) this.subagentRunGenerationByParent.set(sessionId, generation);
@@ -2127,6 +2130,13 @@ class SummaryAggregator {
       return;
     }
 
+    // The Worker closes its authenticated run stream at the first idle status.
+    // A separate session.idle event may therefore never reach the Bot.
+    if (status?.type === "idle") {
+      this.handleSessionIdle(sessionID);
+      return;
+    }
+    if (status?.type === "busy") this.idleSessions.delete(sessionID);
     if (status?.type !== "retry" || !this.onSessionRetryCallback) {
       return;
     }
@@ -2146,12 +2156,7 @@ class SummaryAggregator {
     }));
   }
 
-  private handleSessionIdle(
-    event: Event & {
-      type: "session.idle";
-    },
-  ): void {
-    const { sessionID } = event.properties;
+  private handleSessionIdle(sessionID: string): void {
 
     if (this.isTrackedChildSession(sessionID)) {
       logger.info(`[Aggregator] Subagent session became idle: ${sessionID}`);
@@ -2163,6 +2168,8 @@ class SummaryAggregator {
       return;
     }
 
+    if (this.idleSessions.has(sessionID)) return;
+    this.idleSessions.add(sessionID);
     logger.info(`[Aggregator] Session became idle: ${sessionID}`);
 
     // Stop typing indicator when session goes idle

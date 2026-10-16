@@ -1352,6 +1352,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
     summaryAggregator.setOnSessionIdle(async (sessionId) => {
       typingIndicatorManager.stop(sessionId, "session_idle");
+      stopSessionStallWatchdog(sessionId);
       interactionEventGate.clearSession(sessionId);
       resetStreamThrottle(sessionId);
       await markAttachedSessionIdle(sessionId);
