@@ -11,6 +11,7 @@ import { isRecord } from "../../utils/type-guards.js";
 import { getCurrentProject } from "../stores/settings-store.js";
 import { getTopicRuntimeContext, runInTopicRuntimeContext } from "../services/topic-runtime-context.js";
 import { assistantRunState } from "./assistant-run-state-manager.js";
+import { parseInlineThinking, type ParsedInlineThinking } from "./inline-thinking-parser.js";
 
 function withTopicContextPreserved<TArgs extends unknown[], TResult>(
   fn: (...args: TArgs) => TResult,
@@ -186,6 +187,7 @@ interface TextMessageState {
   optimisticUpdateCount: number;
   revision: number;
   combinedMemo?: { revision: number; isFinal: boolean; text: string };
+  parsedInlineMemo?: { revision: number; isFinal: boolean; result: ParsedInlineThinking };
 }
 
 interface ThinkingMessageState {
@@ -288,6 +290,7 @@ function normalizeSnapshotValue(value: unknown): unknown {
 
 const MAX_TRACKED_PROCESSED_TOOL_STATES = 2000;
 const MAX_TRACKED_DELIVERED_EXTERNAL_MESSAGES = 2000;
+const INLINE_THINKING_PART_ID = "__inline_text_thinking__";
 
 class SummaryAggregator {
   private currentSessionId: string | null = null;
@@ -1261,6 +1264,9 @@ class SummaryAggregator {
 
       const time = info.time;
       const isCompleted = Boolean(time?.completed);
+      if (isCompleted) {
+        this.syncInlineThinking(info.sessionID, messageID, true);
+      }
       const messageText = this.getCombinedMessageText(messageID, isCompleted);
 
       if (!isCompleted && textState.optimisticUpdateCount === 1) {
@@ -1414,7 +1420,6 @@ class SummaryAggregator {
       typeof deltaFromUpdated === "string" &&
       deltaFromUpdated.length > 0
     ) {
-      this.emitThinkingFinishedOnce(part.sessionID, messageID);
       this.applyTextDelta(part.sessionID, messageID, part.id, deltaFromUpdated, part.text);
       return;
     }
@@ -1464,7 +1469,7 @@ class SummaryAggregator {
         return;
       }
 
-      this.emitThinkingFinishedOnce(part.sessionID, messageID);
+      this.syncInlineThinking(part.sessionID, messageID);
 
       const fullText = this.getCombinedMessageText(messageID);
 
@@ -1635,7 +1640,6 @@ class SummaryAggregator {
       }
     }
 
-    this.emitThinkingFinishedOnce(sessionID, messageID);
     this.applyTextDelta(sessionID, messageID, partID, delta, part?.text);
   }
 
@@ -1662,6 +1666,8 @@ class SummaryAggregator {
 
     state.partTexts.set(partID, accumulated);
     state.revision++;
+
+    this.syncInlineThinking(sessionID, messageID);
 
     const combined = this.getCombinedMessageText(messageID);
     if (!combined.trim()) {
@@ -1721,6 +1727,10 @@ class SummaryAggregator {
 
   private registerThinkingPart(messageID: string, partID: string, title?: string): void {
     const state = this.getOrCreateThinkingMessageState(messageID);
+    if (partID !== INLINE_THINKING_PART_ID) {
+      this.removeInlineThinkingPart(messageID);
+    }
+
     if (!state.orderedPartIds.includes(partID)) {
       state.orderedPartIds.push(partID);
     }
@@ -1788,7 +1798,9 @@ class SummaryAggregator {
     }
 
     this.setThinkingPartSnapshot(messageID, partID, accumulated, title ?? existing?.title);
-    this.emitThinkingUpdate(sessionID, messageID, false);
+    const isFirstUpdate = !this.thinkingFiredForMessages.has(messageID);
+    this.thinkingFiredForMessages.add(messageID);
+    this.emitThinkingUpdate(sessionID, messageID, isFirstUpdate);
   }
 
   private getThinkingSections(messageID: string): ThinkingSection[] {
@@ -1801,6 +1813,62 @@ class SummaryAggregator {
       .map((partID) => state.sections.get(partID))
       .filter((section): section is ThinkingSection => Boolean(section))
       .map((section) => ({ ...section }));
+  }
+
+  private removeInlineThinkingPart(messageID: string): boolean {
+    const state = this.thinkingMessageStates.get(messageID);
+    if (!state?.sections.delete(INLINE_THINKING_PART_ID)) {
+      return false;
+    }
+
+    state.orderedPartIds = state.orderedPartIds.filter((partID) => partID !== INLINE_THINKING_PART_ID);
+    return true;
+  }
+
+  private syncInlineThinking(sessionId: string, messageId: string, isFinal = false): void {
+    if (!this.isEventForActiveSession(sessionId) || this.messages.get(messageId)?.role === "user") {
+      return;
+    }
+
+    const parsed = this.getParsedInlineThinking(messageId, isFinal);
+    const state = this.thinkingMessageStates.get(messageId);
+    const hasExplicitReasoning = Boolean(
+      state?.orderedPartIds.some((partId) => partId !== INLINE_THINKING_PART_ID),
+    );
+
+    if (hasExplicitReasoning) {
+      if (this.thinkingFiredForMessages.has(messageId) && !parsed.isThinking) {
+        this.emitThinkingFinishedOnce(sessionId, messageId);
+      }
+      return;
+    }
+
+    if (parsed.hasThinkMarker) {
+      const hasThinkingText = parsed.thinkingText.trim().length > 0;
+      if (hasThinkingText) {
+        const isFirstUpdate = !this.thinkingFiredForMessages.has(messageId);
+        this.thinkingFiredForMessages.add(messageId);
+        const wasUpdated = this.setThinkingPartSnapshot(
+          messageId,
+          INLINE_THINKING_PART_ID,
+          parsed.thinkingText,
+        );
+        if (isFirstUpdate || wasUpdated) {
+          this.emitThinkingUpdate(sessionId, messageId, isFirstUpdate);
+        }
+      }
+
+      if (!parsed.isThinking) {
+        this.emitThinkingFinishedOnce(sessionId, messageId);
+      }
+      return;
+    }
+
+    // Preserve the existing explicit-reasoning lifecycle: the first answer
+    // text finishes the reasoning block when the provider uses separate parts.
+    if (this.thinkingFiredForMessages.has(messageId) && parsed.answerText.trim()) {
+      this.emitThinkingFinishedOnce(sessionId, messageId);
+    }
   }
 
   private emitThinkingUpdate(
@@ -2002,11 +2070,37 @@ class SummaryAggregator {
       return state.combinedMemo.text;
     }
 
-    const texts = state.orderedPartIds.map((partID) => state.partTexts.get(partID) || "");
-    const combined = texts.filter((text) => !isUpstreamEmptyResponseText(text, isFinal)).join("");
+    const combined = this.getParsedInlineThinking(messageID, isFinal).answerText;
 
     state.combinedMemo = { revision: state.revision, isFinal, text: combined };
     return combined;
+  }
+
+  private getParsedInlineThinking(messageID: string, isFinal = false): ParsedInlineThinking {
+    const state = this.textMessageStates.get(messageID);
+    if (!state) {
+      return parseInlineThinking("", { final: isFinal });
+    }
+
+    const memo = state.parsedInlineMemo;
+    if (memo && memo.revision === state.revision && memo.isFinal === isFinal) {
+      return memo.result;
+    }
+
+    const rawText = this.getCombinedRawMessageText(messageID, isFinal);
+    const result = parseInlineThinking(rawText, { final: isFinal });
+    state.parsedInlineMemo = { revision: state.revision, isFinal, result };
+    return result;
+  }
+
+  private getCombinedRawMessageText(messageID: string, isFinal = false): string {
+    const state = this.textMessageStates.get(messageID);
+    if (!state) {
+      return "";
+    }
+
+    const texts = state.orderedPartIds.map((partID) => state.partTexts.get(partID) || "");
+    return texts.filter((text) => !isUpstreamEmptyResponseText(text, isFinal)).join("");
   }
 
   private prepareToolFileContext(

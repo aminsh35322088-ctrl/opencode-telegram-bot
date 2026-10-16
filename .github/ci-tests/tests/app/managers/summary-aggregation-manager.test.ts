@@ -979,6 +979,69 @@ describe("summary/aggregator", () => {
     );
   });
 
+  it("starts and finishes explicit reasoning when the first update is a delta", async () => {
+    const onThinking = vi.fn();
+    const onThinkingFinished = vi.fn();
+    const onPartial = vi.fn();
+    summaryAggregator.setOnThinking(onThinking);
+    summaryAggregator.setOnThinkingFinished(onThinkingFinished);
+    summaryAggregator.setOnPartial(onPartial);
+    summaryAggregator.setSession("session-1");
+
+    summaryAggregator.processEvent({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-first-reasoning-delta",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    summaryAggregator.processEvent({
+      type: "message.part.delta",
+      properties: {
+        part: {
+          id: "reasoning-first-delta",
+          sessionID: "session-1",
+          messageID: "message-first-reasoning-delta",
+          type: "reasoning",
+        },
+        delta: "Checking the files.",
+      },
+    } as unknown as Event);
+
+    summaryAggregator.processEvent({
+      type: "message.part.delta",
+      properties: {
+        part: {
+          id: "answer-after-reasoning",
+          sessionID: "session-1",
+          messageID: "message-first-reasoning-delta",
+          type: "text",
+        },
+        delta: "Finished.",
+      },
+    } as unknown as Event);
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(onThinking).toHaveBeenCalledWith(
+      expect.objectContaining({
+        isFirstUpdate: true,
+        sections: [expect.objectContaining({ text: "Checking the files." })],
+      }),
+    );
+    expect(onPartial).toHaveBeenCalledWith(
+      "session-1",
+      "message-first-reasoning-delta",
+      "Finished.",
+    );
+    expect(onThinkingFinished).toHaveBeenCalledTimes(1);
+  });
+
   it("signals thinking finished once when assistant text starts after reasoning", async () => {
     const onThinkingFinished = vi.fn();
     summaryAggregator.setOnThinkingFinished(onThinkingFinished);
@@ -1677,6 +1740,158 @@ describe("summary/aggregator", () => {
           { id: "part-reasoning-2", text: "Thinking step 2" },
         ],
       }),
+    );
+  });
+
+  it("routes inline think text to reasoning and keeps it out of partial and final answers", async () => {
+    const onThinking = vi.fn();
+    const onThinkingFinished = vi.fn();
+    const onPartial = vi.fn();
+    const onComplete = vi.fn();
+    summaryAggregator.setOnThinking(onThinking);
+    summaryAggregator.setOnThinkingFinished(onThinkingFinished);
+    summaryAggregator.setOnPartial(onPartial);
+    summaryAggregator.setOnComplete(onComplete);
+    summaryAggregator.setSession("session-1");
+
+    summaryAggregator.processEvent({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-inline-thinking",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    summaryAggregator.processEvent({
+      type: "message.part.delta",
+      properties: {
+        part: {
+          id: "inline-text-part",
+          sessionID: "session-1",
+          messageID: "message-inline-thinking",
+          type: "text",
+        },
+        delta: "</think>Check the current state",
+      },
+    } as unknown as Event);
+
+    summaryAggregator.processEvent({
+      type: "message.part.delta",
+      properties: {
+        part: {
+          id: "inline-text-part",
+          sessionID: "session-1",
+          messageID: "message-inline-thinking",
+          type: "text",
+        },
+        delta: " and inspect the files.</think>Here is the result.",
+      },
+    } as unknown as Event);
+
+    summaryAggregator.processEvent({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-inline-thinking",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now(), completed: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(onThinking).toHaveBeenCalled();
+    expect(onThinking.mock.calls.at(-1)?.[0]).toEqual(
+      expect.objectContaining({
+        messageId: "message-inline-thinking",
+        sections: [
+          expect.objectContaining({
+            text: "Check the current state and inspect the files.",
+          }),
+        ],
+      }),
+    );
+    expect(onPartial).toHaveBeenCalledWith(
+      "session-1",
+      "message-inline-thinking",
+      "Here is the result.",
+    );
+    expect(onPartial.mock.calls.flat().join(" ")).not.toContain("</think>");
+    expect(onPartial.mock.calls.flat().join(" ")).not.toContain("Check the current state");
+    expect(onThinkingFinished).toHaveBeenCalledTimes(1);
+    expect(onComplete).toHaveBeenCalledWith(
+      "session-1",
+      "message-inline-thinking",
+      "Here is the result.",
+      expect.any(Object),
+    );
+  });
+
+  it("does not duplicate inline text when an explicit reasoning part also arrives", async () => {
+    const onThinking = vi.fn();
+    const onPartial = vi.fn();
+    summaryAggregator.setOnThinking(onThinking);
+    summaryAggregator.setOnPartial(onPartial);
+    summaryAggregator.setSession("session-1");
+
+    summaryAggregator.processEvent({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-duplicate-inline-thinking",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    summaryAggregator.processEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "explicit-reasoning-part",
+          sessionID: "session-1",
+          messageID: "message-duplicate-inline-thinking",
+          type: "reasoning",
+          text: "The same internal thought.",
+        },
+      },
+    } as unknown as Event);
+
+    summaryAggregator.processEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "inline-answer-part",
+          sessionID: "session-1",
+          messageID: "message-duplicate-inline-thinking",
+          type: "text",
+          text: "</think>Duplicate internal thought.</think>Visible answer.",
+        },
+      },
+    } as unknown as Event);
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(onThinking.mock.calls.at(-1)?.[0]).toEqual(
+      expect.objectContaining({
+        sections: [expect.objectContaining({ text: "The same internal thought." })],
+      }),
+    );
+    expect(onThinking.mock.calls.at(-1)?.[0]?.sections).not.toContainEqual(
+      expect.objectContaining({ text: "Duplicate internal thought." }),
+    );
+    expect(onPartial).toHaveBeenCalledWith(
+      "session-1",
+      "message-duplicate-inline-thinking",
+      "Visible answer.",
     );
   });
 
