@@ -23,7 +23,7 @@ function formatHeader(title?: string): string {
 
 function normalizeThinkingText(text: string): string {
   return text
-    .replace(/<\/?think(?:ing)?\s*>/gi, "")
+    .replace(/[ \t]*<\/?think(?:ing)?\s*>[ \t]*/gi, " ")
     .replace(/\r\n?/g, "\n")
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
