@@ -28,10 +28,7 @@ function quoteText(header: string, text: string) {
 }
 
 function createOpenThinkingBlock(header: string, text: string): TelegramRichBlock {
-  return {
-    type: "blockquote",
-    blocks: [{ type: "paragraph", text: quoteText(header, text) }],
-  };
+  return { type: "thinking", text: text ? `${header}\n${text}` : header };
 }
 
 function createCompletedThinkingBlock(header: string, text: string): TelegramRichBlock {
@@ -74,4 +71,10 @@ export function prepareThinkingPayload(
   }
 
   return parts.length > 0 ? { parts } : null;
+}
+
+/** Native draft content shown immediately, before the provider emits reasoning. */
+export function prepareThinkingPlaceholderPayload(): StreamingMessagePayload {
+  const part = createThinkingPart(formatHeader(), "", false);
+  return { parts: [part] };
 }

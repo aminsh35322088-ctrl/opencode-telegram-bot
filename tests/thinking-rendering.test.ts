@@ -6,9 +6,9 @@ const section = (text: string) => [{ id: "reason", title: "Reasoning", text }];
 const firstBlock = (text: string, final = false) =>
   prepareThinkingPayload(section(text), { final })!.parts[0]!.blocks[0]! as any;
 
-test("active visible reasoning stays a fixed open blockquote while streaming", () => {
-  assert.equal(firstBlock("short").type, "blockquote");
-  assert.equal(firstBlock("x".repeat(321)).type, "blockquote");
+test("active visible reasoning stays a native thinking block while streaming", () => {
+  assert.equal(firstBlock("short").type, "thinking");
+  assert.equal(firstBlock("x".repeat(321)).type, "thinking");
 });
 
 test("every completed reasoning section becomes expandable regardless of length", () => {

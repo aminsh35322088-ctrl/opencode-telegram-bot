@@ -53,6 +53,8 @@ export interface Settings extends GlobalSettings {
   showThinkingContent?: boolean;
   showAssistantRunFooter?: boolean;
   responseStreamingMode?: ResponseStreamingMode;
+  /** One-time migration marker for native stoppable response drafts. */
+  responseStreamingModeVersion?: number;
   messageFormatMode?: MessageFormatMode;
   sendDiffFileAttachments?: boolean;
   promptQueueEnabled?: boolean;

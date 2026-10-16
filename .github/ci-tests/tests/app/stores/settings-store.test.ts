@@ -38,8 +38,33 @@ describe("settings-store", () => {
     expect(getCompactOutputMode()).toBeUndefined();
     expect(getShowThinkingContent()).toBeUndefined();
     expect(getPromptQueueEnabled()).toBeUndefined();
-    expect(getResponseStreamingMode()).toBeUndefined();
+    expect(getResponseStreamingMode()).toBe("draft");
     expect(["raw", "markdown"]).toContain(getMessageFormatMode());
+  });
+
+  it("migrates the old edit default to stoppable draft streaming once", async () => {
+    await writeFile(path.join(tempHome, "app-state.json"), JSON.stringify({ version: 2, settings: {
+      responseStreamingMode: "edit",
+      topicDefaults: { compactOutputMode: false, showThinkingContent: true, responseStreamingMode: "edit", messageFormatMode: "markdown", showAssistantRunFooter: true, sendDiffFileAttachments: true, promptQueueEnabled: false },
+    } }));
+
+    await loadSettings();
+    expect(getResponseStreamingMode()).toBe("draft");
+    await flushSettings();
+    const state = JSON.parse(await readFile(path.join(tempHome, "app-state.json"), "utf8"));
+    expect(state.settings.responseStreamingModeVersion).toBe(1);
+    expect(state.settings.topicDefaults.responseStreamingMode).toBe("draft");
+  });
+
+  it("preserves an explicit edit choice after the one-time migration", async () => {
+    await writeFile(path.join(tempHome, "app-state.json"), JSON.stringify({ version: 2, settings: {
+      responseStreamingModeVersion: 1,
+      responseStreamingMode: "edit",
+      topicDefaults: { compactOutputMode: false, showThinkingContent: true, responseStreamingMode: "edit", messageFormatMode: "markdown", showAssistantRunFooter: true, sendDiffFileAttachments: true, promptQueueEnabled: false },
+    } }));
+
+    await loadSettings();
+    expect(getResponseStreamingMode()).toBe("edit");
   });
 
   it("loads persisted current settings", async () => {

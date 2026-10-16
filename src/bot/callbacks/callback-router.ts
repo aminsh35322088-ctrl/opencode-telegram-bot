@@ -55,7 +55,7 @@ import { handleRailwayOnboardingCallback } from "../commands/railway-onboarding-
 
 type CallbackHandler = (ctx: Context) => Promise<boolean>;
 interface CallbackRoute { name: string; handlers: CallbackHandler[]; errorScope: InteractionErrorScope; }
-interface CallbackRouterDeps { ensureEventSubscription: (directory: string) => Promise<void>; setTelegramContext: (bot: Bot<Context>, chatId: number, sessionId?: string) => void; }
+interface CallbackRouterDeps { ensureEventSubscription: (directory: string) => Promise<void>; startGenerationDraft?: (sessionId: string) => Promise<void>; setTelegramContext: (bot: Bot<Context>, chatId: number, sessionId?: string) => void; }
 function parseCallbackPrefix(data: string): string | null { const separatorIndex = data.indexOf(":"); return separatorIndex <= 0 ? null : data.slice(0, separatorIndex); }
 
 function clearGeneralPanelWizardState(reason: string): void {
@@ -187,7 +187,7 @@ export function registerCallbackRouter(bot: Bot<Context>, deps: CallbackRouterDe
       (ctx) => handleSessionSelect(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription }),
     ], errorScope: "interaction" }],
     ["settings", { name: "settings", handlers: [handleSettingsCallback], errorScope: "none" }],
-    ["skills", { name: "skills", handlers: [(ctx) => handleSkillsCallback(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription })], errorScope: "interaction" }],
+    ["skills", { name: "skills", handlers: [(ctx) => handleSkillsCallback(ctx, { bot, ensureEventSubscription: deps.ensureEventSubscription, startGenerationDraft: deps.startGenerationDraft })], errorScope: "interaction" }],
     ["task", { name: "task", handlers: [handleTaskCallback], errorScope: "taskCreation" }],
     ["tasklist", { name: "tasklist", handlers: [handleTaskListCallback], errorScope: "interaction" }],
     ["variant", { name: "variant", handlers: [handleVariantSelect], errorScope: "interaction" }],
