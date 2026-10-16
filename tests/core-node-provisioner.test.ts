@@ -336,3 +336,38 @@ test('in-place handoff advances only Worker journal identity and preserves servi
  const recycled=await f.controller.handoff('handoff',3);
  assert.equal(recycled.phase,'recycled');assert.equal(recycled.generation,3);assert.equal(recycled.unbound,true);assert.equal(recycled.serviceId,original.serviceId);assert.equal(recycled.volumeId,original.volumeId);assert.equal(f.calls.length,before);
 });
+
+test('deleted pool reconciliation retires only unbound records and permits replacement capacity',async()=>{
+ const f=await fixture();f.add('one');Object.assign(f.bindings.get('one')!,{chatId:0,threadId:0,slot:1,status:'pool-provisioning'});
+ await f.controller.provision('one',1);
+ const before=f.calls.length;
+ const retired=await f.controller.discardDeletedProjects(['a']);
+ assert.deepEqual(retired.map(n=>n.nodeId),['one']);
+ assert.equal(f.calls.length,before,'No destructive Railway mutation for already deleted projects');
+ assert.equal((await f.controller.listWorkers())[0]!.phase,'retired');
+ assert.deepEqual(f.controller.listPools().map(p=>p.projectId),['b']);
+ f.add('two');assert.equal((await f.controller.provision('two',1)).projectId,'b');
+});
+test('deleted pool reconciliation never silently discards an active Topic',async()=>{
+ const f=await fixture();f.add('one');await f.controller.provision('one',1);
+ await assert.rejects(f.controller.discardDeletedProjects(['a']));
+ assert.notEqual((await f.controller.listWorkers())[0]!.phase,'retired');
+});
+test('bootstrap inventory counts actual resources instead of stale journal IDs',async()=>{
+ const f=await fixture();f.add('one');await f.controller.provision('one',1);
+ f.services.length=0;f.volumes.length=0;
+ const observed=await f.controller.bootstrapInventory();
+ assert.equal(observed.workers[0]!.serviceId,undefined);
+ assert.equal(observed.workers[0]!.volumeId,undefined);
+});
+
+test('New Chat live inspection rejects missing volume instead of trusting the journal',async()=>{
+ const f=await fixture();f.add('one');await f.controller.provision('one',1);
+ f.volumes.length=0;
+ await assert.rejects(f.controller.inspectWorker('one',1),/reconciliation_required/);
+});
+test('bootstrap inventory errors never become an empty successful snapshot',async()=>{
+ const f=await fixture();
+ const controller=new NodeProvisioner({...f.options,request:async()=>{throw new Error('API unavailable');}});
+ await assert.rejects(controller.bootstrapInventory(),/API unavailable/);
+});

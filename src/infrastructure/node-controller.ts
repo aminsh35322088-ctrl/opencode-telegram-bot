@@ -55,6 +55,27 @@ export class InfrastructureController {
    await options.registry.persist(path.join(options.stateDirectory,'nodes.json'));
   }});
  }
+ async discardDeletedProjects(projectIds:readonly string[]):Promise<Array<{nodeId:string;generation:number}>>{
+  if(!this.provisioner)throw Error('Worker pools not configured');
+  const retired=await this.provisioner.discardDeletedProjects(projectIds);
+  for(const record of retired){
+   const identity=await this.options.registry.resolve(record.nodeId);
+   if(identity)this.options.registry.install({...identity,binding:{...identity.binding,status:'retired'}});
+   this.verifiedUnbound.delete(record.nodeId);
+  }
+  if(retired.length)await this.options.registry.persist(path.join(this.options.stateDirectory,'nodes.json'));
+  process.stdout.write(`[InfrastructureBoundary] deleted_pools_reconciled projects=${projectIds.length} workers=${retired.length}\n`);
+  return retired.map(({nodeId,generation})=>({nodeId,generation}));
+ }
+ async bootstrapInventory():Promise<{projectCount:number;workers:Array<ProvisionedNode & {verified:boolean}>}>{
+  if(!this.provisioner)throw Error('Worker pools not configured');
+  const inventory=await this.provisioner.bootstrapInventory();
+  const workers=await Promise.all(inventory.workers.map(async worker=>{
+   const identity=await this.options.registry.resolve(worker.nodeId);
+   return {...worker,verified:this.verifiedUnbound.get(worker.nodeId)===worker.generation&&identity?.binding.generation===worker.generation&&identity.binding.status==='available'};
+  }));
+  return {...inventory,workers};
+ }
  private async lookup(id:string):Promise<NodeBinding|undefined>{
   // Fixed canonical path, bounded regular file. Never take a filesystem path from IPC.
   try{const stat=await lstat(this.options.bindingFilename);if(!stat.isFile()||stat.isSymbolicLink()||stat.size>1024*1024)throw Error('Invalid canonical bindings');
@@ -113,8 +134,9 @@ export class InfrastructureController {
  }
  request(operation:string,nodeId:string,generation:number):Promise<ProvisionedNode>{
   const task=this.queue.then(async()=>{
-   if(!['provision','rebind','recycle','retire','reconcile'].includes(operation)||typeof nodeId!=='string'||nodeId.length>128||!Number.isSafeInteger(generation)||generation<1)throw Error('Infrastructure operation denied');
+   if(!['provision','rebind','recycle','retire','reconcile','inspect'].includes(operation)||typeof nodeId!=='string'||nodeId.length>128||!Number.isSafeInteger(generation)||generation<1)throw Error('Infrastructure operation denied');
    const binding=await this.lookup(nodeId);if(!binding||binding.generation!==generation)throw Error('Infrastructure binding denied');
+   if(operation==='inspect'){if(this.poolConfiguration)await this.poolConfiguration;if(!this.provisioner)throw Error('Worker pools not configured');return this.provisioner.inspectWorker(nodeId,generation);}
    if(operation==='provision'){if(this.poolConfiguration)await this.poolConfiguration;if(!this.provisioner)throw Error('Worker pools not configured');return this.provisioner.provision(nodeId,generation);}
    if(operation==='rebind'||operation==='recycle'){
     if(this.poolConfiguration)await this.poolConfiguration;if(!this.provisioner||!this.options.retireNode||!this.options.issueBootstrap||!this.options.rotateNode)throw Error('Worker in-place rotation unavailable');

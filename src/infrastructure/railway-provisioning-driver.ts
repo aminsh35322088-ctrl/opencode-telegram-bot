@@ -13,7 +13,7 @@ interface Journal { version: 1; nodes: ProvisionedNode[] }
 interface Edge<T> { edges: Array<{ node: T }>; pageInfo: { hasNextPage: boolean } }
 interface VolumeInstance { environmentId: string; serviceId: string | null; volumeId: string; sizeMB: number; mountPath: string; isPendingDeletion: boolean }
 interface Inventory {
-  project: { id: string; services: Edge<{ id: string; name: string }>; volumes: Edge<{ id: string; volumeInstances: Edge<VolumeInstance> }> };
+  project: { id: string; services: Edge<{ id: string; name: string; deletedAt?:string|null }>; volumes: Edge<{ id: string; volumeInstances: Edge<VolumeInstance> }> };
   environment: { id: string; projectId: string; serviceInstances: Edge<{serviceId: string; domains: {serviceDomains: Array<{id: string; domain: string}>}; latestDeployment: {id: string} | null}> };
 }
 export interface NodeProvisionerOptions {
@@ -33,7 +33,7 @@ export interface NodeProvisionerOptions {
   /** Install the root-private transport identity before the Worker can call back during startup. */
   configured?(binding: Readonly<NodeBinding>, node: Readonly<ProvisionedNode>): Promise<void>;
 }
-const INVENTORY = `query WorkerInventory($projectId:String!,$environmentId:String!){ project(id:$projectId){id services(first:100){pageInfo{hasNextPage} edges{node{id name}}} volumes(first:100){pageInfo{hasNextPage} edges{node{id volumeInstances(first:100){pageInfo{hasNextPage} edges{node{environmentId serviceId volumeId sizeMB mountPath isPendingDeletion}}}}}}} environment(id:$environmentId){id projectId serviceInstances(first:100){pageInfo{hasNextPage} edges{node{serviceId domains{serviceDomains{id domain}} latestDeployment{id}}}}}}`;
+const INVENTORY = `query WorkerInventory($projectId:String!,$environmentId:String!){ project(id:$projectId){id services(first:100){pageInfo{hasNextPage} edges{node{id name deletedAt}}} volumes(first:100){pageInfo{hasNextPage} edges{node{id volumeInstances(first:100){pageInfo{hasNextPage} edges{node{environmentId serviceId volumeId sizeMB mountPath isPendingDeletion}}}}}}} environment(id:$environmentId){id projectId serviceInstances(first:100){pageInfo{hasNextPage} edges{node{serviceId domains{serviceDomains{id domain}} latestDeployment{id}}}}}}`;
 
 /** Root-owned request-driven controller: no background loop and no arbitrary GraphQL interface. */
 export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
@@ -44,6 +44,34 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
     if (control.protocol !== "https:" || !control.hostname.endsWith(".up.railway.app") || control.username || control.password || control.search || control.hash || control.pathname !== "/") throw new Error("Control URL must be a Railway HTTPS domain");
     if ((!options.pools.length && !options.createPool) || new Set(options.pools.map(p=>p.projectId)).size!==options.pools.length || options.pools.some(p=>!p.projectId||!p.environmentId||(p.capacity!==undefined&&(!Number.isSafeInteger(p.capacity)||p.capacity<0)))) throw new Error("Invalid Worker pool policy");
     if(options.workerImage&&!/^[a-z0-9][a-z0-9./_-]*@sha256:[a-f0-9]{64}$/.test(options.workerImage))throw new Error("Worker image must be an immutable digest");
+  }
+  /** Only explicit Railway deletedAt evidence authorizes forgetting an unbound pool. */
+  discardDeletedProjects(projectIds:readonly string[]):Promise<ProvisionedNode[]>{
+    return this.singleFlight(async()=>{
+      const deleted=new Set(projectIds);const journal=await this.read(deleted);
+      const records=journal.nodes.filter(node=>deleted.has(node.projectId));
+      for(const record of records){
+        if(record.phase==="retired")continue;
+        const binding=await this.options.lookup(record.nodeId);
+        if(!record.unbound||!binding||binding.generation!==record.generation||binding.chatId!==0||binding.threadId!==0)throw new WorkerProvisioningError("reconciliation_required");
+      }
+      for(const record of records)record.phase="retired";
+      if(records.length)await this.save(journal);
+      this.options.pools=this.options.pools.filter(pool=>!deleted.has(pool.projectId));
+      return structuredClone(records);
+    });
+  }
+  async bootstrapInventory():Promise<{projectCount:number;workers:ProvisionedNode[]}>{
+      const journal=await this.read();const workers:ProvisionedNode[]=[];
+      for(const pool of this.options.pools){
+        const current=await this.inventory(pool);
+        for(const record of journal.nodes.filter(node=>node.projectId===pool.projectId&&node.phase!=="retired")){
+          const service=current.project.services.edges.find(edge=>edge.node.id===record.serviceId&&edge.node.name===`topic-node-${record.nodeId}`)?.node;
+          const volume=service&&current.project.volumes.edges.find(edge=>edge.node.id===record.volumeId&&edge.node.volumeInstances.edges.some(instance=>instance.node.environmentId===pool.environmentId&&instance.node.serviceId===service.id&&instance.node.mountPath==="/data"&&!instance.node.isPendingDeletion));
+          workers.push({...record,serviceId:service?.id,volumeId:volume?.node.id});
+        }
+      }
+      return {projectCount:this.options.pools.length,workers};
   }
   listPools():readonly WorkerPool[]{return structuredClone(this.options.pools);}
   setPoolCapacity(capacity:number):void{
@@ -57,7 +85,10 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       const journal=await this.read();const record=journal.nodes.find(n=>n.nodeId===nodeId&&n.generation===generation);
       if(!record)throw new WorkerProvisioningError("reconciliation_required");
       const pool=this.options.pools.find(p=>p.projectId===record.projectId)!;const inventory=await this.inventory(pool);
-      if(record.serviceId&&!inventory.project.services.edges.some(e=>e.node.id===record.serviceId&&e.node.name===`topic-node-${nodeId}`))throw new WorkerProvisioningError("reconciliation_required");
+      if(!record.serviceId||!record.volumeId||!record.endpoint||!inventory.project.services.edges.some(e=>e.node.id===record.serviceId&&e.node.name===`topic-node-${nodeId}`))throw new WorkerProvisioningError("reconciliation_required");
+      const instance=inventory.environment.serviceInstances.edges.find(e=>e.node.serviceId===record.serviceId)?.node;
+      const attached=inventory.project.volumes.edges.flatMap(e=>e.node.volumeInstances.edges.map(v=>v.node)).filter(v=>v.environmentId===pool.environmentId&&v.serviceId===record.serviceId);
+      if(!instance?.latestDeployment?.id||!instance.domains.serviceDomains.some(domain=>new URL(record.endpoint!).hostname===domain.domain)||attached.length!==1||attached[0]!.volumeId!==record.volumeId||attached[0]!.mountPath!=="/data"||attached[0]!.isPendingDeletion)throw new WorkerProvisioningError("reconciliation_required");
       return {...structuredClone(record),deploymentId:inventory.environment.serviceInstances.edges.find(e=>e.node.serviceId===record.serviceId)?.node.latestDeployment?.id};
     });
   }
@@ -69,13 +100,13 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       return {pool:structuredClone(pool),used,available:pool.capacity===undefined?null:Math.max(0,pool.capacity-used)};
     }));
   }
-  private async read(): Promise<Journal> {
+  private async read(deletedProjects:ReadonlySet<string>=new Set()): Promise<Journal> {
     try {
       const journal = JSON.parse(await readFile(this.options.journalPath, "utf8")) as Journal;
       if (journal.version !== 1 || !Array.isArray(journal.nodes) || journal.nodes.length > 1000) throw new Error("Invalid infrastructure journal");
       const ids = new Set<string>();
       for (const item of journal.nodes) {
-        if (ids.has(item.nodeId) || !Number.isSafeInteger(item.generation) || item.generation < 1 || !this.options.pools.some(pool => pool.projectId === item.projectId && pool.environmentId === item.environmentId)) throw new Error("Invalid infrastructure ownership");
+        if (ids.has(item.nodeId) || !Number.isSafeInteger(item.generation) || item.generation < 1 || (item.phase!=="retired" && !deletedProjects.has(item.projectId) && !this.options.pools.some(pool => pool.projectId === item.projectId && pool.environmentId === item.environmentId))) throw new Error("Invalid infrastructure ownership");
         ids.add(item.nodeId);
       }
       return journal;
@@ -150,6 +181,7 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
     this.options.onStage?.("WorkerInventory");
     const inventory = await this.options.request<Inventory>(INVENTORY, { projectId: pool.projectId, environmentId: pool.environmentId });
     if (inventory.project.id !== pool.projectId || inventory.environment.id !== pool.environmentId || inventory.environment.projectId !== pool.projectId || inventory.project.services.pageInfo.hasNextPage || inventory.project.volumes.pageInfo.hasNextPage || inventory.environment.serviceInstances.pageInfo.hasNextPage || inventory.project.volumes.edges.some(volume => volume.node.volumeInstances.pageInfo.hasNextPage)) throw new Error("Incomplete infrastructure inventory");
+    inventory.project.services.edges=inventory.project.services.edges.filter(entry=>!entry.node.deletedAt);
     this.options.onInventory?.(inventory);
     return inventory;
   }

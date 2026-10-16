@@ -13,7 +13,7 @@ export function isRailwayBootstrapResourceLimit(error:unknown):boolean {
 }
 
 export function canContinueRailwayBootstrapWithLimitedResources(progress:RailwayBootstrapProgress,error:unknown):boolean {
-  return isRailwayBootstrapResourceLimit(error) && progress.projects>0 && progress.healthy>0 && progress.workers>=progress.healthy && progress.volumes>=progress.healthy;
+  return progress.verified!==false && isRailwayBootstrapResourceLimit(error) && progress.projects>0 && progress.healthy>0 && progress.workers>=progress.healthy && progress.volumes>=progress.healthy;
 }
 
 export function renderRailwayBootstrapLimit(progress:RailwayBootstrapProgress):string {
@@ -30,6 +30,7 @@ export interface RailwayBootstrapProgress {
   healthy: number;
   healthyTarget: number;
   complete: boolean;
+  verified?:boolean;
 }
 
 export function summarizeRailwayBootstrap(
@@ -71,9 +72,22 @@ export function renderRailwayBootstrapProgress(progress: RailwayBootstrapProgres
     "",
     "✅ Token authenticated",
     "✅ Account verified",
-    `${marker(progress.projects, progress.projectsTarget)} Projects created ${progress.projects}/${progress.projectsTarget}`,
-    `${marker(progress.workers, progress.workersTarget)} Workers created ${progress.workers}/${progress.workersTarget}`,
-    `${marker(progress.volumes, progress.volumesTarget)} Volumes attached ${progress.volumes}/${progress.volumesTarget}`,
-    `${marker(progress.healthy, progress.healthyTarget)} Deploy &amp; health checks ${progress.healthy}/${progress.healthyTarget}`,
+    `${progress.verified===false?"○":marker(progress.projects, progress.projectsTarget)} Projects created ${progress.verified===false?"—":progress.projects}/${progress.projectsTarget}`,
+    `${progress.verified===false?"○":marker(progress.workers, progress.workersTarget)} Workers created ${progress.verified===false?"—":progress.workers}/${progress.workersTarget}`,
+    `${progress.verified===false?"○":marker(progress.volumes, progress.volumesTarget)} Volumes attached ${progress.verified===false?"—":progress.volumes}/${progress.volumesTarget}`,
+    `${progress.verified===false?"○":marker(progress.healthy, progress.healthyTarget)} Deploy &amp; health checks ${progress.verified===false?"—":progress.healthy}/${progress.healthyTarget}`,
   ].join("\n");
+}
+
+/** Persisted identities are not proof that Railway resources still exist. */
+export function summarizeObservedRailwayBootstrap(
+ bindings:readonly (RailwayBootstrapBindingLike & {nodeId:string;generation:number})[],
+ workers:readonly {nodeId:string;generation:number;projectId:string;serviceId?:string;volumeId?:string;verified?:boolean}[],
+ projectCount:number,
+ target:number,
+):RailwayBootstrapProgress {
+ return summarizeRailwayBootstrap(bindings.map(binding=>{
+  const worker=workers.find(item=>item.nodeId===binding.nodeId&&item.generation===binding.generation);
+  return {...binding,status:binding.status==="available"&&worker?.verified!==true?"pool-provisioning":binding.status,projectId:worker?.projectId,serviceId:worker?.serviceId,volumeId:worker?.volumeId};
+ }),projectCount,target);
 }

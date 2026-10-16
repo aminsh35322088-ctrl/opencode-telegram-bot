@@ -5,7 +5,7 @@ import {mkdtemp} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {nodeBindings,NodeBindingStore} from '../src/control-plane/node-bindings.js';
-import {createRemoteTopicSession,TopicNodeLifecycle} from '../src/control-plane/topic-node-lifecycle.js';
+import {createRemoteTopicSession,TopicNodeLifecycle,topicNodeLifecycle} from '../src/control-plane/topic-node-lifecycle.js';
 import type {ProvisionedNode} from '../src/infrastructure/node-provisioner.js';
 
 async function fixture() {
@@ -28,7 +28,7 @@ async function fixture() {
     },node:async(binding,operation)=>{
       assert.equal(binding.chatId,0);assert.equal(binding.threadId,0);assert.equal(binding.sessionId,undefined);
       operations.push(operation);
-      if(operation==='health')return {ok:true,result:{ready:!timeout}};
+      if(operation==='health')return {ok:true,result:{ready:!timeout,readiness:'ready-unbound'}};
       if(operation==='sync-global')return {ok:true,result:{revision:7,hash:corrupt?'wrong':'hash7'}};
       assert.fail('unbound bootstrap must not request '+operation);
     }});
@@ -109,11 +109,11 @@ test('limited bootstrap keeps four ready slots and New Chat claims them without 
 });
 
 
-test('New Chat reaches Telegram creation regardless of historical warm pool capacity',async()=>{
+test('New Chat with no verified capacity never creates a Telegram Topic',async()=>{
  let creations=0;const reachedCreate=new Error('Telegram creation reached');
  const api={raw:{createForumTopic:async()=>{creations++;throw reachedCreate;}}} as unknown as Api;
- await assert.rejects(createRemoteTopicSession(api,-100,'/topic'),error=>error===reachedCreate);
- assert.equal(creations,1);
+ await assert.rejects(createRemoteTopicSession(api,-100,'/topic'),/CAPACITY EXHAUSTED/);
+ assert.equal(creations,0);
 });
 
 test('administrative warm capacity can exceed four without changing default lazy allocation',async()=>{
@@ -124,18 +124,19 @@ test('administrative warm capacity can exceed four without changing default lazy
 test('concurrent duplicate New Chat operation reaches Telegram create only once',async()=>{
  let creations=0;const failure=new Error('Telegram create failed');
  const api={raw:{createForumTopic:async()=>{creations++;await new Promise(resolve=>setTimeout(resolve,10));throw failure;}}} as unknown as Api;
+ const verify=topicNodeLifecycle.verifyAvailableWorker;
+ topicNodeLifecycle.verifyAvailableWorker=async()=>({nodeId:'verified',generation:1} as never);
  const key='test-create-'+Date.now();
  const first=createRemoteTopicSession(api,-100,'/duplicate',key);
  // The same request identity survives a caller workspace change on retry.
  const second=createRemoteTopicSession(api,-100,'/duplicate-other',key);
- await Promise.allSettled([first,second]);
- assert.equal(creations,1);
+ try{await Promise.allSettled([first,second]);assert.equal(creations,1);}finally{topicNodeLifecycle.verifyAvailableWorker=verify;}
 });
 
 test('reducing explicit warm target fences and retires only unused pending reservations',async()=>{
  const bindings=new NodeBindingStore(path.join(await mkdtemp(path.join(tmpdir(),'trim-warm-')),'bindings.json'));
  const slots=await bindings.ensurePoolSlots(2);await bindings.update(slots[0]!.nodeId,1,{status:'available',endpoint:'https://worker.up.railway.app'});
- const retired:string[]=[];const lifecycle=new TopicNodeLifecycle({bindings,now:Date.now,wait:async()=>{},snapshot:async()=>({revision:0,hash:'hash'}),node:async(_binding,operation)=>({ok:true,result:operation==='health'?{ready:true}:{revision:0,hash:'hash'}}),infrastructure:async(operation,nodeId,generation)=>{
+ const retired:string[]=[];const lifecycle=new TopicNodeLifecycle({bindings,now:Date.now,wait:async()=>{},snapshot:async()=>({revision:0,hash:'hash'}),node:async(_binding,operation)=>({ok:true,result:operation==='health'?{ready:true,readiness:'ready-unbound'}:{revision:0,hash:'hash'}}),infrastructure:async(operation,nodeId,generation)=>{
   if(operation==='retire'){const binding=(await bindings.list()).find(b=>b.nodeId===nodeId)!;assert.equal(binding.status,'retiring');assert.equal(generation,2);retired.push(nodeId);}
   return {nodeId,generation,projectId:'p',environmentId:'e',phase:operation==='retire'?'retired':'deploying'};
  }});
@@ -147,7 +148,8 @@ test('completed New Chat retry acknowledges without executing or reserving, incl
  const {saveTelegramTopicBinding,removeTelegramTopicBinding}=await import('../src/app/services/telegram-topic-store.js');
  const {topicNodeLifecycle}=await import('../src/control-plane/topic-node-lifecycle.js');
  const chatId=-Date.now(),threadId=777,key='completed';const directory='/completed-topic';
- const binding=await nodeBindings.reserve(chatId,threadId);
+ let binding=await nodeBindings.reserve(chatId,threadId);
+ binding=await nodeBindings.update(binding.nodeId,binding.generation,{status:'ready',endpoint:'https://worker.up.railway.app',sessionId:'completed-session'});
  await nodeBindings.beginCreation(key,chatId,directory);await nodeBindings.recordCreation(key,chatId,{threadId,completed:true,nodeId:binding.nodeId,generation:binding.generation});
  await saveTelegramTopicBinding({chatId,threadId,directory,sessionId:'completed-session',title:'Completed',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});
  const original=topicNodeLifecycle.ensureReady;let executions=0;

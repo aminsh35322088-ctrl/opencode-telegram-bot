@@ -10,6 +10,8 @@ export interface ProvisionedNode {
 
 /** Privileged provider boundary; topic/control code never sends GraphQL. */
 export interface WorkerProvisioningDriver {
+  discardDeletedProjects(projectIds:readonly string[]):Promise<ProvisionedNode[]>;
+  bootstrapInventory():Promise<{projectCount:number;workers:ProvisionedNode[]}>;
   listPools(): readonly WorkerPool[];
   listWorkers():Promise<ProvisionedNode[]>;
   inspectWorker(nodeId:string,generation:number):Promise<ProvisionedNode>;

@@ -87,3 +87,31 @@ test("limited onboarding requires an actual Railway quota rejection and verified
   assert.equal(progress.complete,false);
   assert.equal(progress.workersTarget,5);
 });
+
+test('live empty inventory overrides four persisted services after reset',async()=>{
+ const {summarizeObservedRailwayBootstrap}=await import('../src/bot/services/railway-bootstrap-progress.js');
+ const stale=Array.from({length:4},(_,i)=>({nodeId:`n${i}`,generation:1,slot:i+1,projectId:'deleted',serviceId:`s${i}`,volumeId:`v${i}`,status:'available'}));
+ const progress=summarizeObservedRailwayBootstrap(stale,[],0,5);
+ assert.equal(progress.workers,0);assert.equal(progress.volumes,0);assert.equal(progress.healthy,0);assert.equal(progress.projects,0);assert.equal(progress.complete,false);
+});
+test('live inventory cannot count another generation as ready',async()=>{
+ const {summarizeObservedRailwayBootstrap}=await import('../src/bot/services/railway-bootstrap-progress.js');
+ const progress=summarizeObservedRailwayBootstrap([{nodeId:'n',generation:2,status:'available'}],[{nodeId:'n',generation:1,projectId:'p',serviceId:'s',volumeId:'v'}],1,5);
+ assert.equal(progress.workers,0);assert.equal(progress.healthy,0);
+});
+
+test('an available binding cannot announce healthy before Root boundary verification',async()=>{
+ const {summarizeObservedRailwayBootstrap}=await import('../src/bot/services/railway-bootstrap-progress.js');
+ const binding={nodeId:'n',generation:1,status:'available'};
+ const worker={nodeId:'n',generation:1,projectId:'p',serviceId:'s',volumeId:'v',verified:false};
+ assert.equal(summarizeObservedRailwayBootstrap([binding],[worker],1,1).complete,false);
+ assert.equal(summarizeObservedRailwayBootstrap([binding],[{...worker,verified:true}],1,1).complete,true);
+});
+
+test('unverified inventory hides cached counts and cannot unlock limited Continue',async()=>{
+ const {summarizeRailwayBootstrap,renderRailwayBootstrapProgress,canContinueRailwayBootstrapWithLimitedResources}=await import('../src/bot/services/railway-bootstrap-progress.js');
+ const progress={...summarizeRailwayBootstrap([{serviceId:'s',volumeId:'v',status:'available'}],1,5),complete:false,verified:false};
+ const text=renderRailwayBootstrapProgress(progress);
+ assert.match(text,/Workers created —\/5/);assert.doesNotMatch(text,/Workers created 1\/5/);
+ assert.equal(canContinueRailwayBootstrapWithLimitedResources(progress,new Error('Infrastructure operation failed (resource_limit, HTTP 200)')),false);
+});

@@ -108,3 +108,14 @@ test('lazy Worker receives a durable slot and recycles bound ownership to next u
   const rebound=await store.reserve(-100,23);
   assert.equal(rebound.nodeId,bound.nodeId);assert.equal(rebound.slot,bound.slot);assert.equal(rebound.generation,recycled.generation+1);assert.equal(rebound.status,'reserved');
 });
+
+test('prepared Worker claim is atomic and never falls back to another Worker',async()=>{
+ const store=new NodeBindingStore(path.join(await mkdtemp(path.join(tmpdir(),'prepared-claim-')),'bindings.json'));
+ const slots=await store.ensurePoolSlots(2);
+ for(const slot of slots)await store.update(slot.nodeId,1,{status:'available',projectId:'p',serviceId:`s${slot.slot}`,volumeId:`v${slot.slot}`,endpoint:'https://worker.up.railway.app'});
+ const selected=(await store.list())[0]!;
+ const results=await Promise.allSettled([store.reservePrepared(-100,2,selected),store.reservePrepared(-100,3,selected)]);
+ assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+ assert.equal((await store.list()).filter(b=>b.status==='available').length,1);
+ assert.equal((await store.list()).length,2);
+});

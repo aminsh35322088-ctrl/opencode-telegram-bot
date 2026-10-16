@@ -7,11 +7,12 @@ import type {Context} from "grammy";
 
 test("limited Continue rechecks quota and verified Workers before persisting Main panel admission",async t=>{
  process.env.OPENCODE_TELEGRAM_HOME=await mkdtemp(path.join(tmpdir(),"railway-limited-"));
+ let liveCount=0;
  const originalSend=process.send;
  const listeners=process.listeners("message");
  process.send=((request:{requestId:string;operation:string})=>{
   assert.ok(["status","settings.get"].includes(request.operation));
-  const result=request.operation==="settings.get"?{workerCreationEnabled:true,warmCapacity:5,workersPerProject:5}:{configured:true,tokenType:"workspace",workspaceId:"w",projectCount:1};
+  const result=request.operation==="settings.get"?{workerCreationEnabled:true,warmCapacity:5,workersPerProject:5}:{configured:true,tokenType:"workspace",workspaceId:"w",projectCount:1,workers:Array.from({length:liveCount},(_,index)=>({nodeId:`n${index}`,generation:1,projectId:"p",serviceId:`s${index}`,volumeId:`v${index}`,verified:true}))};
   queueMicrotask(()=>process.emit("message",{channel:"infrastructure-configure-response",requestId:request.requestId,ok:true,result},undefined));
   return true;
  }) as typeof process.send;
@@ -37,6 +38,7 @@ test("limited Continue rechecks quota and verified Workers before persisting Mai
  try{
   for(const scenario of cases)await t.test(scenario.name,async sub=>{
    await setRailwaySetupCompleted(false);
+   liveCount=scenario.count;
    let probes=0,opened=0,deleted=0;
    sub.mock.method(nodeBindings,"list",async()=>Array.from({length:scenario.count},(_,index)=>({nodeId:`n${index}`,slot:index+1,generation:1,chatId:0,threadId:0,projectId:"p",serviceId:`s${index}`,volumeId:`v${index}`,status:"available"})));
    sub.mock.method(topicNodeLifecycle,"bootstrapPool",async target=>{assert.equal(target,5);probes++;if(scenario.error)throw scenario.error;return [];});
@@ -56,8 +58,9 @@ test("limited Continue rechecks quota and verified Workers before persisting Mai
    }
   });
   await t.test("Retry renders truthful Free plan limit choices with real newlines",async sub=>{
+   liveCount=4;
    await setRailwaySetupCompleted(false);
-   sub.mock.method(nodeBindings,"list",async()=>Array.from({length:4},(_,index)=>({nodeId:`n${index}`,slot:index+1,projectId:"p",serviceId:`s${index}`,volumeId:`v${index}`,status:"available"})));
+   sub.mock.method(nodeBindings,"list",async()=>Array.from({length:4},(_,index)=>({nodeId:`n${index}`,generation:1,slot:index+1,projectId:"p",serviceId:`s${index}`,volumeId:`v${index}`,status:"available"})));
    sub.mock.method(topicNodeLifecycle,"bootstrapPool",async()=>{throw quota;});
    let finish:()=>void=()=>{};
    const rendered=new Promise<void>(resolve=>{finish=resolve;});

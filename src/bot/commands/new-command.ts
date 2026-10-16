@@ -33,7 +33,7 @@ export interface NewCommandDeps {
 
 const newCommandFlights=new Map<string,Promise<void>>();
 export function newCommand(ctx: CommandContext<Context>, deps: NewCommandDeps): Promise<void> {
-  const key=`${ctx.chat.id}:${ctx.update.update_id}`;
+  const key=String(ctx.chat.id);
   const existing=newCommandFlights.get(key);if(existing)return existing;
   const operation=createNewSession(ctx,deps).finally(()=>{if(newCommandFlights.get(key)===operation)newCommandFlights.delete(key);});
   newCommandFlights.set(key,operation);return operation;
@@ -46,6 +46,7 @@ async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDe
   let binding: TelegramTopicBinding | null = null;
 
   try {
+    if(process.env.CONTROL_APPLICATION_IPC==="1"&&!isTopicNodeCreationEnabled())throw new WorkerProvisioningError("capacity_exhausted");
     directory = await createTelegramTopicWorkspace(ctx.chat.id);
     const remote = isTopicNodeCreationEnabled() ? await createRemoteTopicSession(deps.bot.api,ctx.chat.id,directory,`telegram-new:${ctx.update.update_id}`) : null;
     if(remote?.reused){

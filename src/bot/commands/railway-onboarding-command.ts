@@ -9,7 +9,7 @@ import {setTopicNodeCreationEnabled,topicNodeLifecycle} from "../../control-plan
 import {normalizeRailwayWorkerSettings,type RailwayWorkerSettings} from "../../infrastructure/railway-worker-settings.js";
 import {WorkerProvisioningError} from "../../infrastructure/worker-provisioning-driver.js";
 import {isRailwaySetupCompleted,setRailwaySetupCompleted} from "../../app/stores/settings-store.js";
-import {canContinueRailwayBootstrapWithLimitedResources,isRailwayBootstrapResourceLimit,renderRailwayBootstrapLimit,renderRailwayBootstrapProgress,summarizeRailwayBootstrap,type RailwayBootstrapProgress} from "../services/railway-bootstrap-progress.js";
+import {canContinueRailwayBootstrapWithLimitedResources,isRailwayBootstrapResourceLimit,renderRailwayBootstrapLimit,renderRailwayBootstrapProgress,summarizeObservedRailwayBootstrap,type RailwayBootstrapProgress} from "../services/railway-bootstrap-progress.js";
 import {t} from "../../i18n/index.js";
 
 interface WorkspaceChoice {id:string;name:string}
@@ -20,6 +20,9 @@ interface SetupStatus {
   workspaceName?:string;
   blockedReason?:"secret-invalid";
   projectCount?:number;
+  workers?:Array<{nodeId:string;generation:number;projectId:string;serviceId?:string;volumeId?:string;verified?:boolean}>;
+  deletedProjectIds?:string[];
+  deletedWorkers?:Array<{nodeId:string;generation:number}>;
 }
 interface ValidationResult {valid:boolean;tokenType?:"account"|"workspace";subjectName?:string;workspaces?:WorkspaceChoice[];reason?:string}
 
@@ -76,8 +79,15 @@ async function bootstrapProgress():Promise<RailwayBootstrapProgress>{
  const current=status(await requestInfrastructureSetup("status"));
  if(!current.configured)throw new Error("Railway setup is not configured");
  const bindings=await nodeBindings.list();
- const bindingProjects=new Set(bindings.filter(binding=>binding.status!=="retired"&&binding.slot!==undefined&&binding.slot<=INITIAL_BOOTSTRAP_WORKERS&&binding.projectId).map(binding=>binding.projectId!)).size;
- return summarizeRailwayBootstrap(bindings,Math.max(current.projectCount??0,bindingProjects),INITIAL_BOOTSTRAP_WORKERS);
+ // Only explicit deletion evidence from the privileged inventory releases slots.
+ for(const binding of bindings){
+  if(binding.status!=="retired"&&binding.chatId===0&&binding.threadId===0&&(binding.projectId&&current.deletedProjectIds?.includes(binding.projectId)||current.deletedWorkers?.some(worker=>worker.nodeId===binding.nodeId&&worker.generation===binding.generation))){
+   await nodeBindings.update(binding.nodeId,binding.generation,{status:"retired"});
+   binding.status="retired";
+  }
+ }
+ if(!Array.isArray(current.workers))throw new Error("Railway resource inventory unavailable");
+ return summarizeObservedRailwayBootstrap(bindings,current.workers,current.projectCount??0,INITIAL_BOOTSTRAP_WORKERS);
 }
 function continueKeyboard(progress:RailwayBootstrapProgress):InlineKeyboard|undefined{
  return progress.complete?new InlineKeyboard().text("Continue →","railway:continue"):undefined;
@@ -120,11 +130,11 @@ async function startRailwayBootstrap(ctx:Context,settingsInput:RailwayWorkerSett
      progress=await bootstrapProgress();
      const signature=JSON.stringify(progress);
      if(signature!==lastSignature){lastSignature=signature;await editBootstrapMessage(ctx,chatId,targetMessageId,progress);}
-    }catch(error){logger.warn("[RailwayOnboarding] Could not refresh bootstrap progress",error);}
+    }catch(error){progress={...progress,complete:false,verified:false};await editBootstrapMessage(ctx,chatId,targetMessageId,progress).catch(()=>{});logger.warn("[RailwayOnboarding] Could not refresh bootstrap progress",error);}
     await Promise.race([operation,new Promise(resolve=>setTimeout(resolve,1_500))]);
    }
    await operation;
-   progress=await bootstrapProgress().catch(()=>progress);
+   progress=await bootstrapProgress().catch(()=>({...progress,complete:false,verified:false}));
    if(!failure&&progress.complete){
     await editBootstrapMessage(ctx,chatId,targetMessageId,progress);
     logger.info(`[RailwayOnboarding] Initial fleet ready: chat=${chatId}, projects=${progress.projects}, workers=${progress.workers}, volumes=${progress.volumes}, healthy=${progress.healthy}`);

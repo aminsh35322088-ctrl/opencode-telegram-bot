@@ -99,6 +99,21 @@ export class NodeBindingStore {
       state.bindings.push(binding); return binding;
     });
   }
+  /** Claim exactly the live-verified Worker; concurrent callers cannot substitute capacity. */
+  reservePrepared(chatId:number,threadId:number,expected:Readonly<NodeBinding>):Promise<NodeBinding>{
+    return this.transaction(state=>{
+      if(chatId===0||!Number.isSafeInteger(chatId)||!Number.isSafeInteger(threadId)||threadId<=1)throw new Error("AI node requires a Telegram Topic");
+      const existing=state.bindings.find(binding=>binding.chatId===chatId&&binding.threadId===threadId&&binding.status!=="retired");
+      if(existing){
+        if(existing.nodeId!==expected.nodeId||![expected.generation,expected.generation+1].includes(existing.generation))throw new Error("Prepared Worker identity changed");
+        return existing;
+      }
+      const binding=state.bindings.find(item=>item.nodeId===expected.nodeId);
+      if(!binding||binding.generation!==expected.generation||binding.status!=="available"||binding.chatId!==0||binding.threadId!==0||!binding.serviceId||!binding.volumeId||!binding.endpoint||binding.serviceId!==expected.serviceId||binding.volumeId!==expected.volumeId||binding.projectId!==expected.projectId||binding.endpoint!==expected.endpoint)throw new Error("Prepared Worker is no longer available");
+      binding.generation++;binding.chatId=chatId;binding.threadId=threadId;binding.status="reserved";binding.updatedAt=new Date().toISOString();
+      return binding;
+    });
+  }
   /** Durable Telegram create receipt: unknown external results are never blindly replayed. */
   beginCreation(key:string,chatId:number,directory:string):Promise<{fresh:boolean;operation:TopicCreation}>{
     return this.transaction(state=>{

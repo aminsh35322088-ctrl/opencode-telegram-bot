@@ -85,7 +85,8 @@ async function main(): Promise<void> {
     let secretTokenType:"account"|"workspace"="workspace";
     let secretInvalid=false;
     let poolConfigured=false;
-    const workerPoolProjectIds=new Set<string>();
+    const deletedWorkerProjectIds=new Set<string>();
+    let deletedWorkers:Array<{nodeId:string;generation:number}>=[];
     const configureWorkspace=async(workspaceId:string):Promise<void>=>{
       if(poolConfigured){
         if(configuredWorkspaceId!==workspaceId)throw new Error("Railway workspace is already active");
@@ -97,13 +98,12 @@ async function main(): Promise<void> {
         try{const contract=await infrastructure.request<{__type:{inputFields:Array<{name:string}>}}>('query WorkerVolumeContract{__type(name:"VolumeCreateInput"){inputFields{name}}}');
           process.stdout.write(`[InfrastructureBoundary] volume_create_fields=${contract.__type.inputFields.map(field=>field.name).filter(name=>/^[A-Za-z]+$/.test(name)).join(",")}\n`);
         }catch{process.stdout.write("[InfrastructureBoundary] volume_contract_unavailable\n");}
-        const resolved=(await resolveWorkerPools({request:infrastructure.request,workspaceId,controlProjectId:runtimeConfig.projectId,controlEnvironmentId:runtimeConfig.environmentId,region:runtimeConfig.region,onStage:value=>{stage=value;}})).map(pool=>({...pool,capacity:workerSettings.workersPerProject}));
-        for(const pool of resolved)workerPoolProjectIds.add(pool.projectId);
+        const resolved=(await resolveWorkerPools({request:infrastructure.request,workspaceId,controlProjectId:runtimeConfig.projectId,controlEnvironmentId:runtimeConfig.environmentId,region:runtimeConfig.region,onDeletedProjects:ids=>{for(const id of ids)deletedWorkerProjectIds.add(id);},onStage:value=>{stage=value;}})).map(pool=>({...pool,capacity:workerSettings.workersPerProject}));
         controller.configurePools(resolved,controlUrl,async excluded=>{
           const created=await createWorkerPool({request:infrastructure.request,workspaceId,region:runtimeConfig.region,excludedProjectIds:excluded});
-          workerPoolProjectIds.add(created.projectId);
           return {...created,capacity:workerSettings.workersPerProject};
         });
+        deletedWorkers=await controller.discardDeletedProjects([...deletedWorkerProjectIds]);
         configuredWorkspaceId=workspaceId;poolConfigured=true;
         for(const pool of resolved)process.stdout.write(`[InfrastructureBoundary] worker_pool project=${pool.projectId} environment=${pool.environmentId} capacity=${pool.capacity??"railway-quota"}\n`);
         try{
@@ -154,15 +154,17 @@ async function main(): Promise<void> {
     const setupController={
       status:async()=>{
         await startupPoolConfiguration.catch(()=>undefined);
-        const projectCount=workerPoolProjectIds.size;
+        const inventory=poolConfigured?await controller.bootstrapInventory():{projectCount:0,workers:[]};
+        const {projectCount}=inventory;
+        const observed={projectCount,workers:inventory.workers,deletedWorkers,deletedProjectIds:[...deletedWorkerProjectIds]};
         if(railwaySecretPresent){
-          if(secretInvalid||!poolConfigured||!configuredWorkspaceId)return {configured:false as const,blockedReason:"secret-invalid" as const,projectCount};
-          return {configured:true as const,tokenType:secretTokenType,workspaceId:configuredWorkspaceId,...(configuredWorkspaceName?{workspaceName:configuredWorkspaceName}:{}),projectCount};
+          if(secretInvalid||!poolConfigured||!configuredWorkspaceId)return {configured:false as const,blockedReason:"secret-invalid" as const,...observed};
+          return {configured:true as const,tokenType:secretTokenType,workspaceId:configuredWorkspaceId,...(configuredWorkspaceName?{workspaceName:configuredWorkspaceName}:{}),...observed};
         }
         const current=await onboarding.status();
-        if(current.configured)return {...current,projectCount};
-        if(infrastructure.configured&&configuredWorkspaceId)return {configured:true as const,tokenType:"workspace" as const,workspaceId:configuredWorkspaceId,projectCount};
-        return {...current,projectCount};
+        if(current.configured)return {...current,...observed};
+        if(infrastructure.configured&&configuredWorkspaceId)return {configured:true as const,tokenType:"workspace" as const,workspaceId:configuredWorkspaceId,...observed};
+        return {...current,...observed};
       },
       begin:(token:string)=>onboarding.begin(token),
       selectWorkspace:async(workspaceId:string)=>{const result=await onboarding.selectWorkspace(workspaceId);configuredWorkspaceName=result.configured?result.workspaceName:undefined;return result;},

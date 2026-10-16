@@ -16,7 +16,7 @@ export function setTopicNodeCreationEnabled(enabled: boolean): void { creationEn
 export function isTopicNodeCreationEnabled(): boolean { return creationEnabled; }
 interface LifecycleDependencies {
   bindings: NodeBindingStore;
-  infrastructure(operation:"provision"|"rebind"|"recycle"|"retire"|"reconcile",nodeId:string,generation:number):Promise<ProvisionedNode>;
+  infrastructure(operation:"provision"|"rebind"|"recycle"|"retire"|"reconcile"|"inspect",nodeId:string,generation:number):Promise<ProvisionedNode>;
   node(binding:NodeBinding,operation:string,payload:unknown):Promise<unknown>;
   snapshot():Promise<{revision:number;hash:string}>;
   now():number;
@@ -45,8 +45,7 @@ export class TopicNodeLifecycle {
       let health:{ready:boolean;readiness?:string;runtime?:{telegramCoreCommit:string;telegramCoreVersion:string}}|undefined;
       try {health=await this.rpc(binding,'health');} catch { /* deployment/wake may still be underway */ }
       const explicitlyReady=health?.ready===true&&health?.readiness===expectedReadiness;
-      const legacyReady=health?.ready===true&&health?.readiness===undefined;
-      if(health&&(explicitlyReady||legacyReady)){
+      if(health&&explicitlyReady){
         if(expected?.image&&(health.runtime?.telegramCoreCommit!==expected.runtimeCommit||health.runtime?.telegramCoreVersion!==expected.runtimeVersion))throw new WorkerProvisioningError("image_mismatch");
         if(health.runtime)logger.info(`[WorkerImage] node=${binding.nodeId} generation=${binding.generation} image=${expected?.image??"legacy-contract"} actualCommit=${health.runtime!.telegramCoreCommit} actualVersion=${health.runtime!.telegramCoreVersion}`);
         break;
@@ -111,13 +110,29 @@ export class TopicNodeLifecycle {
     }
     return (await this.dependencies.bindings.list()).filter(binding=>binding.status!=='retired').sort((a,b)=>a.slot!-b.slot!);
   }
-  ensureReady(chatId:number,threadId:number,directory:string):Promise<{binding:NodeBinding;session:Session}> {
+  async verifyAvailableWorker():Promise<NodeBinding>{
+    const binding=(await this.dependencies.bindings.list()).find(item=>item.status==='available'&&item.chatId===0&&item.threadId===0);
+    if(!binding)throw new WorkerProvisioningError("capacity_exhausted");
+    try{
+      const observed=await this.dependencies.infrastructure('inspect',binding.nodeId,binding.generation);
+      if(observed.nodeId!==binding.nodeId||observed.generation!==binding.generation||!observed.serviceId||!observed.volumeId||!observed.endpoint||observed.serviceId!==binding.serviceId||observed.volumeId!==binding.volumeId||observed.projectId!==binding.projectId||observed.endpoint!==binding.endpoint)throw new WorkerProvisioningError("reconciliation_required");
+      await this.waitReady(binding,'available',observed);
+      const synced=await this.syncGlobal(binding);
+      await this.dependencies.infrastructure('reconcile',binding.nodeId,binding.generation);
+      return synced;
+    }catch(error){
+      const current=(await this.dependencies.bindings.list()).find(item=>item.nodeId===binding.nodeId);
+      if(current?.generation===binding.generation&&current.status==='available'&&current.chatId===0&&current.threadId===0)await this.dependencies.bindings.update(binding.nodeId,binding.generation,{status:'pool-provisioning'});
+      throw error;
+    }
+  }
+  ensureReady(chatId:number,threadId:number,directory:string,prepared?:NodeBinding):Promise<{binding:NodeBinding;session:Session}> {
     const key=`${chatId}:${threadId}`;const existing=this.flights.get(key);if(existing)return existing;
-    const operation=this.prepare(chatId,threadId,directory).finally(()=>{if(this.flights.get(key)===operation)this.flights.delete(key);});
+    const operation=this.prepare(chatId,threadId,directory,prepared).finally(()=>{if(this.flights.get(key)===operation)this.flights.delete(key);});
     this.flights.set(key,operation);return operation;
   }
-  private async prepare(chatId:number,threadId:number,directory:string):Promise<{binding:NodeBinding;session:Session}> {
-    let binding=await this.dependencies.bindings.reserve(chatId,threadId);
+  private async prepare(chatId:number,threadId:number,directory:string,prepared?:NodeBinding):Promise<{binding:NodeBinding;session:Session}> {
+    let binding=prepared?await this.dependencies.bindings.reservePrepared(chatId,threadId,prepared):await this.dependencies.bindings.reserve(chatId,threadId);
     if(binding.status==='retiring')throw new Error("Topic node is being retired");
     const generation=binding.generation;
     const inPlaceRebind=binding.status==='reserved'&&!!binding.slot&&!!binding.serviceId&&!!binding.volumeId&&!!binding.endpoint&&generation>1;
@@ -126,15 +141,18 @@ export class TopicNodeLifecycle {
         binding=await this.dependencies.bindings.update(binding.nodeId,generation,{status:'provisioning'});
         const provisioned=await this.dependencies.infrastructure(inPlaceRebind?'rebind':'provision',binding.nodeId,generation);
         if(provisioned.nodeId!==binding.nodeId||provisioned.generation!==generation||!provisioned.endpoint||!provisioned.serviceId||!provisioned.volumeId)throw new Error("Incomplete provisioned node identity");
+        if(inPlaceRebind&&(provisioned.serviceId!==binding.serviceId||provisioned.volumeId!==binding.volumeId||provisioned.projectId!==binding.projectId||provisioned.endpoint!==binding.endpoint))throw new Error('Rebound Worker resource identity mismatch');
         binding=await this.dependencies.bindings.update(binding.nodeId,generation,{projectId:provisioned.projectId,serviceId:provisioned.serviceId,volumeId:provisioned.volumeId,endpoint:provisioned.endpoint});
         await this.waitReady(binding,'provisioning',provisioned);
       }
       binding=await this.syncGlobal(binding);
-      const created=await this.rpc<{sessionId:string}>(binding,'session.create');
-      if(!created.sessionId||typeof created.sessionId!=='string')throw new Error("Node returned invalid session");
-      binding=await this.dependencies.bindings.update(binding.nodeId,generation,{sessionId:created.sessionId});
+      if(!binding.sessionId){
+        const created=await this.rpc<{sessionId:string}>(binding,'session.create');
+        if(!created.sessionId||typeof created.sessionId!=='string')throw new Error("Node returned invalid session");
+        binding=await this.dependencies.bindings.update(binding.nodeId,generation,{sessionId:created.sessionId});
+      }
       const session=await this.rpc<Session>(binding,'session.get');
-      if(session.id!==created.sessionId||typeof session.title!=='string')throw new Error("Node session identity mismatch");
+      if(session.id!==binding.sessionId||typeof session.title!=='string')throw new Error("Node session identity mismatch");
       binding=await this.dependencies.bindings.update(binding.nodeId,generation,{status:'ready'});
       await this.dependencies.infrastructure('reconcile',binding.nodeId,generation);
       return {binding,session:{...session,directory}};
@@ -157,11 +175,8 @@ export class TopicNodeLifecycle {
       await this.dependencies.infrastructure('reconcile',binding.nodeId,binding.generation);
       return true;
     }catch(error){
-      logger.warn(`[WorkerCluster] in-place recycle failed; destroying fenced Worker node=${binding.nodeId} generation=${binding.generation}`,error);
-      const retired=await this.dependencies.infrastructure('retire',binding.nodeId,binding.generation);
-      if(retired.nodeId!==binding.nodeId||retired.phase!=='retired')throw error;
-      await this.dependencies.bindings.update(binding.nodeId,binding.generation,{status:'retired'});
-      return true;
+      logger.warn(`[WorkerCluster] in-place recycle failed; Worker remains fenced node=${binding.nodeId} generation=${binding.generation}`,error);
+      throw error;
     }
   }
 }
@@ -192,23 +207,34 @@ export function createRemoteTopicSession(api:Api,chatId:number,directory:string,
     }
     const title=getNextManagedChatTitle(await listTelegramTopicBindings(),chatId);
     let threadId=receipt.operation.threadId;
+    let prepared:NodeBinding|undefined;
     if(!threadId){
-      const topic=await api.raw.createForumTopic({chat_id:chatId,name:title});
-      if(!topic.message_thread_id)throw new Error("Telegram Topic identity missing");
-      threadId=topic.message_thread_id;
-      await nodeBindings.recordCreation(requestKey,chatId,{threadId});
+      try{
+        prepared=await topicNodeLifecycle.verifyAvailableWorker();
+        await nodeBindings.recordCreation(requestKey,chatId,{nodeId:prepared.nodeId,generation:prepared.generation});
+        const topic=await api.raw.createForumTopic({chat_id:chatId,name:title});
+        if(!topic.message_thread_id)throw new Error("Telegram Topic identity missing");
+        threadId=topic.message_thread_id;
+        await nodeBindings.recordCreation(requestKey,chatId,{threadId});
+      }catch(error){
+        if(threadId)await cleanup(threadId);
+        else await nodeBindings.recordCreation(requestKey,chatId,{failed:true});
+        throw error;
+      }
     }
     const existing=(await listTelegramTopicBindings()).find(b=>b.chatId===chatId&&b.threadId===threadId);
     if(!receipt.fresh&&existing){
       const canonical=await nodeBindings.find(chatId,threadId);
-      if(!canonical||canonical.status==='retiring'||receipt.operation.completed&&(canonical.nodeId!==receipt.operation.nodeId||canonical.generation!==receipt.operation.generation))throw new WorkerProvisioningError("reconciliation_required");
+      if(!canonical||canonical.status!=='ready'||canonical.sessionId!==existing.sessionId||receipt.operation.completed&&(canonical.nodeId!==receipt.operation.nodeId||canonical.generation!==receipt.operation.generation))throw new WorkerProvisioningError("reconciliation_required");
       // A completed receipt is a read-only acknowledgement. Never reserve or
       // execute here: deletion may fence this generation immediately after lookup.
       return {binding:existing,reused:true as const};
     }
     if(receipt.operation.completed&&!existing)throw new WorkerProvisioningError("reconciliation_required");
     try {
-      const ready=await topicNodeLifecycle.ensureReady(chatId,threadId,directory);
+      prepared??=(await nodeBindings.list()).find(item=>item.nodeId===receipt.operation.nodeId&&[receipt.operation.generation,Number(receipt.operation.generation)+1].includes(item.generation));
+      if(!prepared)throw new WorkerProvisioningError('reconciliation_required');
+      const ready=await topicNodeLifecycle.ensureReady(chatId,threadId,directory,prepared);
       const now=new Date().toISOString();
       const binding:TelegramTopicBinding={chatId,threadId,sessionId:ready.session.id,directory,title,createdAt:now,updatedAt:now};
       await saveTelegramTopicBinding(binding);
