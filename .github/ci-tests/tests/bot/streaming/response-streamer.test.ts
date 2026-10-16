@@ -59,6 +59,35 @@ describe("bot/streaming/response-streamer", () => {
     expect(deleteText).not.toHaveBeenCalled();
   });
 
+  it("can flush the initial native draft immediately while keeping later updates throttled", async () => {
+    vi.useFakeTimers();
+
+    let nextMessageId = 1;
+    const sendPart = vi.fn(async (_sessionId, part) => ({
+      messageId: nextMessageId++,
+      deliveredSignature: signature(part),
+    }));
+    const editPart = vi.fn(async (_sessionId, _messageId, part) => ({
+      deliveredSignature: signature(part),
+    }));
+    const streamer = new ResponseStreamer({
+      throttleMs: 5000,
+      sendPart,
+      editPart,
+      deleteText: vi.fn().mockResolvedValue(undefined),
+    });
+
+    streamer.enqueue("s1", "run:1", { parts: [plainPart("Thinking...")] });
+    await streamer.flush("s1", "run:1");
+    expect(sendPart).toHaveBeenCalledTimes(1);
+
+    streamer.enqueue("s1", "run:1", { parts: [plainPart("Reasoning update")] });
+    await vi.advanceTimersByTimeAsync(4999);
+    expect(editPart).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(editPart).toHaveBeenCalledTimes(1);
+  });
+
   it("streams into a second Telegram message when parts grow", async () => {
     vi.useFakeTimers();
 

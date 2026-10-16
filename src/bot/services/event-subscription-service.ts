@@ -66,6 +66,7 @@ import {
   sendBotText,
   sendDraftBotPart,
   sendRenderedBotPart,
+  type GenerationDraftOwner,
 } from "../messages/telegram-text.js";
 import { formatAssistantRunFooter } from "../../app/formatters/assistant-run-footer-formatter.js";
 import { foregroundSessionState } from "../../app/managers/foreground-session-state-manager.js";
@@ -89,7 +90,7 @@ import {
   prepareAssistantStreamingPayload,
   renderAssistantFinalPartsSafe,
 } from "../messages/assistant-rendering.js";
-import { prepareThinkingPayload, type ThinkingSection } from "../messages/thinking-rendering.js";
+import { prepareThinkingPayload, prepareThinkingPlaceholderPayload, type ThinkingSection } from "../messages/thinking-rendering.js";
 import { deliverExternalUserInputNotification } from "../messages/external-user-input-notification.js";
 import { dispatchNextQueuedPrompt } from "../handlers/prompt-queue-dispatch.js";
 import { promptQueue } from "../../app/managers/prompt-queue-manager.js";
@@ -135,6 +136,7 @@ type EventStreamItem = {
 
 export interface BotEventSubscriptionService {
   ensureEventSubscription(directory: string): Promise<void>;
+  startGenerationDraft(sessionId: string): Promise<void>;
   setTelegramContext(bot: Bot<Context> | null, chatId: number | null): void;
   clearRuntimeState(reason: string): void;
   /**
@@ -163,6 +165,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
   private readonly assistantDraftResponseStreamer: ResponseStreamer;
   private readonly thinkingResponseStreamer: ResponseStreamer;
   private readonly assistantResponseStreamModes = new Map<string, ResponseStreamingMode>();
+  private readonly generationDraftStreams = new Map<string, { generation: number; streamId: string }>();
   private readonly toolCallStreamer: ToolCallStreamer;
   private readonly toolMessageBatcher: ToolMessageBatcher;
   private readonly compactProgressStreamer: CompactProgressStreamer;
@@ -386,6 +389,30 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     this.chatIdInstance = chatId;
     agentArtifactDeliveryService.setApi(bot?.api ?? null);
   }
+
+  startGenerationDraft = async (sessionId: string): Promise<void> => {
+    if (getResponseStreamingMode() !== "draft" || !this.botInstance || !this.chatIdInstance) return;
+    const run = assistantRunState.getRun(sessionId);
+    if (!run) return;
+
+    const existing = this.generationDraftStreams.get(sessionId);
+    if (existing?.generation === run.generation) return;
+    if (existing) {
+      this.assistantDraftResponseStreamer.clearMessage(sessionId, existing.streamId, "new_generation");
+      this.assistantResponseStreamModes.delete(this.getAssistantResponseStreamKey(sessionId, existing.streamId));
+    }
+
+    const streamId = `generation:${run.generation}`;
+    this.generationDraftStreams.set(sessionId, { generation: run.generation, streamId });
+    this.assistantResponseStreamModes.set(this.getAssistantResponseStreamKey(sessionId, streamId), "draft");
+    const payload = prepareThinkingPlaceholderPayload();
+    payload.sendOptions = { disable_notification: true };
+    this.assistantDraftResponseStreamer.enqueue(sessionId, streamId, payload);
+    const flushed = await this.assistantDraftResponseStreamer.flush(sessionId, streamId);
+    if (!flushed) {
+      logger.warn(`[Bot] Native generation draft could not be shown immediately: session=${sessionId}, generation=${run.generation}`);
+    }
+  };
 
   private getChatIdForSession(sessionId: string): number | null {
     try {
@@ -1251,11 +1278,20 @@ class EventSubscriptionService implements BotEventSubscriptionService {
             this.getThinkingPayloadKey(update.sessionId, update.messageId),
             update.sections,
           );
-          this.thinkingResponseStreamer.enqueue(
-            update.sessionId,
-            this.getThinkingStreamId(update.messageId),
-            payload,
-          );
+          if (getResponseStreamingMode() === "draft" && assistantRunState.hasActiveRun(update.sessionId)) {
+            if (!this.getGenerationDraftStreamId(update.sessionId)) {
+              await this.startGenerationDraft(update.sessionId);
+            }
+            const runStreamId = this.getGenerationDraftStreamId(update.sessionId);
+            if (runStreamId) this.enqueueAssistantResponse(update.sessionId, runStreamId, payload);
+            else this.thinkingResponseStreamer.enqueue(update.sessionId, this.getThinkingStreamId(update.messageId), payload);
+          } else {
+            this.thinkingResponseStreamer.enqueue(
+              update.sessionId,
+              this.getThinkingStreamId(update.messageId),
+              payload,
+            );
+          }
         }
       } else if (update.isFirstUpdate) {
         deliverThinkingMessage(update.sessionId, this.toolMessageBatcher);
@@ -1363,6 +1399,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
       this.compactProgressStreamer.clearSession(sessionId, "session_idle");
       await this.sessionCompletionTasks.get(sessionId)?.catch(() => undefined);
 
+      this.clearAssistantResponseSession(sessionId, "session_idle");
       const completedRun = assistantRunState.finishRun(sessionId, "session_idle");
 
       if (!this.botInstance || !this.chatIdInstance) {
@@ -1633,6 +1670,29 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     return `${sessionId}:${messageId}`;
   }
 
+  private getGenerationDraftStreamId(sessionId: string): string | null {
+    const draft = this.generationDraftStreams.get(sessionId);
+    const run = assistantRunState.getRun(sessionId);
+    return draft && run?.generation === draft.generation ? draft.streamId : null;
+  }
+
+  private resolveAssistantResponseStreamId(sessionId: string, messageId: string): string {
+    return this.getGenerationDraftStreamId(sessionId) ?? messageId;
+  }
+
+  private getGenerationDraftOwner(sessionId: string): GenerationDraftOwner | undefined {
+    const run = assistantRunState.getRun(sessionId);
+    if (!run) return undefined;
+    const route = resolveCoreSessionRoute(sessionId);
+    return {
+      chatId: route.chatId,
+      threadId: route.threadId,
+      sessionId,
+      runId: run.runId,
+      generation: run.generation,
+    };
+  }
+
   private getAssistantResponseStreamer(mode: ResponseStreamingMode): ResponseStreamer {
     return mode === "draft"
       ? this.assistantDraftResponseStreamer
@@ -1645,7 +1705,10 @@ class EventSubscriptionService implements BotEventSubscriptionService {
   ): ResponseStreamingMode {
     return (
       this.assistantResponseStreamModes.get(
-        this.getAssistantResponseStreamKey(sessionId, messageId),
+        this.getAssistantResponseStreamKey(
+          sessionId,
+          this.resolveAssistantResponseStreamId(sessionId, messageId),
+        ),
       ) ?? getResponseStreamingMode()
     );
   }
@@ -1655,10 +1718,11 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     messageId: string,
     payload: StreamingMessagePayload,
   ): void {
-    const key = this.getAssistantResponseStreamKey(sessionId, messageId);
-    const mode = this.getAssistantResponseStreamMode(sessionId, messageId);
+    const streamId = this.resolveAssistantResponseStreamId(sessionId, messageId);
+    const key = this.getAssistantResponseStreamKey(sessionId, streamId);
+    const mode = this.assistantResponseStreamModes.get(key) ?? getResponseStreamingMode();
     this.assistantResponseStreamModes.set(key, mode);
-    this.getAssistantResponseStreamer(mode).enqueue(sessionId, messageId, payload);
+    this.getAssistantResponseStreamer(mode).enqueue(sessionId, streamId, payload);
   }
 
   private async completeAssistantResponse(
@@ -1667,24 +1731,29 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     payload?: StreamingMessagePayload,
     options?: Parameters<ResponseStreamer["complete"]>[3],
   ) {
-    const key = this.getAssistantResponseStreamKey(sessionId, messageId);
-    const mode = this.getAssistantResponseStreamMode(sessionId, messageId);
+    const streamId = this.resolveAssistantResponseStreamId(sessionId, messageId);
+    const key = this.getAssistantResponseStreamKey(sessionId, streamId);
+    const mode = this.assistantResponseStreamModes.get(key) ?? getResponseStreamingMode();
     const result = await this.getAssistantResponseStreamer(mode).complete(
       sessionId,
-      messageId,
+      streamId,
       payload,
       options,
     );
     this.assistantResponseStreamModes.delete(key);
+    const generationDraft = this.generationDraftStreams.get(sessionId);
+    if (generationDraft?.streamId === streamId) this.generationDraftStreams.delete(sessionId);
     return result;
   }
 
   private clearAssistantResponseStream(sessionId: string, messageId: string, reason: string): void {
-    this.assistantResponseStreamModes.delete(
-      this.getAssistantResponseStreamKey(sessionId, messageId),
-    );
-    this.assistantEditResponseStreamer.clearMessage(sessionId, messageId, reason);
-    this.assistantDraftResponseStreamer.clearMessage(sessionId, messageId, reason);
+    const streamId = this.resolveAssistantResponseStreamId(sessionId, messageId);
+    this.assistantResponseStreamModes.delete(this.getAssistantResponseStreamKey(sessionId, streamId));
+    this.assistantEditResponseStreamer.clearMessage(sessionId, streamId, reason);
+    this.assistantDraftResponseStreamer.clearMessage(sessionId, streamId, reason);
+    if (this.generationDraftStreams.get(sessionId)?.streamId === streamId) {
+      this.generationDraftStreams.delete(sessionId);
+    }
   }
 
   private clearAssistantResponseSession(sessionId: string, reason: string): void {
@@ -1696,10 +1765,12 @@ class EventSubscriptionService implements BotEventSubscriptionService {
 
     this.assistantEditResponseStreamer.clearSession(sessionId, reason);
     this.assistantDraftResponseStreamer.clearSession(sessionId, reason);
+    this.generationDraftStreams.delete(sessionId);
   }
 
   private clearAllResponseStreams(reason: string): void {
     this.assistantResponseStreamModes.clear();
+    this.generationDraftStreams.clear();
     this.assistantEditResponseStreamer.clearAll(reason);
     this.assistantDraftResponseStreamer.clearAll(reason);
     this.thinkingResponseStreamer.clearAll(reason);
@@ -1725,6 +1796,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
             chatId,
             draftId,
             part,
+            owner: this.getGenerationDraftOwner(sessionId),
           });
           return { messageId: draftId, deliveredSignature: result.deliveredSignature };
         },
@@ -1734,6 +1806,7 @@ class EventSubscriptionService implements BotEventSubscriptionService {
             chatId: resolveCoreSessionRoute(sessionId).chatId,
             draftId: messageId,
             part,
+            owner: this.getGenerationDraftOwner(sessionId),
           });
         },
         deleteText: async () => {},
@@ -1856,6 +1929,26 @@ class EventSubscriptionService implements BotEventSubscriptionService {
     if (finalPayload) {
       finalPayload.sendOptions = { disable_notification: true };
     }
+
+    if (this.getGenerationDraftStreamId(sessionId)) {
+      this.thinkingResponseStreamer.clearMessage(
+        sessionId,
+        this.getThinkingStreamId(messageId),
+        "reasoning_persisted_separately",
+      );
+      this.thinkingSections.delete(key);
+      if (!finalPayload || !this.botInstance || !this.chatIdInstance) return;
+      for (const part of finalPayload.parts) {
+        await sendRenderedBotPart({
+          api: this.sessionScopedApi(sessionId),
+          chatId: resolveCoreSessionRoute(sessionId).chatId,
+          part,
+          options: finalPayload.sendOptions as Parameters<typeof sendBotText>[0]["options"],
+        });
+      }
+      return;
+    }
+
     const result = await this.thinkingResponseStreamer.complete(
       sessionId,
       this.getThinkingStreamId(messageId),

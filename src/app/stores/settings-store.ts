@@ -33,7 +33,7 @@ function writeSettingsFile(settings: Settings): Promise<void> {
 }
 export async function flushSettings(): Promise<void> { await settingsWriteQueue; await flushAppState(); }
 
-const DEFAULT_TOPIC_DEFAULTS: TopicDefaults = { compactOutputMode: false, showThinkingContent: true, responseStreamingMode: "edit", messageFormatMode: "markdown", showAssistantRunFooter: true, sendDiffFileAttachments: true, promptQueueEnabled: false, variant: undefined };
+const DEFAULT_TOPIC_DEFAULTS: TopicDefaults = { compactOutputMode: false, showThinkingContent: true, responseStreamingMode: "draft", messageFormatMode: "markdown", showAssistantRunFooter: true, sendDiffFileAttachments: true, promptQueueEnabled: false, variant: undefined };
 let currentSettings: Settings = {};
 function currentTopicState() { const context = getTopicRuntimeContext(); return context ? getTopicRuntimeStateSync(context.chatId, context.threadId) : null; }
 function updateTopic(patch: Parameters<typeof updateTopicRuntimeStateSync>[2]): void { const context = getTopicRuntimeContext(); if (!context) return; updateTopicRuntimeStateSync(context.chatId, context.threadId, patch); }
@@ -128,6 +128,19 @@ function applyInitialSettingsPreset(preset: Record<string, unknown>): void { con
 export async function loadSettings(): Promise<void> {
   const loadedSettings = (await readSettingsFile()) as Settings & { serverProcess?: unknown; toolMessagesIntervalSec?: unknown; ttsEnabled?: unknown; ttsMode?: unknown };
   for (const key of ["toolMessagesIntervalSec", "serverProcess", "ttsEnabled", "ttsMode"] as const) delete (loadedSettings as Record<string, unknown>)[key];
+  let streamingModeMigrated = false;
+  if (loadedSettings.responseStreamingModeVersion !== 1) {
+    if (loadedSettings.responseStreamingMode === "edit") {
+      loadedSettings.responseStreamingMode = "draft";
+      streamingModeMigrated = true;
+    }
+    if (loadedSettings.topicDefaults?.responseStreamingMode === "edit") {
+      loadedSettings.topicDefaults = { ...loadedSettings.topicDefaults, responseStreamingMode: "draft" };
+      streamingModeMigrated = true;
+    }
+    loadedSettings.responseStreamingModeVersion = 1;
+    streamingModeMigrated = true;
+  }
   const storedTopicDefaults = loadedSettings.topicDefaults;
   currentSettings = loadedSettings;
   currentSettings.defaultImageModel = normalizeImageModelSelection(loadedSettings.defaultImageModel);
@@ -148,7 +161,7 @@ export async function loadSettings(): Promise<void> {
       agent: loadedSettings.currentAgent,
       compactOutputMode: loadedSettings.compactOutputMode,
       showThinkingContent: loadedSettings.showThinkingContent,
-      responseStreamingMode: loadedSettings.responseStreamingMode,
+      responseStreamingMode: loadedSettings.responseStreamingMode ?? DEFAULT_TOPIC_DEFAULTS.responseStreamingMode,
       messageFormatMode: loadedSettings.messageFormatMode,
       showAssistantRunFooter: loadedSettings.showAssistantRunFooter,
       sendDiffFileAttachments: loadedSettings.sendDiffFileAttachments,
@@ -156,7 +169,7 @@ export async function loadSettings(): Promise<void> {
     }),
   };
   applyInitialSettingsPreset(config.bot.initialSettingsPreset);
-  if (!storedTopicDefaults) await writeSettingsFile(currentSettings);
+  if (!storedTopicDefaults || streamingModeMigrated) await writeSettingsFile(currentSettings);
 }
 
 // Global even when called from a Topic.

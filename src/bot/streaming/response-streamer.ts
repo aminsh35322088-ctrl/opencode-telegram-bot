@@ -216,6 +216,14 @@ export class ResponseStreamer {
     this.ensureTimer(state);
   }
 
+  /** Flush the current payload now without changing the throttle for later updates. */
+  async flush(sessionId: string, messageId: string): Promise<boolean> {
+    const state = this.states.get(buildStateKey(sessionId, messageId));
+    if (!state) return false;
+    this.clearTimer(state);
+    return this.enqueueTask(state, () => this.flushState(state, "manual"));
+  }
+
   async complete(
     sessionId: string,
     messageId: string,

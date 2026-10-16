@@ -40,7 +40,11 @@ function isMissingSession(error: unknown, sessionId: string): boolean {
     detail.data?.message === `Session not found: ${sessionId}`;
 }
 
-export interface ProcessPromptDeps { bot: Bot<Context>; ensureEventSubscription: (directory: string) => Promise<void>; }
+export interface ProcessPromptDeps {
+  bot: Bot<Context>;
+  ensureEventSubscription: (directory: string) => Promise<void>;
+  startGenerationDraft?: (sessionId: string) => Promise<void>;
+}
 
 async function retireAttachmentConfirmation(ctx: Context, messageId: number | undefined): Promise<void> {
   if (!messageId || !ctx.chat) return;
@@ -138,6 +142,12 @@ export async function processUserPrompt(ctx: Context, text: string, deps: Proces
       model: storedModel.providerID && storedModel.modelID ? `${storedModel.providerID}/${storedModel.modelID}` : "OpenCode/default",
     });
     if (text.trim()) externalUserInputSuppressionManager.register(currentSession.id, text);
+
+    if (deps.startGenerationDraft) {
+      void deps.startGenerationDraft(currentSession.id).catch((error) => {
+        logger.warn(`[Bot] Could not start the native generation draft: session=${currentSession!.id}`, error);
+      });
+    }
 
     // Start inference before cosmetic Telegram keyboard work. A slow/rate-limited
     // Telegram edit must never delay the provider request itself.

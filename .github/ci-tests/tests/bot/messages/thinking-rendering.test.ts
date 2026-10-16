@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { prepareThinkingPayload } from "../../../src/bot/messages/thinking-rendering.js";
+import { prepareThinkingPayload, prepareThinkingPlaceholderPayload } from "../../../src/bot/messages/thinking-rendering.js";
 import { DEFAULT_MAX_PART_CHARS } from "../../../src/bot/render/limits.js";
 import { t } from "../../../src/i18n/index.js";
 import { defined } from "../../helpers/defined.js";
 
 describe("bot/messages/thinking-rendering", () => {
-  it("renders live reasoning as an open Telegram blockquote", () => {
+  it("renders live reasoning as a native Telegram thinking block", () => {
     const header = `${t("bot.thinking")} — Analysis`;
 
     const payload = prepareThinkingPayload([
@@ -17,8 +17,8 @@ describe("bot/messages/thinking-rendering", () => {
     const firstPart = defined(payload?.parts[0]);
     expect(firstPart.source).toBe("blocks");
     expect(firstPart.blocks).toEqual([{
-      type: "blockquote",
-      blocks: [{ type: "paragraph", text: [{ type: "bold", text: header }, "\n", "Line one\nLine two"] }],
+      type: "thinking",
+      text: `${header}\nLine one\nLine two`,
     }]);
     expect(firstPart.fallbackText).toBe(`${header}\nLine one\nLine two`);
     expect(firstPart.entities).toBeUndefined();
@@ -33,7 +33,14 @@ describe("bot/messages/thinking-rendering", () => {
   it("keeps visible reasoning open while the model is still reasoning", () => {
     const payload = prepareThinkingPayload([{ id: "r1", text: "Line one" }]);
 
-    expect(defined(payload?.parts[0]?.blocks?.[0]).type).toBe("blockquote");
+    expect(defined(payload?.parts[0]?.blocks?.[0]).type).toBe("thinking");
+  });
+
+  it("provides a native thinking placeholder before reasoning arrives", () => {
+    const payload = prepareThinkingPlaceholderPayload();
+    expect(payload.parts).toHaveLength(1);
+    expect(defined(payload.parts[0]?.blocks[0])).toEqual({ type: "thinking", text: t("bot.thinking") });
+    expect(defined(payload.parts[0]).fallbackText).toBe(t("bot.thinking"));
   });
 
   it("persists every completed reasoning section as an expandable blockquote", () => {
@@ -94,8 +101,8 @@ describe("bot/messages/thinking-rendering", () => {
 
     expect(defined(payload?.parts[0]).fallbackText).toBe(header);
     expect(defined(payload?.parts[0]).blocks).toEqual([{
-      type: "blockquote",
-      blocks: [{ type: "paragraph", text: { type: "bold", text: header } }],
+      type: "thinking",
+      text: header,
     }]);
   });
 

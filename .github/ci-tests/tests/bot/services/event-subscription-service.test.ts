@@ -33,6 +33,7 @@ type FakeBotApi = {
   sendMessage: ReturnType<typeof vi.fn>;
   sendRichMessage: ReturnType<typeof vi.fn>;
   sendMessageDraft: ReturnType<typeof vi.fn>;
+  sendRichMessageDraft: ReturnType<typeof vi.fn>;
   editMessageText: ReturnType<typeof vi.fn>;
   deleteMessage: ReturnType<typeof vi.fn>;
   sendDocument: ReturnType<typeof vi.fn>;
@@ -45,6 +46,7 @@ function createFakeBot(): { bot: Bot<Context>; api: FakeBotApi } {
       .fn()
       .mockRejectedValue(Object.assign(new Error("Bad Request: RICH_MESSAGE_BLOCK_UNSUPPORTED"), { error_code: 400 })),
     sendMessageDraft: vi.fn().mockResolvedValue(undefined),
+    sendRichMessageDraft: vi.fn().mockResolvedValue(undefined),
     editMessageText: vi.fn().mockResolvedValue(undefined),
     deleteMessage: vi.fn().mockResolvedValue(undefined),
     sendDocument: vi.fn().mockResolvedValue({ message_id: 101 }),
@@ -394,6 +396,7 @@ describe("bot/services/event-subscription-service", () => {
     } = {},
   ): Promise<{
     api: FakeBotApi;
+    service: { startGenerationDraft(sessionId: string): Promise<void> };
     summaryAggregator: { setSession(sessionId: string): void; processEvent(event: Event): void };
   }> {
     const [
@@ -436,7 +439,7 @@ describe("bot/services/event-subscription-service", () => {
     summaryAggregator.setSession("session-1");
     emitAssistantMessage(summaryAggregator);
 
-    return { api, summaryAggregator };
+    return { api, service, summaryAggregator };
   }
 
   it("sends write tool output as a document attachment when diff files are enabled", async () => {
@@ -684,30 +687,50 @@ describe("bot/services/event-subscription-service", () => {
     });
   });
 
-  it("uses edit streaming for visible thinking content when assistant responses use draft mode", async () => {
-    const { api, summaryAggregator } = await setupService(true, {
+  it("keeps one stoppable native draft from initial thinking through the final answer", async () => {
+    const { api, service, summaryAggregator } = await setupService(true, {
       responseStreamingMode: "draft",
       showThinkingContent: true,
     });
+    api.sendRichMessage.mockResolvedValue({ message_id: 200 });
+
+    await service.startGenerationDraft("session-1");
+    await vi.waitFor(() => expect(api.sendRichMessageDraft).toHaveBeenCalledTimes(1));
+    const draftId = api.sendRichMessageDraft.mock.calls[0]?.[1];
+    expect(api.sendRichMessageDraft.mock.calls[0]?.[3]).toMatchObject({ can_stop: true, keep_on_stop: true });
+    const [{ assistantRunState }, { resolveGenerationDraft }] = await Promise.all([
+      import("../../../src/app/managers/assistant-run-state-manager.js"),
+      import("../../../src/bot/messages/telegram-text.js"),
+    ]);
+    expect(resolveGenerationDraft(42, draftId as number)?.owner).toMatchObject({
+      chatId: 42,
+      threadId: 7,
+      sessionId: "session-1",
+      runId: assistantRunState.getRun("session-1")?.runId,
+      generation: assistantRunState.getRun("session-1")?.generation,
+    });
 
     emitThinkingPart(summaryAggregator, "First thought");
+    await vi.waitFor(() => expect(api.sendRichMessageDraft).toHaveBeenCalledTimes(2), { timeout: 10_000 });
+    expect(api.sendRichMessageDraft.mock.calls[1]?.[1]).toBe(draftId);
+    expect(api.sendRichMessageDraft.mock.calls[1]?.[2]?.blocks?.[0]?.type).toBe("thinking");
+    expect(api.sendRichMessageDraft.mock.calls[1]?.[3]).toMatchObject({ can_stop: true, keep_on_stop: true });
 
-    // First stream flush is 1s; keep the wait well above that.
-    await vi.waitFor(
-      () => {
-        expect(api.sendMessage).toHaveBeenCalledTimes(1);
-      },
-      { timeout: 10_000 },
-    );
+    emitAssistantTextPart(summaryAggregator, "Final answer");
+    await vi.waitFor(() => expect(api.sendRichMessageDraft).toHaveBeenCalledTimes(3), { timeout: 10_000 });
+    expect(api.sendRichMessageDraft.mock.calls[2]?.[1]).toBe(draftId);
+    expect(api.sendRichMessageDraft.mock.calls[2]?.[2]?.blocks?.[0]?.type).toBe("paragraph");
+    expect(api.sendRichMessageDraft.mock.calls[2]?.[3]).toMatchObject({ can_stop: true, keep_on_stop: true });
 
-    emitThinkingPart(summaryAggregator, "First thought\nSecond thought");
-
-    await vi.waitFor(
-      () => {
-        expect(api.editMessageText).toHaveBeenCalledTimes(1);
-      },
-      { timeout: 10_000 },
-    );
+    emitAssistantCompleted(summaryAggregator);
+    emitSessionIdle(summaryAggregator);
+    await vi.waitFor(() => expect(api.sendRichMessage.mock.calls.some((call) => collectRenderedText(call[1]).includes("Final answer"))).toBe(true));
+    const persistedTexts = [
+      ...collectSentTexts(api),
+      ...api.sendRichMessage.mock.calls.map((call) => collectRenderedText(call[1])),
+    ];
+    expect(persistedTexts.some((text) => text.includes("First thought") && !text.includes("Final answer"))).toBe(true);
+    expect(persistedTexts.some((text) => text.includes("Final answer") && !text.includes("First thought"))).toBe(true);
     expect(api.sendMessageDraft).not.toHaveBeenCalled();
   }, 30_000);
 
