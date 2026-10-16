@@ -90,13 +90,14 @@ async function bootstrapProgress():Promise<RailwayBootstrapProgress>{
  return summarizeObservedRailwayBootstrap(bindings,current.workers,current.projectCount??0,INITIAL_BOOTSTRAP_WORKERS);
 }
 function continueKeyboard(progress:RailwayBootstrapProgress):InlineKeyboard|undefined{
- return progress.complete?new InlineKeyboard().text("Continue →","railway:continue"):undefined;
+ return progress.complete?new InlineKeyboard().text("Continue →","railway:continue"):canContinueRailwayBootstrapWithLimitedResources(progress)?new InlineKeyboard().text(t("railway.setup.continue_limited"),"railway:continue-limited"):undefined;
 }
 async function editBootstrapMessage(ctx:Context,chatId:number,messageId:number,progress:RailwayBootstrapProgress):Promise<void>{
+ if(isRailwaySetupCompleted())return;
  const keyboard=continueKeyboard(progress);
  await ctx.api.editMessageText(chatId,messageId,renderRailwayBootstrapProgress(progress),{
   parse_mode:"HTML",
-  ...(keyboard?{reply_markup:keyboard}:{}),
+  reply_markup:keyboard??new InlineKeyboard(),
  }).catch(error=>{
   if(!/message is not modified/i.test(error instanceof Error?error.message:String(error)))throw error;
  });
@@ -111,7 +112,7 @@ async function startRailwayBootstrap(ctx:Context,settingsInput:RailwayWorkerSett
  let messageId=reuseMessageId??bootstrapMessageIds.get(chatId);
  if(messageId){await editBootstrapMessage(ctx,chatId,messageId,progress);}
  else{
-  const sent=await ctx.reply(renderRailwayBootstrapProgress(progress),{parse_mode:"HTML",...(progress.complete?{reply_markup:continueKeyboard(progress)}:{})});
+  const sent=await ctx.reply(renderRailwayBootstrapProgress(progress),{parse_mode:"HTML",reply_markup:continueKeyboard(progress)??new InlineKeyboard()});
   messageId=sent.message_id;
  }
  bootstrapMessageIds.set(chatId,messageId);
@@ -120,7 +121,7 @@ async function startRailwayBootstrap(ctx:Context,settingsInput:RailwayWorkerSett
  const flight=(async()=>{
   let retryDelayMs=1_500;
   let retry=0;
-  while(true){
+  while(!isRailwaySetupCompleted()){
    let settled=false;
    let failure:unknown;
    const operation=topicNodeLifecycle.bootstrapPool(INITIAL_BOOTSTRAP_WORKERS).catch(error=>{failure=error;return [];}).finally(()=>{settled=true;});
@@ -134,6 +135,7 @@ async function startRailwayBootstrap(ctx:Context,settingsInput:RailwayWorkerSett
     await Promise.race([operation,new Promise(resolve=>setTimeout(resolve,1_500))]);
    }
    await operation;
+   if(isRailwaySetupCompleted())return;
    progress=await bootstrapProgress().catch(()=>({...progress,complete:false,verified:false}));
    if(!failure&&progress.complete){
     await editBootstrapMessage(ctx,chatId,targetMessageId,progress);
@@ -150,6 +152,7 @@ async function startRailwayBootstrap(ctx:Context,settingsInput:RailwayWorkerSett
     }
     logger.error("[RailwayOnboarding] Initial Worker bootstrap blocked by non-retryable error",failure);
     const retryKeyboard=new InlineKeyboard().text("Retry →","railway:retry");
+    if(canContinueRailwayBootstrapWithLimitedResources(progress))retryKeyboard.row().text(t("railway.setup.continue_limited"),"railway:continue-limited");
     const detail=blockedVerificationDetail(failure);
     const blockedText=renderRailwayBootstrapProgress(progress)+"\n\n❌ Setup is blocked by a non-retryable Railway condition. Fix the Railway resource/configuration issue, then press Retry."+(detail?"\n\n🔎 "+detail:"");
     await ctx.api.editMessageText(chatId,targetMessageId,blockedText,{parse_mode:"HTML",reply_markup:retryKeyboard}).catch(()=>{});
@@ -157,7 +160,7 @@ async function startRailwayBootstrap(ctx:Context,settingsInput:RailwayWorkerSett
    }
    retry++;
    logger.warn(`[RailwayOnboarding] Transient Worker bootstrap failure; retry=${retry} delayMs=${retryDelayMs}`,failure);
-   await ctx.api.editMessageText(chatId,targetMessageId,`${renderRailwayBootstrapProgress(progress)}\n\n⏳ Recovering a transient Railway/Worker readiness failure automatically…`,{parse_mode:"HTML"}).catch(()=>{});
+   await ctx.api.editMessageText(chatId,targetMessageId,`${renderRailwayBootstrapProgress(progress)}\n\n⏳ Recovering a transient Railway/Worker readiness failure automatically…`,{parse_mode:"HTML",reply_markup:continueKeyboard(progress)??new InlineKeyboard()}).catch(()=>{});
    await new Promise(resolve=>setTimeout(resolve,retryDelayMs));
    retryDelayMs=Math.min(Math.round(retryDelayMs*1.6),10_000);
   }
@@ -239,16 +242,15 @@ export async function handleRailwayOnboardingCallback(ctx:Context):Promise<boole
   continueFlights.add(chatId);
   try{
    const limited=data==="railway:continue-limited";
-   let quota:unknown;
+
    if(limited){
     await ctx.answerCallbackQuery({text:t("railway.setup.limited_checking")}).catch(()=>{});
-    // Recheck live health, global state and root security proofs. This also
-    // makes a pre-restart button safe without trusting an in-memory receipt.
-    await topicNodeLifecycle.bootstrapPool(INITIAL_BOOTSTRAP_WORKERS).catch(error=>{quota=error;});
+    // Verify existing capacity only; entering Main must never create more resources.
+    await topicNodeLifecycle.verifyAvailableWorker();
    }
    const progress=await bootstrapProgress();
-   const verifiedLimited=limited&&canContinueRailwayBootstrapWithLimitedResources(progress,quota);
-   if((quota&&!verifiedLimited)||(!progress.complete&&!verifiedLimited)){
+   const verifiedLimited=limited&&canContinueRailwayBootstrapWithLimitedResources(progress);
+   if(!progress.complete&&!verifiedLimited){
     if(limited)await ctx.reply(t("railway.setup.limited_unavailable"));
     else await ctx.answerCallbackQuery({text:"Railway is still preparing Workers."}).catch(()=>{});
     return true;

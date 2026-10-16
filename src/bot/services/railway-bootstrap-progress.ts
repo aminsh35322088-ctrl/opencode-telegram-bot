@@ -12,8 +12,8 @@ export function isRailwayBootstrapResourceLimit(error:unknown):boolean {
   return error instanceof Error && /^Infrastructure operation failed \(resource_limit, HTTP \d+\)/u.test(error.message);
 }
 
-export function canContinueRailwayBootstrapWithLimitedResources(progress:RailwayBootstrapProgress,error:unknown):boolean {
-  return progress.verified!==false && isRailwayBootstrapResourceLimit(error) && progress.projects>0 && progress.healthy>0 && progress.workers>=progress.healthy && progress.volumes>=progress.healthy;
+export function canContinueRailwayBootstrapWithLimitedResources(progress:RailwayBootstrapProgress,error?:unknown):boolean {
+  return progress.verified!==false && (error===undefined||isRailwayBootstrapResourceLimit(error)) && progress.projects>0 && progress.healthy>0 && progress.workers>=progress.healthy && progress.volumes>=progress.healthy;
 }
 
 export function renderRailwayBootstrapLimit(progress:RailwayBootstrapProgress):string {

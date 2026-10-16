@@ -4,6 +4,8 @@ import {NodeProtocol} from "../control-plane/node-protocol.js";
 import type {captureNodeRegistry} from "./node-registry.js";
 import type {InfrastructureNodeIdentity} from "./node-registry.js";
 
+import {WorkerProvisioningError} from "./worker-provisioning-driver.js";
+
 export type WorkerBoundaryCheck="replay"|"foreign-topic"|"stale-generation";
 export class WorkerBoundaryVerificationError extends Error{
  constructor(readonly check:WorkerBoundaryCheck,readonly status:number){super("Worker boundary verification failed");}
@@ -55,11 +57,17 @@ export class InfrastructureNodeTransport {
   const send=async(signed:{body:string;signature:string})=>{
    const current=await this.registry.resolve(nodeId);
    if(!current||current.binding.generation!==generation||current.binding.status!=="available"||current.binding.chatId!==0||current.binding.threadId!==0)throw new Error("Unbound boundary probe scope changed");
-   return this.fetcher(new URL("/rpc",identity.endpoint),{method:"POST",body:signed.body,headers:{"content-type":"application/json","x-node-signature":signed.signature},redirect:"error",signal:AbortSignal.timeout(45_000)});
+   try{
+    return await this.fetcher(new URL("/rpc",identity.endpoint),{method:"POST",body:signed.body,headers:{"content-type":"application/json","x-node-signature":signed.signature},redirect:"error",signal:AbortSignal.timeout(45_000)});
+   }catch{throw new WorkerProvisioningError("provisioning_pending");}
   };
   const signed=this.protocol.sign(envelope,identity.secret);
   const first=await send(signed);
-  if(!first.ok)throw new Error("Worker boundary health failed");
+  if(!first.ok){
+   await first.body?.cancel();
+   if([404,408,429,502,503,504].includes(first.status))throw new WorkerProvisioningError("provisioning_pending");
+   throw new Error("Worker boundary health failed");
+  }
   const reply=await this.protocol.verify(await boundedBody(first,64*1024),first.headers.get("x-node-signature")??"",{nodeId,generation,chatId:0,threadId:0},identity.secret);
   const result=reply.payload as {ok?:boolean;result?:{ready?:boolean}};
   if(reply.operation!=="health"||reply.sessionId!==undefined||result.ok!==true||result.result?.ready!==true)throw new Error("Worker boundary health denied");
@@ -69,6 +77,7 @@ export class InfrastructureNodeTransport {
    const denied=response.status===401||response.status===403;
    const status=response.status;
    await response.body?.cancel();
+   if([404,408,429,502,503,504].includes(status))throw new WorkerProvisioningError("provisioning_pending");
    if(!denied)throw new WorkerBoundaryVerificationError(check,status);
   };
   await rejected("replay",signed);
