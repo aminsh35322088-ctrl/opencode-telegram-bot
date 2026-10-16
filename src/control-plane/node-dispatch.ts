@@ -8,11 +8,26 @@ export async function dispatchAuthenticatedNodeControl(envelope: NodeEnvelope): 
     return await readGlobalSnapshot();
   }
   if (!envelope.sessionId) throw new Error("Bound node session required");
-  const actor={nodeId:envelope.nodeId,generation:envelope.generation,chatId:envelope.chatId,threadId:envelope.threadId,sessionId:envelope.sessionId};
+  const sessionId=envelope.sessionId;
+  const actor={nodeId:envelope.nodeId,generation:envelope.generation,chatId:envelope.chatId,threadId:envelope.threadId,sessionId};
   return await runWithAuthenticatedMutationActor(actor,async()=>{
     const payload=envelope.payload;
     if (!payload || typeof payload!=="object" || Array.isArray(payload)) throw new Error("Invalid control payload");
     const data=payload as Record<string,unknown>;
+    if (["credential.acquire", "credential.validate", "credential.release", "capability.authorize"].includes(envelope.operation)) {
+      const {integrationCredentialLeaseBroker}=await import("./integration-credential-lease.js");
+      const owner={
+        nodeId:envelope.nodeId,
+        generation:envelope.generation,
+        chatId:envelope.chatId,
+        threadId:envelope.threadId,
+        sessionId,
+      };
+      if(envelope.operation==="credential.acquire")return await integrationCredentialLeaseBroker.acquire(data,owner);
+      if(envelope.operation==="credential.validate")return await integrationCredentialLeaseBroker.validate(data,owner);
+      if(envelope.operation==="credential.release")return await integrationCredentialLeaseBroker.release(data,owner);
+      return await integrationCredentialLeaseBroker.authorize(data,owner);
+    }
     if (envelope.operation==="credential.get") {
       if(data.purpose==="mcp.request"){
         const {leaseMcpCredential}=await import("./mcp-credential-lease.js");

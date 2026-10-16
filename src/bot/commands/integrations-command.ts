@@ -47,11 +47,14 @@ async function editWizard(ctx: Context, messageId: number, text: string): Promis
 
 async function showTailscaleMenu(ctx: Context, messageId?: number, notice?: string): Promise<void> {
   const status = await getTailscaleRuntimeStatus();
-  const devices = status.configured ? await listTailscaleDevices().catch(() => []) : [];
+  const workerMode = status.executionScope === "topic-worker";
+  const devices = status.configured && !workerMode ? await listTailscaleDevices().catch(() => []) : [];
   const eligibleDevices = devices.filter((device) => device.sshEligible);
   const keyboard = new InlineKeyboard();
   if (!status.configured) {
     keyboard.text("🔑 Connect Tailnet", "integration:tailscale:connect").row();
+  } else if (workerMode) {
+    keyboard.text("🔑 Change Auth Key", "integration:tailscale:connect").text("🗑 Forget Tailnet", "integration:tailscale:remove").row();
   } else {
     keyboard.text("🔄 Reconnect", "integration:tailscale:reconnect").text("⏸ Disconnect", "integration:tailscale:disconnect").row();
     keyboard.text("🖥 Tailnet Devices", "integration:tailscale:devices").text("🔑 Change Auth Key", "integration:tailscale:connect").row();
@@ -59,21 +62,32 @@ async function showTailscaleMenu(ctx: Context, messageId?: number, notice?: stri
   }
   keyboard.text("← Settings", "settings:back").text("🏠 Home", "main:home");
 
-  const body = [
-    "🌐 Tailscale",
-    "",
-    `Status: ${status.connected ? "🟢 Connected" : status.configured ? "⚪ Disconnected" : "⚪ Not configured"}`,
-    `Device: ${status.hostname}`,
-    ...(status.tailnet ? [`Tailnet: ${status.tailnet}`] : []),
-    ...(status.ips.length ? [`IP: ${status.ips.join(", ")}`] : []),
-    `Mode: Userspace · persistent identity`,
-    `Visible peers: ${status.visiblePeers}`,
-    `SSH eligible: ${eligibleDevices.length}`,
-    ...(status.selfTags.length ? [`Bot tags: ${status.selfTags.join(" · ")}`] : ["Bot tags: none"]),
-    "",
-    "The bot uses one shared tailscaled daemon and a persistent node identity, so the machine stays opencode-bot across restarts.",
-    "SSH is Tailnet-only. A remote machine must join this Tailnet and carry tag:ssh before the model can access it.",
-  ].join("\n");
+  const body = workerMode
+    ? [
+      "🌐 Tailscale",
+      "",
+      `Status: ${status.configured ? "🔐 Auth key saved for Topic Workers" : "⚪ Not configured"}`,
+      "Connection: On demand, separately for each Topic Worker",
+      "",
+      "Workers join the Tailnet when a Topic uses its network tools. Device status and Tailnet SSH are available inside that Topic.",
+      "The saved key is encrypted in bot state and is delivered only to the authenticated Worker that needs to join.",
+      "SSH is limited to online Tailnet peers carrying tag:ssh.",
+    ].join("\n")
+    : [
+      "🌐 Tailscale",
+      "",
+      `Status: ${status.connected ? "🟢 Connected" : status.configured ? "⚪ Disconnected" : "⚪ Not configured"}`,
+      `Device: ${status.hostname}`,
+      ...(status.tailnet ? [`Tailnet: ${status.tailnet}`] : []),
+      ...(status.ips.length ? [`IP: ${status.ips.join(", ")}`] : []),
+      `Mode: Userspace · persistent identity`,
+      `Visible peers: ${status.visiblePeers}`,
+      `SSH eligible: ${eligibleDevices.length}`,
+      ...(status.selfTags.length ? [`Bot tags: ${status.selfTags.join(" · ")}`] : ["Bot tags: none"]),
+      "",
+      "The bot uses one shared tailscaled daemon and a persistent node identity, so the machine stays opencode-bot across restarts.",
+      "SSH is Tailnet-only. A remote machine must join this Tailnet and carry tag:ssh before the model can access it.",
+    ].join("\n");
   const text = notice ? `${notice}\n\n${body}` : body;
   const targetMessageId = callbackMessageId(ctx) ?? messageId ?? null;
   if (targetMessageId !== null && ctx.chat?.id) {
@@ -85,6 +99,19 @@ async function showTailscaleMenu(ctx: Context, messageId?: number, notice?: stri
 }
 
 async function showTailscaleDevices(ctx: Context): Promise<void> {
+  const status = await getTailscaleRuntimeStatus();
+  if (status.executionScope === "topic-worker") {
+    const text = "🖥 Tailnet Devices\n\nDevice lists belong to each Topic Worker. Open a Topic and ask its network tool to inspect the Tailnet.";
+    const messageId = callbackMessageId(ctx);
+    if (messageId !== null && ctx.chat?.id) {
+      await ctx.api.editMessageText(ctx.chat.id, messageId, text, {
+        reply_markup: new InlineKeyboard().text("← Tailscale", "integration:tailscale").text("🏠 Home", "main:home"),
+      }).catch((error) => {
+        if (!/message is not modified/i.test(error instanceof Error ? error.message : String(error))) throw error;
+      });
+    }
+    return;
+  }
   const devices = await listTailscaleDevices();
   const text = [
     "🖥 Tailnet Devices",
@@ -136,10 +163,10 @@ export async function handleIntegrationsCallback(ctx: Context): Promise<boolean>
     }
     return true;
   }
-  if (data === "integration:tailscale:connect") { const messageId = callbackMessageId(ctx); if (messageId === null) return true; clearProviderWizard(); integrationWizard.set({ tailscale: { step: "auth-key", messageId } }); await editWizard(ctx, messageId, "🌐 Connect Tailscale\n\nSend a Tailscale auth key.\n\nRequired key settings:\n• Reusable: ON\n• Tag: tag:opencode-bot\n• Ephemeral: OFF\n\nThe bot keeps one persistent Tailscale identity so the machine name and Tailscale IP remain stable across service restarts.\n\n🔒 The message will be deleted immediately. The key is encrypted in persistent bot state and is never exposed to the model."); return true; }
+  if (data === "integration:tailscale:connect") { const messageId = callbackMessageId(ctx); if (messageId === null) return true; clearProviderWizard(); integrationWizard.set({ tailscale: { step: "auth-key", messageId } }); const status = await getTailscaleRuntimeStatus(); const workerMode = status.executionScope === "topic-worker"; const instructions = workerMode ? "🌐 Connect Tailscale\n\nSend a Tailscale auth key beginning with tskey-auth-.\n\nRequired key settings:\n• Reusable: ON\n• Tag: tag:opencode-bot\n• Ephemeral: OFF\n\nEach Topic Worker joins on demand and keeps its own persistent identity. Saving the key does not start a shared control-plane daemon; Tailscale authentication happens when a Worker connects.\n\n🔒 The message will be deleted immediately. The key is encrypted in persistent bot state and is never exposed to the model." : "🌐 Connect Tailscale\n\nSend a Tailscale auth key beginning with tskey-auth-.\n\nRequired key settings:\n• Reusable: ON\n• Tag: tag:opencode-bot\n• Ephemeral: OFF\n\nThe bot keeps one persistent Tailscale identity so the machine name and Tailscale IP remain stable across service restarts.\n\n🔒 The message will be deleted immediately. The key is encrypted in persistent bot state and is never exposed to the model."; await editWizard(ctx, messageId, instructions); return true; }
   if (data === "integration:tailscale:reconnect") { await reconnectTailscale(); await showTailscaleMenu(ctx, undefined, "✅ Tailscale reconnected."); return true; }
   if (data === "integration:tailscale:disconnect") { await disconnectTailscale(); await showTailscaleMenu(ctx, undefined, "⏸ Tailscale disconnected. The Tailnet identity is preserved."); return true; }
-  if (data === "integration:tailscale:remove") { const id = callbackMessageId(ctx); if (id !== null && ctx.chat?.id) await ctx.api.editMessageText(ctx.chat.id, id, "🗑 Forget Tailscale?\n\nThis logs the bot out of the Tailnet and removes the encrypted auth key from bot state.", { reply_markup: new InlineKeyboard().text("🗑 Forget", "integration:tailscale:remove:confirm").text("Cancel", "integration:tailscale") }); return true; }
+  if (data === "integration:tailscale:remove") { const id = callbackMessageId(ctx); const status = await getTailscaleRuntimeStatus(); const detail = status.executionScope === "topic-worker" ? "This removes the encrypted auth key from bot state. Topic Workers can no longer join the Tailnet." : "This logs the bot out of the Tailnet and removes the encrypted auth key from bot state."; if (id !== null && ctx.chat?.id) await ctx.api.editMessageText(ctx.chat.id, id, `🗑 Forget Tailscale?\n\n${detail}`, { reply_markup: new InlineKeyboard().text("🗑 Forget", "integration:tailscale:remove:confirm").text("Cancel", "integration:tailscale") }); return true; }
   if (data === "integration:tailscale:remove:confirm") { await removeTailscaleIntegration(); await showTailscaleMenu(ctx, undefined, "✅ Tailscale configuration removed."); return true; }
   if (data === "integration:github:add") { const messageId = callbackMessageId(ctx); if (messageId === null) { await ctx.answerCallbackQuery({ text: "This menu has expired. Please open Integrations again.", show_alert: true }).catch(() => {}); return true; } clearProviderWizard(); integrationWizard.set({ github: { step: "name", messageId } }); await editWizard(ctx, messageId, "➕ Add GitHub Account\n\n1/2 · Account name\n\nExample: Personal GitHub"); return true; }
   if (data.startsWith("integration:github:select:")) { const account = await setActiveGithubAccount(data.slice("integration:github:select:".length)); await ctx.answerCallbackQuery({ text: `Active: ${account.name}` }).catch(() => {}); await showGithubSettingsMenu(ctx); return true; }
@@ -159,10 +186,16 @@ export async function handleIntegrationMessage(ctx: Context): Promise<boolean> {
     }
     if (tailscale) {
       await deleteInputMessage(ctx);
-      await editWizard(ctx, tailscale.messageId, "🌐 Connecting Tailscale…\n\nStarting userspace networking and verifying Tailnet authentication.");
+      const status = await getTailscaleRuntimeStatus();
+      const workerMode = status.executionScope === "topic-worker";
+      await editWizard(ctx, tailscale.messageId, workerMode
+        ? "🌐 Saving Tailscale auth key for Topic Workers…"
+        : "🌐 Connecting Tailscale…\n\nStarting userspace networking and verifying Tailnet authentication.");
       await configureTailscale(text);
       clearIntegrationWizard();
-      await showTailscaleMenu(ctx, tailscale.messageId, "✅ Tailscale connected.");
+      await showTailscaleMenu(ctx, tailscale.messageId, workerMode
+        ? "✅ Auth key saved. Topic Workers will join the Tailnet on demand."
+        : "✅ Tailscale connected.");
       return true;
     }
     return false;

@@ -158,11 +158,13 @@ export async function startBotApp(): Promise<void> {
     logger.warn("[CustomProvider] Could not migrate legacy provider credentials; continuing with legacy compatibility", error);
     return 0;
   });
-  const tailscaleConnected = await initializeTailscaleIntegration().catch((error) => {
+  const tailscaleConfigured = await initializeTailscaleIntegration().catch((error) => {
     logger.warn("[Tailscale] Could not initialize stored Tailnet integration; continuing without Tailnet access", error);
     return false;
   });
-  logger.info(`[Tailscale] ${tailscaleConnected ? "connected" : "not connected"}`);
+  logger.info(`[Tailscale] ${process.env.DISTRIBUTED_CONTROL_ENABLED === "1"
+    ? tailscaleConfigured ? "auth key configured for Topic Workers" : "not configured"
+    : tailscaleConfigured ? "connected" : "not connected"}`);
   const managedConfigPath = await syncOpenCodeCustomConfig();
   if (!managedConfigPath.trim()) {
     throw new Error("Managed OpenCode config path is empty; refusing to start without runtime policy");
