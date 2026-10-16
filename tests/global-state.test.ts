@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { test } from "node:test";
 import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -177,6 +178,70 @@ test("runtime configuration projects valid OpenCode schemas and strips transport
     assert.equal(runtime.provider.custom.models["model-a"].tool_call, false);
     assert.ok(!JSON.stringify(snapshot).includes("SECRET"));
     assert.equal(runtime.settings, undefined);
+  } finally {
+    delete process.env.OPENCODE_TELEGRAM_HOME;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("global snapshots publish only active GitHub and configured Tailscale credential references", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "global-integration-refs-"));
+  process.env.OPENCODE_TELEGRAM_HOME = home;
+  try {
+    const accountId = "amin-github";
+    const extensionId = `integration:github:${accountId}`;
+    const vaultId = createHash("sha256").update(extensionId).update("\0").update("token").digest("hex");
+    await updateAppState({
+      integrations: {
+        github: {
+          activeId: accountId,
+          accounts: [
+            { id: accountId, name: "Amin", credentialId: "token", username: "amin", createdAt: "2026-01-01" },
+            { id: "other", name: "Other", credentialId: "token", createdAt: "2026-01-01" },
+          ],
+        },
+        tailscale: {
+          version: 1,
+          hostname: "opencode-bot",
+          configuredAt: "2026-01-01",
+          authKey: { version: 1, iv: "iv", tag: "tag", ciphertext: "ciphertext-only" },
+        },
+      },
+      credentialVault: {
+        version: 1,
+        entries: {
+          [vaultId]: {
+            metadata: { extensionId, credentialId: "token", createdAt: "2026-01-01", updatedAt: "2026-01-01" },
+            secret: { version: 1, iv: "iv", tag: "tag", ciphertext: "encrypted" },
+          },
+        },
+      },
+    });
+
+    const snapshot = await readGlobalSnapshot();
+    assert.ok(snapshot.credentialReferences.some((reference) =>
+      JSON.stringify(reference) === JSON.stringify({
+        id: vaultId,
+        integrationId: "github",
+        credentialId: accountId,
+        configured: true,
+      }),
+    ));
+    assert.ok(snapshot.credentialReferences.some((reference) =>
+      JSON.stringify(reference) === JSON.stringify({
+        id: createHash("sha256").update("integration:tailscale\0auth-key").digest("hex"),
+        integrationId: "tailscale",
+        credentialId: "auth-key",
+        configured: true,
+      }),
+    ));
+    assert.ok(!snapshot.credentialReferences.some((reference) =>
+      typeof reference === "object"
+      && reference !== null
+      && "credentialId" in reference
+      && reference.credentialId === "other",
+    ));
+    assert.ok(!JSON.stringify(snapshot).includes("ciphertext-only"));
   } finally {
     delete process.env.OPENCODE_TELEGRAM_HOME;
     await rm(home, { recursive: true, force: true });

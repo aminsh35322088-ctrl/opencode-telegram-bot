@@ -38,5 +38,10 @@ test("control surface binds session and cannot dispatch arbitrary operations",as
   const forbidden=request("railway.delete","bound","b".repeat(32));await assert.rejects(handleNodeControl(forbidden.body,forbidden.signature,dependencies),/operation/);
   const good=request("snapshot.get","bound","c".repeat(32));const response=await handleNodeControl(good.body,good.signature,dependencies);
   assert.equal(JSON.parse(response.body).payload.revision,1);assert.equal(calls,1);
+  for(const [index,operation] of ["credential.acquire","credential.validate","credential.release","capability.authorize"].entries()){
+   const allowed=request(operation,"bound",String(index+1).repeat(32));
+   await handleNodeControl(allowed.body,allowed.signature,dependencies);
+  }
+  assert.equal(calls,5);
  }finally{await rm(dir,{recursive:true,force:true});}
 });

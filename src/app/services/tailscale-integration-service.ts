@@ -57,6 +57,7 @@ export interface TailscaleRuntimeStatus {
   configured: boolean;
   connected: boolean;
   daemonRunning: boolean;
+  executionScope: "topic-worker" | "control-plane";
   backendState?: string;
   hostname: string;
   tailnet?: string;
@@ -67,6 +68,7 @@ export interface TailscaleRuntimeStatus {
 }
 
 const TAILSCALE_SOCKET = process.env.TAILSCALE_SOCKET?.trim() || "/data/run/tailscale/tailscaled.sock";
+const distributedControl = (): boolean => process.env.DISTRIBUTED_CONTROL_ENABLED === "1";
 
 function paths() {
   return { socket: TAILSCALE_SOCKET };
@@ -126,7 +128,9 @@ function decryptAuthKey(secret: EncryptedSecret): string {
 function normalizeAuthKey(value: string): string {
   const authKey = value.trim();
   if (!authKey) throw new Error("Tailscale auth key is empty.");
-  if (authKey.length > 4096 || /[\r\n\0]/u.test(authKey)) throw new Error("Tailscale auth key is invalid.");
+  if (!authKey.startsWith("tskey-auth-") || authKey.length > 4096 || /[\r\n\0]/u.test(authKey)) {
+    throw new Error("Enter a Tailscale auth key beginning with tskey-auth-.");
+  }
   return authKey;
 }
 
@@ -182,9 +186,19 @@ async function up(authKey?: string): Promise<void> {
 
 export async function configureTailscale(authKeyValue: string): Promise<void> {
   const authKey = normalizeAuthKey(authKeyValue);
-  await up(authKey);
-  await enforceStableHostname();
+  if (!distributedControl()) {
+    await up(authKey);
+    await enforceStableHostname();
+  }
   await writeStored({ version: 1, hostname: HOSTNAME, authKey: encryptAuthKey(authKey), configuredAt: new Date().toISOString() });
+}
+
+/** Worker-only credential bridge. The key is decrypted only after a signed Topic RPC. */
+export async function resolveTailscaleAuthKey(credentialId: string): Promise<string | null> {
+  if (credentialId !== "auth-key") return null;
+  const stored = await readStored();
+  if (!stored) return null;
+  return normalizeAuthKey(decryptAuthKey(stored.authKey));
 }
 
 async function enforceStableHostname(): Promise<void> {
@@ -195,6 +209,14 @@ async function enforceStableHostname(): Promise<void> {
 export async function initializeTailscaleIntegration(): Promise<boolean> {
   const stored = await readStored();
   if (!stored) return false;
+  if (distributedControl()) {
+    try {
+      return Boolean(await resolveTailscaleAuthKey("auth-key"));
+    } catch (error) {
+      logger.warn("[Tailscale] Stored Worker auth key is unavailable; bot will continue without Tailnet access.", error);
+      return false;
+    }
+  }
   try {
     await ensureTailscaleDaemon();
     const status = await statusJson();
@@ -210,6 +232,7 @@ export async function initializeTailscaleIntegration(): Promise<boolean> {
 }
 
 export async function reconnectTailscale(): Promise<void> {
+  if (distributedControl()) throw new Error("Topic Workers connect to Tailnet on demand.");
   const stored = await readStored();
   if (!stored) throw new Error("Tailscale is not configured.");
   await ensureTailscaleDaemon();
@@ -218,12 +241,13 @@ export async function reconnectTailscale(): Promise<void> {
 }
 
 export async function disconnectTailscale(): Promise<void> {
+  if (distributedControl()) throw new Error("Topic Workers connect to Tailnet on demand.");
   await ensureTailscaleDaemon();
   await cli(["down"], 8_000);
 }
 
 export async function removeTailscaleIntegration(): Promise<void> {
-  if (await socketReady()) await cli(["logout"], 10_000).catch(() => ({ ok: false, stdout: "", stderr: "" }));
+  if (!distributedControl() && await socketReady()) await cli(["logout"], 10_000).catch(() => ({ ok: false, stdout: "", stderr: "" }));
   await writeStored(null);
 }
 
@@ -331,8 +355,22 @@ export async function pingTailscaleSshDevice(target: string): Promise<{ ok: bool
 }
 
 export async function getTailscaleRuntimeStatus(): Promise<TailscaleRuntimeStatus> {
+  const executionScope = distributedControl() ? "topic-worker" : "control-plane";
   const stored = await readStored();
-  if (!stored) return { configured: false, connected: false, daemonRunning: false, hostname: HOSTNAME, ips: [], selfTags: [], visiblePeers: 0, sshDevices: 0 };
+  if (!stored) return { configured: false, connected: false, daemonRunning: false, executionScope, hostname: HOSTNAME, ips: [], selfTags: [], visiblePeers: 0, sshDevices: 0 };
+  if (distributedControl()) {
+    return {
+      configured: true,
+      connected: false,
+      daemonRunning: false,
+      executionScope,
+      hostname: "Topic Worker",
+      ips: [],
+      selfTags: [],
+      visiblePeers: 0,
+      sshDevices: 0,
+    };
+  }
   try {
     await ensureTailscaleDaemon();
     const status = await statusJson();
@@ -342,6 +380,7 @@ export async function getTailscaleRuntimeStatus(): Promise<TailscaleRuntimeStatu
       configured: true,
       connected: status?.BackendState === "Running",
       daemonRunning: await socketReady(),
+      executionScope,
       backendState: status?.BackendState,
       hostname: status?.Self?.HostName || HOSTNAME,
       tailnet: status?.CurrentTailnet?.Name,
@@ -351,7 +390,7 @@ export async function getTailscaleRuntimeStatus(): Promise<TailscaleRuntimeStatu
       sshDevices: sshDevices.length,
     };
   } catch {
-    return { configured: true, connected: false, daemonRunning: false, hostname: HOSTNAME, ips: [], selfTags: [], visiblePeers: 0, sshDevices: 0 };
+    return { configured: true, connected: false, daemonRunning: false, executionScope, hostname: HOSTNAME, ips: [], selfTags: [], visiblePeers: 0, sshDevices: 0 };
   }
 }
 

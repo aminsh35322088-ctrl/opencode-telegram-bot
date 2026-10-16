@@ -129,6 +129,13 @@ async function accountToken(account: StoredGithubAccount | undefined): Promise<s
   if (!account) return "";
   return (await resolveExtensionCredential(githubExtensionId(account.id), account.credentialId))?.trim() ?? "";
 }
+/** Resolve the selected account only for a signed, Topic-bound Worker request. */
+export async function resolveActiveGithubCredentialForWorker(accountId: string): Promise<string | null> {
+  if (!accountId || accountId.length > 128) return null;
+  const active = getActiveAccount(await readIndex());
+  if (!active || active.id !== accountId) return null;
+  return (await accountToken(active)) || null;
+}
 async function applyActiveToken(index: GithubIndex): Promise<string> {
   const active = getActiveAccount(index);
   const token = await accountToken(active);

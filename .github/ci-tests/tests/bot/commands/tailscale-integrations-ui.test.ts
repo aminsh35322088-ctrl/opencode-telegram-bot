@@ -118,6 +118,36 @@ describe("Tailscale Integrations UI", () => {
     expect(callbacks.some((value: string | undefined) => value?.includes("ssh:server"))).toBe(false);
   });
 
+  it("shows the saved key as available to Workers without reporting a fake shared connection", async () => {
+    mocks.status.mockResolvedValue({
+      configured: true,
+      connected: false,
+      daemonRunning: false,
+      executionScope: "topic-worker",
+      hostname: "Topic Worker",
+      ips: [],
+      selfTags: [],
+      visiblePeers: 0,
+      sshDevices: 0,
+    });
+
+    const ctx = callbackContext("integration:tailscale");
+    await handleIntegrationsCallback(ctx);
+
+    const call = (ctx.api.editMessageText as ReturnType<typeof vi.fn>).mock.calls.at(-1);
+    expect(call?.[2]).toContain("Auth key saved for Topic Workers");
+    expect(call?.[2]).toContain("On demand, separately for each Topic Worker");
+    expect(call?.[2]).not.toContain("Disconnected");
+    expect(call?.[2]).not.toContain("Visible peers: 0");
+    const callbacks = call?.[3]?.reply_markup.inline_keyboard.flat().map((button: { callback_data?: string }) => button.callback_data);
+    expect(callbacks).not.toContain("integration:tailscale:reconnect");
+    expect(callbacks).not.toContain("integration:tailscale:disconnect");
+    expect(callbacks).not.toContain("integration:tailscale:devices");
+    expect(callbacks).toContain("integration:tailscale:connect");
+    expect(callbacks).toContain("integration:tailscale:remove");
+    expect(mocks.devices).not.toHaveBeenCalled();
+  });
+
 
   it("connects from the canonical panel, deletes the auth-key message, and never echoes the key", async () => {
     const start = callbackContext("integration:tailscale:connect");
@@ -126,14 +156,14 @@ describe("Tailscale Integrations UI", () => {
 
     mocks.status.mockResolvedValue({
       configured: true,
-      connected: true,
-      daemonRunning: true,
-      hostname: "opencode-bot",
-      tailnet: "example.ts.net",
-      ips: ["100.64.0.2"],
-      selfTags: ["tag:opencode-bot"],
-      visiblePeers: 1,
-      sshDevices: 1,
+      connected: false,
+      daemonRunning: false,
+      executionScope: "topic-worker",
+      hostname: "Topic Worker",
+      ips: [],
+      selfTags: [],
+      visiblePeers: 0,
+      sshDevices: 0,
     });
     mocks.devices.mockResolvedValue([{ name: "github-exit", ips: ["100.64.0.10"], online: true, tags: ["tag:ssh"], os: "linux", sshHostKeys: ["ssh-ed25519 AAAATEST"], nativeTailscaleSsh: true, sshEligible: true, sshReason: "eligible" }]);
 
@@ -144,6 +174,8 @@ describe("Tailscale Integrations UI", () => {
     expect(input.api.deleteMessage).toHaveBeenCalledWith(777, 600);
     const edits = (input.api.editMessageText as ReturnType<typeof vi.fn>).mock.calls;
     expect(JSON.stringify(edits)).not.toContain("tskey-auth-secret-value");
+    expect(JSON.stringify(edits)).toContain("Topic Workers will join the Tailnet on demand");
+    expect(mocks.devices).not.toHaveBeenCalled();
     expect(isIntegrationWizardActive()).toBe(false);
   });
 

@@ -9,7 +9,16 @@ export interface NodeControlDependencies {
   resolveIdentity(nodeId: string): Promise<{binding: NodeControlBinding; secret: string} | null>;
   dispatch(envelope: NodeEnvelope): Promise<unknown>;
 }
-const operations = new Set(["snapshot.get", "credential.get", "mutation.prepare", "mutation.commit"]);
+const operations = new Set([
+  "snapshot.get",
+  "credential.get",
+  "credential.acquire",
+  "credential.validate",
+  "credential.release",
+  "capability.authorize",
+  "mutation.prepare",
+  "mutation.commit",
+]);
 
 /** Narrow authenticated surface; transport supplies bounded raw UTF-8 input. */
 export async function handleNodeControl(body: string, signature: string, dependencies: NodeControlDependencies) {

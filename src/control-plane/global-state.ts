@@ -331,9 +331,58 @@ export async function materializeGlobalSnapshot(state: AppState): Promise<Global
       missing: !configured,
     });
   }
+  const integrations = record(state.integrations);
+  const github = record(integrations.github);
+  const githubAccounts = Array.isArray(github.accounts)
+    ? github.accounts.map(record).filter((item) => typeof item.id === "string")
+    : [];
+  const activeGithubId = typeof github.activeId === "string"
+    ? github.activeId
+    : typeof githubAccounts[0]?.id === "string" ? githubAccounts[0].id : undefined;
+  const activeGithub = githubAccounts.find((account) => account.id === activeGithubId);
+  if (activeGithub && typeof activeGithub.id === "string") {
+    const credentialId = typeof activeGithub.credentialId === "string" && activeGithub.credentialId.trim()
+      ? activeGithub.credentialId.trim()
+      : "token";
+    const extensionId = `integration:github:${activeGithub.id}`;
+    const id = hash(`${extensionId}\0${credentialId}`);
+    const vaultEntry = record(vaultEntries[id]);
+    const metadata = record(vaultEntry.metadata);
+    const secret = record(vaultEntry.secret);
+    const configured = metadata.extensionId === extensionId
+      && metadata.credentialId === credentialId
+      && secret.version === 1
+      && typeof secret.iv === "string"
+      && typeof secret.tag === "string"
+      && typeof secret.ciphertext === "string";
+    snapshot.credentialReferences.push({
+      id,
+      integrationId: "github",
+      credentialId: activeGithub.id,
+      configured,
+    });
+  }
+  const tailscale = record(integrations.tailscale);
+  const tailscaleKey = record(tailscale.authKey);
+  const tailscaleConfigured = tailscale.version === 1
+    && typeof tailscaleKey.iv === "string"
+    && typeof tailscaleKey.tag === "string"
+    && typeof tailscaleKey.ciphertext === "string";
+  if (tailscaleConfigured) {
+    snapshot.credentialReferences.push({
+      id: hash("integration:tailscale\0auth-key"),
+      integrationId: "tailscale",
+      credentialId: "auth-key",
+      configured: true,
+    });
+  }
   for (const [id, entry] of Object.entries(record(record(state.credentialVault).entries))) {
     const metadata = record(record(entry).metadata);
-    if (typeof metadata.extensionId === "string" && typeof metadata.credentialId === "string")
+    if (
+      typeof metadata.extensionId === "string"
+      && !metadata.extensionId.startsWith("integration:github:")
+      && typeof metadata.credentialId === "string"
+    )
       snapshot.credentialReferences.push({
         id,
         extensionId: metadata.extensionId,
