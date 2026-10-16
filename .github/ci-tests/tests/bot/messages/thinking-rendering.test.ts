@@ -50,16 +50,25 @@ describe("bot/messages/thinking-rendering", () => {
     expect(defined(longPayload?.parts[0]?.blocks?.[0]).type).toBe("expandable_blockquote");
   });
 
-  it("emits one part per reasoning section, in order", () => {
+  it("keeps multiple reasoning sections in one draft and preserves their order", () => {
     const payload = prepareThinkingPayload([
-      { id: "r1", title: "First", text: "A" },
-      { id: "r2", title: "Second", text: "B" },
+      { id: "r1", title: "Analysis", text: "A" },
+      { id: "r2", title: "Analysis", text: "B" },
     ]);
 
-    expect(payload?.parts.map((part) => part.fallbackText)).toEqual([
-      `${t("bot.thinking")} — First\nA`,
-      `${t("bot.thinking")} — Second\nB`,
+    expect(payload?.parts).toHaveLength(1);
+    expect(defined(payload?.parts[0]).fallbackText).toBe(`${t("bot.thinking")} — Analysis\nA\n\nB`);
+  });
+
+  it("removes raw provider think delimiters and collapses excess blank lines", () => {
+    const payload = prepareThinkingPayload([
+      { id: "r1", title: "Analysis", text: "<think>First thought</think>\n\n\nSecond thought</think>" },
     ]);
+
+    expect(defined(payload?.parts[0]).fallbackText).toBe(
+      `${t("bot.thinking")} — Analysis\nFirst thought\n\nSecond thought`,
+    );
+    expect(defined(payload?.parts[0]).fallbackText).not.toContain("</think>");
   });
 
   it("leaves markdown inside the reasoning untouched", () => {

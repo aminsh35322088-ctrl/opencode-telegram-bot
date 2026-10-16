@@ -96,12 +96,13 @@ function emitWriteTool(summaryAggregator: { processEvent(event: Event): void }):
 function emitThinkingPart(
   summaryAggregator: { processEvent(event: Event): void },
   text: string,
+  id = "reasoning-1",
 ): void {
   summaryAggregator.processEvent({
     type: "message.part.updated",
     properties: {
       part: {
-        id: "reasoning-1",
+        id,
         sessionID: "session-1",
         messageID: "message-1",
         type: "reasoning",
@@ -710,17 +711,25 @@ describe("bot/services/event-subscription-service", () => {
       generation: assistantRunState.getRun("session-1")?.generation,
     });
 
-    emitThinkingPart(summaryAggregator, "First thought");
+    emitThinkingPart(summaryAggregator, "First thought", "reasoning-1");
     await vi.waitFor(() => expect(api.sendRichMessageDraft).toHaveBeenCalledTimes(2), { timeout: 10_000 });
     expect(api.sendRichMessageDraft.mock.calls[1]?.[1]).toBe(draftId);
     expect(api.sendRichMessageDraft.mock.calls[1]?.[2]?.blocks?.[0]?.type).toBe("thinking");
     expect(api.sendRichMessageDraft.mock.calls[1]?.[3]).toMatchObject({ can_stop: true, keep_on_stop: true });
 
-    emitAssistantTextPart(summaryAggregator, "Final answer");
+    emitThinkingPart(summaryAggregator, "Second </think> thought", "reasoning-2");
     await vi.waitFor(() => expect(api.sendRichMessageDraft).toHaveBeenCalledTimes(3), { timeout: 10_000 });
     expect(api.sendRichMessageDraft.mock.calls[2]?.[1]).toBe(draftId);
-    expect(api.sendRichMessageDraft.mock.calls[2]?.[2]?.blocks?.[0]?.type).toBe("paragraph");
-    expect(api.sendRichMessageDraft.mock.calls[2]?.[3]).toMatchObject({ can_stop: true, keep_on_stop: true });
+    expect(api.sendRichMessageDraft.mock.calls[2]?.[2]?.blocks?.[0]).toMatchObject({
+      type: "thinking",
+      text: expect.stringContaining("First thought\n\nSecond thought"),
+    });
+
+    emitAssistantTextPart(summaryAggregator, "Final answer");
+    await vi.waitFor(() => expect(api.sendRichMessageDraft).toHaveBeenCalledTimes(4), { timeout: 10_000 });
+    expect(api.sendRichMessageDraft.mock.calls[3]?.[1]).toBe(draftId);
+    expect(api.sendRichMessageDraft.mock.calls[3]?.[2]?.blocks?.[0]?.type).toBe("paragraph");
+    expect(api.sendRichMessageDraft.mock.calls[3]?.[3]).toMatchObject({ can_stop: true, keep_on_stop: true });
 
     emitAssistantCompleted(summaryAggregator);
     emitSessionIdle(summaryAggregator);
@@ -731,6 +740,17 @@ describe("bot/services/event-subscription-service", () => {
     ];
     expect(persistedTexts.some((text) => text.includes("First thought") && !text.includes("Final answer"))).toBe(true);
     expect(persistedTexts.some((text) => text.includes("Final answer") && !text.includes("First thought"))).toBe(true);
+    const persistedReasoning = api.sendRichMessage.mock.calls
+      .map((call) => collectRenderedText(call[1]))
+      .filter((text) => text.includes("First thought") || text.includes("Second thought"));
+    expect(persistedReasoning).toHaveLength(1);
+    expect(persistedReasoning[0]).toContain("Second thought");
+    expect(persistedReasoning[0]).not.toContain("</think>");
+    const reasoningMessage = api.sendRichMessage.mock.calls.find((call) =>
+      collectRenderedText(call[1]).includes("First thought"),
+    )?.[1] as { blocks?: Array<{ type: string }> } | undefined;
+    expect(reasoningMessage?.blocks?.[0]?.type).toBe("expandable_blockquote");
+    expect(api.sendRichMessageDraft.mock.calls.every((call) => call[1] === draftId)).toBe(true);
     expect(api.sendMessageDraft).not.toHaveBeenCalled();
   }, 30_000);
 

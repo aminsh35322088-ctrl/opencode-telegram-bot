@@ -21,6 +21,38 @@ function formatHeader(title?: string): string {
   return normalizedTitle ? `${fallback} — ${normalizedTitle}` : fallback;
 }
 
+function normalizeThinkingText(text: string): string {
+  return text
+    .replace(/<\/?think(?:ing)?\s*>/gi, "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function combineThinkingSections(sections: ThinkingSection[]): { header: string; text: string } {
+  const normalizedSections = sections.map((section) => ({
+    title: section.title?.trim() || "",
+    text: normalizeThinkingText(section.text),
+  }));
+  const titles = [...new Set(normalizedSections.map((section) => section.title).filter(Boolean))];
+  const primaryTitle = titles.length === 1 ? titles[0] : undefined;
+  let previousTitle = "";
+
+  const text = normalizedSections
+    .map((section) => {
+      if (!section.text) return "";
+
+      const title = primaryTitle ? "" : section.title !== previousTitle ? section.title : "";
+      previousTitle = section.title;
+      return title ? `${title}\n${section.text}` : section.text;
+    })
+    .filter(Boolean)
+    .join("\n\n");
+
+  return { header: formatHeader(primaryTitle), text };
+}
+
 function quoteText(header: string, text: string) {
   return text
     ? [{ type: "bold" as const, text: header }, "\n", text]
@@ -49,26 +81,21 @@ function createThinkingPart(
 }
 
 /**
- * Visible reasoning stays open while a run is active. On completion every
- * reasoning section persists as an expandable quotation. Raw provider
- * chain-of-thought is not an input to this renderer.
+ * Visible reasoning stays in one native draft while a run is active so
+ * Telegram can animate updates to the same draft ID. On completion the
+ * sections are persisted together as one expandable quotation.
  */
 export function prepareThinkingPayload(
   sections: ThinkingSection[],
   options: ThinkingPayloadOptions = {},
 ): StreamingMessagePayload | null {
   const final = options.final ?? false;
-  const parts: TelegramRenderedPart[] = [];
+  if (sections.length === 0) return null;
 
-  for (const section of sections) {
-    const header = formatHeader(section.title);
-    const text = section.text.replace(/\r\n/g, "\n").trimEnd();
-    const textLimit = Math.max(1, DEFAULT_MAX_PART_CHARS - header.length - 1);
-    const chunks = text ? splitTextIntoChunks(text, textLimit) : [""];
-    for (const chunk of chunks) {
-      parts.push(createThinkingPart(header, chunk, final));
-    }
-  }
+  const { header, text } = combineThinkingSections(sections);
+  const textLimit = Math.max(1, DEFAULT_MAX_PART_CHARS - header.length - 1);
+  const chunks = text ? splitTextIntoChunks(text, textLimit) : [""];
+  const parts: TelegramRenderedPart[] = chunks.map((chunk) => createThinkingPart(header, chunk, final));
 
   return parts.length > 0 ? { parts } : null;
 }
