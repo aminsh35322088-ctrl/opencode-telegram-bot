@@ -31,12 +31,17 @@ export interface NewCommandDeps {
   ensureEventSubscription: (directory: string) => Promise<void>;
 }
 
-const newCommandFlights=new Map<string,Promise<void>>();
+const newCommandFlights = new Map<string, Promise<void>>();
 export function newCommand(ctx: CommandContext<Context>, deps: NewCommandDeps): Promise<void> {
-  const key=String(ctx.chat.id);
-  const existing=newCommandFlights.get(key);if(existing)return existing;
-  const operation=createNewSession(ctx,deps).finally(()=>{if(newCommandFlights.get(key)===operation)newCommandFlights.delete(key);});
-  newCommandFlights.set(key,operation);return operation;
+  const key = `${ctx.chat.id}:${ctx.update.update_id}`;
+  const existing = newCommandFlights.get(key);
+  if (existing) return existing;
+
+  const operation = createNewSession(ctx, deps).finally(() => {
+    if (newCommandFlights.get(key) === operation) newCommandFlights.delete(key);
+  });
+  newCommandFlights.set(key, operation);
+  return operation;
 }
 
 async function createNewSession(ctx: CommandContext<Context>, deps: NewCommandDeps): Promise<void> {

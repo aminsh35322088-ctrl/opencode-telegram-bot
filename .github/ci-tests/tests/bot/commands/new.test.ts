@@ -166,10 +166,10 @@ vi.mock("../../../src/bot/messages/busy-blocked-renderer.js", () => ({
   replyBusyBlocked: mocked.replyBusyBlockedMock,
 }));
 
-let nextUpdateId=1;
-function createContext(): Context {
+let nextUpdateId = 1;
+function createContext(updateId = nextUpdateId++): Context {
   return {
-    update: {update_id: nextUpdateId++},
+    update: { update_id: updateId },
     chat: { id: 123 },
     api: {},
     reply: vi.fn().mockResolvedValue({ message_id: 1 }),
@@ -345,6 +345,23 @@ describe("bot/commands/new", () => {
 
     expect(mocked.sessionCreateMock).toHaveBeenCalledTimes(2);
     expect(mocked.attachToSessionMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("deduplicates concurrent delivery of the same Telegram update", async () => {
+    mocked.sessionCreateMock.mockResolvedValue({
+      data: { id: "session-2", title: "Session Two" },
+      error: null,
+    });
+
+    const ctx1 = createContext(99);
+    const ctx2 = createContext(99);
+    const first = newCommand(ctx1 as never, createDeps());
+    const second = newCommand(ctx2 as never, createDeps());
+
+    await Promise.all([first, second]);
+
+    expect(mocked.sessionCreateMock).toHaveBeenCalledTimes(1);
+    expect(mocked.attachToSessionMock).toHaveBeenCalledTimes(1);
   });
 });
 
