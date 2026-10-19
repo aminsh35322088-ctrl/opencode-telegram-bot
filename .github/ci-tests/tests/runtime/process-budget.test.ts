@@ -146,4 +146,18 @@ describe("ProcessBudgetGovernor", () => {
     second.release();
     expect((await governor.snapshot()).activeCount).toBe(0);
   });
+  it("keeps the tailscaled daemon lease persistent without a command timeout", async () => {
+    const governor = new ProcessBudgetGovernor(7, resources());
+    const rule = governor.rule("tailscaled-daemon");
+
+    expect(rule.maxConcurrent).toBe(1);
+    expect(rule.defaultTimeoutMs).toBeNull();
+    expect(rule.maxTimeoutMs).toBeNull();
+    expect(rule.maxLifetimeMs).toBeNull();
+
+    const lease = await governor.acquire("tailscaled-daemon");
+    expect(lease.timeoutMs).toBeNull();
+    lease.release();
+  });
+
 });

@@ -89,7 +89,7 @@ export async function startTailscaledDaemon(
       };
     child = options.spawn
       ? options.spawn(paths.binary, args, spawnOptions)
-      : await budgetedSpawn("tailscale", paths.binary, args, spawnOptions);
+      : await budgetedSpawn("tailscaled-daemon", paths.binary, args, spawnOptions);
   } catch {
     await logHandle.close().catch(() => {});
     return { ok: false, reason: "spawn-error" };
