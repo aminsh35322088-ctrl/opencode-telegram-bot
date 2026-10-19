@@ -18,6 +18,7 @@ export type ProcessBudgetKind =
   | "ssh"
   | "ssh-keygen"
   | "tailscale"
+  | "tailscaled-daemon"
   | "git"
   | "diagnostic"
   | "cleanup"
@@ -44,6 +45,7 @@ const RULES: Readonly<Record<ProcessBudgetKind, ProcessRule>> = Object.freeze({
   ssh: { maxConcurrent: 2, reserveBytes: 24 * MiB, priority: "control", pressureCeiling: 0.97, defaultTimeoutMs: 60_000, maxTimeoutMs: 10 * 60_000, maxLifetimeMs: 10 * 60_000 },
   "ssh-keygen": { maxConcurrent: 1, reserveBytes: 24 * MiB, priority: "control", pressureCeiling: 0.96, defaultTimeoutMs: 15_000, maxTimeoutMs: 20_000, maxLifetimeMs: 20_000 },
   tailscale: { maxConcurrent: 2, reserveBytes: 24 * MiB, priority: "control", pressureCeiling: 0.97, defaultTimeoutMs: 12_000, maxTimeoutMs: 30_000, maxLifetimeMs: 30_000 },
+  "tailscaled-daemon": { maxConcurrent: 1, reserveBytes: 24 * MiB, priority: "control", pressureCeiling: 0.97, defaultTimeoutMs: null, maxTimeoutMs: null, maxLifetimeMs: null },
   git: { maxConcurrent: 1, reserveBytes: 48 * MiB, priority: "background", pressureCeiling: 0.95, defaultTimeoutMs: 20_000, maxTimeoutMs: 45_000, maxLifetimeMs: 45_000 },
   diagnostic: { maxConcurrent: 2, reserveBytes: 12 * MiB, priority: "control", pressureCeiling: 0.985, defaultTimeoutMs: 5_000, maxTimeoutMs: 10_000, maxLifetimeMs: 10_000 },
   cleanup: { maxConcurrent: 8, reserveBytes: 8 * MiB, priority: "critical", pressureCeiling: 1.05, defaultTimeoutMs: 5_000, maxTimeoutMs: 10_000, maxLifetimeMs: 10_000 },
