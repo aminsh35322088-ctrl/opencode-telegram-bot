@@ -1,4 +1,5 @@
-import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from "node:child_process";
+import type { ChildProcess, SpawnOptions } from "node:child_process";
+import { budgetedSpawn } from "../runtime/process-budget.js";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
@@ -47,7 +48,6 @@ export async function startTailscaledDaemon(
   options: StartTailscaledOptions = {},
 ): Promise<StartTailscaledResult> {
   const paths = options.paths ?? resolveTailscaledPaths();
-  const spawnFn = options.spawn ?? ((command, args, opts) => nodeSpawn(command, [...args], opts));
   const timeoutMs = options.timeoutMs ?? 10_000;
   const pollMs = options.pollMs ?? 100;
 
@@ -75,10 +75,8 @@ export async function startTailscaledDaemon(
 
   let child: ChildProcess;
   try {
-    child = spawnFn(
-      paths.binary,
-      ["--tun=userspace-networking", `--state=${paths.state}`, `--socket=${paths.socket}`],
-      {
+    const args = ["--tun=userspace-networking", `--state=${paths.state}`, `--socket=${paths.socket}`];
+    const spawnOptions: SpawnOptions = {
         stdio: ["ignore", logFd, logFd],
         detached: false,
         ...(options.uid !== undefined ? { uid: options.uid } : {}),
@@ -88,8 +86,10 @@ export async function startTailscaledDaemon(
           GOMEMLIMIT: options.gemmLimit ?? process.env.TAILSCALED_GOMEMLIMIT?.trim() ?? "160MiB",
           GOMAXPROCS: options.gomaxprocs ?? process.env.TAILSCALED_GOMAXPROCS?.trim() ?? "1",
         },
-      },
-    );
+      };
+    child = options.spawn
+      ? options.spawn(paths.binary, args, spawnOptions)
+      : await budgetedSpawn("tailscale", paths.binary, args, spawnOptions);
   } catch {
     await logHandle.close().catch(() => {});
     return { ok: false, reason: "spawn-error" };
