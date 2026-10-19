@@ -2,6 +2,7 @@ import { budgetedExecFile } from "../../runtime/process-budget.js";
 import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { config } from "../../config.js";
+import { isDistributedControl } from "../../infrastructure/control-runtime-config.js";
 import { logger } from "../../utils/logger.js";
 import { readAppState, updateAppState } from "../stores/app-state-store.js";
 
@@ -68,7 +69,7 @@ export interface TailscaleRuntimeStatus {
 }
 
 const TAILSCALE_SOCKET = process.env.TAILSCALE_SOCKET?.trim() || "/data/run/tailscale/tailscaled.sock";
-const distributedControl = (): boolean => process.env.DISTRIBUTED_CONTROL_ENABLED === "1";
+const distributedControl = (): boolean => isDistributedControl();
 
 function paths() {
   return { socket: TAILSCALE_SOCKET };

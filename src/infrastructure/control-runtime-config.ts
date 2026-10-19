@@ -34,3 +34,8 @@ export function resolveControlRuntimeConfig(
 export function configureApplicationEnvironment(environment: NodeJS.ProcessEnv): void {
   for (const name of DEPRECATED_CONTROL_VARIABLES) delete environment[name];
 }
+
+/** Distributed control is granted by the launcher's worker IPC; the legacy env flag remains an explicit override. */
+export function isDistributedControl(): boolean {
+  return process.env.CONTROL_APPLICATION_IPC === "1" || process.env.DISTRIBUTED_CONTROL_ENABLED === "1";
+}

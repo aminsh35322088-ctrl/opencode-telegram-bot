@@ -27,6 +27,7 @@ import { listTelegramTopicBindings } from "../services/telegram-topic-store.js";
 import { listTopicRuntimeStates, removeTopicRuntimeState } from "../stores/topic-runtime-state-store.js";
 import { requestInfrastructureSetup } from "../../control-plane/application-transport.js";
 import { normalizeRailwayWorkerSettings } from "../../infrastructure/railway-worker-settings.js";
+import { isDistributedControl } from "../../infrastructure/control-runtime-config.js";
 import { setTopicNodeCreationEnabled } from "../../control-plane/topic-node-lifecycle.js";
 
 const SHUTDOWN_TIMEOUT_MS = 5000;
@@ -162,7 +163,7 @@ export async function startBotApp(): Promise<void> {
     logger.warn("[Tailscale] Could not initialize stored Tailnet integration; continuing without Tailnet access", error);
     return false;
   });
-  logger.info(`[Tailscale] ${process.env.DISTRIBUTED_CONTROL_ENABLED === "1"
+  logger.info(`[Tailscale] ${isDistributedControl()
     ? tailscaleConfigured ? "auth key configured for Topic Workers" : "not configured"
     : tailscaleConfigured ? "connected" : "not connected"}`);
   const managedConfigPath = await syncOpenCodeCustomConfig();

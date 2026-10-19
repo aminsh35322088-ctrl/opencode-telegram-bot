@@ -1,5 +1,6 @@
 import { budgetedSpawn } from "../../runtime/process-budget.js";
 import type { ManagedMcpConfig } from "./mcp-server-store.js";
+import { isDistributedControl } from "../../infrastructure/control-runtime-config.js";
 import { logger } from "../../utils/logger.js";
 
 const PROTOCOL_VERSION = "2025-06-18";
@@ -90,7 +91,7 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): 
 }
 
 async function openStdioSession(config: Extract<ManagedMcpConfig, { type: "local" }>, timeoutMs: number): Promise<McpSession> {
-  if(process.env.DISTRIBUTED_CONTROL_ENABLED==="1")throw new Error("Local MCP processes belong to the Topic Worker.");
+  if(isDistributedControl())throw new Error("Local MCP processes belong to the Topic Worker.");
   const [command, ...args] = config.command;
   if (!command) throw new Error("MCP local command is required.");
 
@@ -346,7 +347,7 @@ export async function callMcpTool(
   args: Record<string, unknown>,
   options: McpClientOptions = {},
 ): Promise<McpCallResult> {
-  if(process.env.DISTRIBUTED_CONTROL_ENABLED==="1")throw new Error("MCP tool execution belongs to the Topic Worker.");
+  if(isDistributedControl())throw new Error("MCP tool execution belongs to the Topic Worker.");
   const name = toolName.trim();
   if (!name) throw new Error("MCP tool name is required.");
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;

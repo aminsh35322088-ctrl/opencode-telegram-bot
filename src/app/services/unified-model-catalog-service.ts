@@ -1,4 +1,5 @@
 import { opencodeClient } from "../../opencode/client.js";
+import { isDistributedControl } from "../../infrastructure/control-runtime-config.js";
 import type { FavoriteModel, ProviderInfo } from "../types/model.js";
 import type {
   AgentModelReadiness,
@@ -387,7 +388,7 @@ async function buildSnapshot(): Promise<CatalogSnapshot> {
 }
 
 async function loadSnapshot(force = false): Promise<CatalogSnapshot> {
-  if (process.env.DISTRIBUTED_CONTROL_ENABLED === "1") {
+  if (isDistributedControl()) {
     const {readGlobalSnapshot}=await import("../../control-plane/global-state.js");
     const snapshot=await readGlobalSnapshot();
     const catalog=snapshot.catalog as {entries?:UnifiedModelCatalogEntry[]};

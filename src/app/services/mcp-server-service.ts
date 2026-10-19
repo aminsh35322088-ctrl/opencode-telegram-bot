@@ -1,4 +1,5 @@
 import { assertGlobalMutationBackend } from "../../control-plane/mutations.js";
+import { isDistributedControl } from "../../infrastructure/control-runtime-config.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -39,7 +40,7 @@ export interface McpServerItem {
   status: McpStatus;
   type: McpServerType;
 }
-const distributedControl = ():boolean => process.env.DISTRIBUTED_CONTROL_ENABLED === "1";
+const distributedControl = ():boolean => isDistributedControl();
 function desiredMcpServer(server:ManagedMcpServer):McpServerItem {
   return {name:server.name,type:server.config.type,status:server.config.enabled===false?{status:"disabled"}:{status:"failed",error:"Worker runtime validation pending"}};
 }
