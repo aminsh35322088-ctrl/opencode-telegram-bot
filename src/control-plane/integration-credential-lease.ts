@@ -18,7 +18,7 @@ export interface IntegrationCredentialLeaseDependencies {
 interface LeaseRecord extends IntegrationCredentialLeaseOwner {
   integrationId: "github" | "tailscale";
   credentialId: string;
-  capability: "repo.read" | "repo.write" | "device.enroll";
+  capability: "repo.read" | "repo.write" | "session.access" | "device.enroll";
   resource?: string;
   expiresAt: number;
   digest: Buffer;
@@ -150,17 +150,28 @@ export class IntegrationCredentialLeaseBroker {
     let capability: LeaseRecord["capability"];
     let resource: string | undefined;
     if (payload.integrationId === "github") {
-      if (!exactKeys(payload, [...requiredKeys, "resource"])
-        || typeof payload.credentialId !== "string"
-        || !GITHUB_ACCOUNT_ID.test(payload.credentialId)
-        || !["repo.read", "repo.write"].includes(payload.capability)
-        || typeof payload.resource !== "string"
-        || !GITHUB_REPOSITORY.test(payload.resource)) {
+      if (typeof payload.credentialId !== "string"
+        || !GITHUB_ACCOUNT_ID.test(payload.credentialId)) {
         throw new Error("Integration credential capability denied");
       }
-      integrationId = "github";
-      capability = payload.capability as LeaseRecord["capability"];
-      resource = payload.resource;
+      if (payload.capability === "session.access") {
+        if (!exactKeys(payload, requiredKeys)) {
+          throw new Error("Integration credential capability denied");
+        }
+        integrationId = "github";
+        capability = "session.access";
+      } else if (["repo.read", "repo.write"].includes(payload.capability)) {
+        if (!exactKeys(payload, [...requiredKeys, "resource"])
+          || typeof payload.resource !== "string"
+          || !GITHUB_REPOSITORY.test(payload.resource)) {
+          throw new Error("Integration credential capability denied");
+        }
+        integrationId = "github";
+        capability = payload.capability as LeaseRecord["capability"];
+        resource = payload.resource;
+      } else {
+        throw new Error("Integration credential capability denied");
+      }
     } else if (payload.integrationId === "tailscale") {
       if (!exactKeys(payload, requiredKeys)
         || payload.credentialId !== "auth-key"
