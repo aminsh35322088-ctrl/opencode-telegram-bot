@@ -2,7 +2,6 @@ import { budgetedExecFile } from "../../runtime/process-budget.js";
 import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { config } from "../../config.js";
-import { isDistributedControl } from "../../infrastructure/control-runtime-config.js";
 import { logger } from "../../utils/logger.js";
 import { readAppState, updateAppState } from "../stores/app-state-store.js";
 
@@ -69,10 +68,14 @@ export interface TailscaleRuntimeStatus {
 }
 
 const TAILSCALE_SOCKET = process.env.TAILSCALE_SOCKET?.trim() || "/data/run/tailscale/tailscaled.sock";
-const distributedControl = (): boolean => isDistributedControl();
 
 function paths() {
   return { socket: TAILSCALE_SOCKET };
+}
+
+/** The classic single daemon lives in the control plane; Topic Workers stay on-demand. */
+function daemonUnavailableError(): Error {
+  return new Error("The shared tailscaled daemon is not running. Topic Workers connect to Tailnet on demand.");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -187,7 +190,7 @@ async function up(authKey?: string): Promise<void> {
 
 export async function configureTailscale(authKeyValue: string): Promise<void> {
   const authKey = normalizeAuthKey(authKeyValue);
-  if (!distributedControl()) {
+  if (await socketReady()) {
     await up(authKey);
     await enforceStableHostname();
   }
@@ -210,7 +213,7 @@ async function enforceStableHostname(): Promise<void> {
 export async function initializeTailscaleIntegration(): Promise<boolean> {
   const stored = await readStored();
   if (!stored) return false;
-  if (distributedControl()) {
+  if (!await socketReady()) {
     try {
       return Boolean(await resolveTailscaleAuthKey("auth-key"));
     } catch (error) {
@@ -233,7 +236,7 @@ export async function initializeTailscaleIntegration(): Promise<boolean> {
 }
 
 export async function reconnectTailscale(): Promise<void> {
-  if (distributedControl()) throw new Error("Topic Workers connect to Tailnet on demand.");
+  if (!await socketReady()) throw daemonUnavailableError();
   const stored = await readStored();
   if (!stored) throw new Error("Tailscale is not configured.");
   await ensureTailscaleDaemon();
@@ -242,13 +245,13 @@ export async function reconnectTailscale(): Promise<void> {
 }
 
 export async function disconnectTailscale(): Promise<void> {
-  if (distributedControl()) throw new Error("Topic Workers connect to Tailnet on demand.");
+  if (!await socketReady()) throw daemonUnavailableError();
   await ensureTailscaleDaemon();
   await cli(["down"], 8_000);
 }
 
 export async function removeTailscaleIntegration(): Promise<void> {
-  if (!distributedControl() && await socketReady()) await cli(["logout"], 10_000).catch(() => ({ ok: false, stdout: "", stderr: "" }));
+  if (await socketReady()) await cli(["logout"], 10_000).catch(() => ({ ok: false, stdout: "", stderr: "" }));
   await writeStored(null);
 }
 
@@ -356,10 +359,11 @@ export async function pingTailscaleSshDevice(target: string): Promise<{ ok: bool
 }
 
 export async function getTailscaleRuntimeStatus(): Promise<TailscaleRuntimeStatus> {
-  const executionScope = distributedControl() ? "topic-worker" : "control-plane";
+  const daemonRunning = await socketReady();
+  const executionScope = daemonRunning ? "control-plane" : "topic-worker";
   const stored = await readStored();
-  if (!stored) return { configured: false, connected: false, daemonRunning: false, executionScope, hostname: HOSTNAME, ips: [], selfTags: [], visiblePeers: 0, sshDevices: 0 };
-  if (distributedControl()) {
+  if (!stored) return { configured: false, connected: false, daemonRunning, executionScope, hostname: HOSTNAME, ips: [], selfTags: [], visiblePeers: 0, sshDevices: 0 };
+  if (!daemonRunning) {
     return {
       configured: true,
       connected: false,
@@ -380,7 +384,7 @@ export async function getTailscaleRuntimeStatus(): Promise<TailscaleRuntimeStatu
     return {
       configured: true,
       connected: status?.BackendState === "Running",
-      daemonRunning: await socketReady(),
+      daemonRunning: true,
       executionScope,
       backendState: status?.BackendState,
       hostname: status?.Self?.HostName || HOSTNAME,
