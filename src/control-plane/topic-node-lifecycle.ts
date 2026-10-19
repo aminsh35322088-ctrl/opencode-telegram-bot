@@ -114,11 +114,14 @@ export class TopicNodeLifecycle {
     const binding=(await this.dependencies.bindings.list()).find(item=>item.status==='available'&&item.chatId===0&&item.threadId===0);
     if(!binding)throw new WorkerProvisioningError("capacity_exhausted");
     try{
+      // Reconcile the immutable runtime contract before comparing live health metadata.
+      // Otherwise a valid Worker upgraded to a newer pinned image is rejected against
+      // stale image metadata in the durable infrastructure journal.
+      await this.dependencies.infrastructure('reconcile',binding.nodeId,binding.generation);
       const observed=await this.dependencies.infrastructure('inspect',binding.nodeId,binding.generation);
       if(observed.nodeId!==binding.nodeId||observed.generation!==binding.generation||!observed.serviceId||!observed.volumeId||!observed.endpoint||observed.serviceId!==binding.serviceId||observed.volumeId!==binding.volumeId||observed.projectId!==binding.projectId||observed.endpoint!==binding.endpoint)throw new WorkerProvisioningError("reconciliation_required");
       await this.waitReady(binding,'available',observed);
       const synced=await this.syncGlobal(binding);
-      await this.dependencies.infrastructure('reconcile',binding.nodeId,binding.generation);
       return synced;
     }catch(error){
       const current=(await this.dependencies.bindings.list()).find(item=>item.nodeId===binding.nodeId);
