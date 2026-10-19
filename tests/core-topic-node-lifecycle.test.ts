@@ -82,7 +82,8 @@ test('New Chat preflight refuses an empty fleet before any Worker or session ope
 test('New Chat preflight verifies the selected live Worker before returning it',async()=>{
  const f=await fixture();await f.lifecycle.bootstrapPool(1);f.calls.length=0;
  const worker=await f.lifecycle.verifyAvailableWorker();
- assert.equal(worker.status,'available');assert.equal(f.calls[0],'inspect');
+ assert.equal(worker.status,'available');assert.equal(f.calls[0],'reconcile');
+ assert.ok(f.calls.indexOf('reconcile')<f.calls.indexOf('inspect'));
  assert.equal(f.calls.includes('health'),true);assert.equal(f.calls.includes('session.create'),false);
 });
 test('failed recycle quarantines the Worker and never deletes its service or volume',async()=>{
