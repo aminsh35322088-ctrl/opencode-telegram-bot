@@ -6,6 +6,7 @@ import type { ChildProcess } from "node:child_process";
 import {budgetedExecFile,budgetedSpawn} from "../runtime/process-budget.js";
 import {captureNodeRegistry} from "./node-registry.js";
 import {resolveControlRuntimeConfig,configureApplicationEnvironment} from "./control-runtime-config.js";
+import {startTailscaledDaemon} from "./tailscaled-daemon.js";
 import {DEFAULT_RAILWAY_WORKER_SETTINGS,RailwayWorkerSettingsStore,type RailwayWorkerSettings} from "./railway-worker-settings.js";
 
 // This process is the only infrastructure credential owner. Railway starts it as
@@ -173,6 +174,15 @@ async function main(): Promise<void> {
     };
     gatewayStart=child=>{stopGateway=startNodeGateway(child,nodes,protocol,port,controller,setupController,bootstrapGrants);};
   }
+
+  // The single shared Tailscale daemon is owned by this privileged launcher and
+  // runs as the application identity. Settings/tools talk to its socket; Topic
+  // Workers keep their own on-demand enrollment. Boot continues without the
+  // daemon: the Tailscale UI falls back to Topic-Worker mode until redeploy.
+  const tailscaled: { ok: boolean; pid?: number; reason?: string } = await startTailscaledDaemon({ uid: 1000, gid: 1000 })
+    .catch((error: unknown) => ({ ok: false as const, reason: `error:${String(error)}` }));
+  if (tailscaled.ok) process.stdout.write(`[InfrastructureBoundary] tailscaled_ready pid=${tailscaled.pid}\n`);
+  else process.stdout.write(`[InfrastructureBoundary] tailscaled_unavailable reason=${tailscaled.reason}\n`);
 
   const child = await budgetedSpawn("bot-daemon",process.execPath, ["/app/dist/index.js"], {
     cwd: "/app",
