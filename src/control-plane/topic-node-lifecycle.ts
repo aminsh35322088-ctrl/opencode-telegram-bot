@@ -147,13 +147,22 @@ export class TopicNodeLifecycle {
     return (await this.dependencies.bindings.list()).filter(binding=>binding.status!=='retired').sort((a,b)=>a.slot!-b.slot!);
   }
   async verifyAvailableWorker():Promise<NodeBinding>{
-    let available=(await this.dependencies.bindings.list()).filter(item=>item.status==='available'&&item.chatId===0&&item.threadId===0);
-    if(!available.length){
-      // A failed overflow allocation must not hide already-existing Workers.
-      try{await this.bootstrapPool(undefined,true);}catch{ /* Continue with any other healthy unbound slot. */ }
-      available=(await this.dependencies.bindings.list()).filter(item=>item.status==='available'&&item.chatId===0&&item.threadId===0);
-    }
     let lastError:unknown;
+    const listAvailable=async()=> (await this.dependencies.bindings.list()).filter(item=>item.status==='available'&&item.chatId===0&&item.threadId===0);
+    let available=await listAvailable();
+    if(!available.length){
+      // First repair complete persistent resources without creating infrastructure.
+      // A failed overflow allocation must not hide an already-existing Worker.
+      try{await this.bootstrapPool(undefined,true);}catch(error){lastError=error;}
+      available=await listAvailable();
+    }
+    if(!available.length){
+      // New Chat may finish a reservation that already exists in the durable pool.
+      // ensurePoolSlots(0) does not add slots, and preparePool ignores every
+      // Topic-bound binding, so this cannot grow capacity or disturb active Topics.
+      try{await this.bootstrapPool(undefined,false);}catch(error){lastError=error;}
+      available=await listAvailable();
+    }
     for(const candidate of available){
       const claimed=await this.dependencies.bindings.beginAvailableReconciliation(candidate.nodeId,candidate.generation);
       if(!claimed)continue;
