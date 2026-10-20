@@ -82,6 +82,16 @@ export class NodeBindingStore {
       return state.bindings.filter(binding=>binding.status!=="retired").sort((a,b)=>a.slot!-b.slot!);
     });
   }
+  /** Atomically remove an idle Worker from allocation while its immutable runtime is reconciled. */
+  beginAvailableReconciliation(nodeId:string,generation:number):Promise<NodeBinding|undefined>{
+    return this.transaction(state=>{
+      const binding=state.bindings.find(item=>item.nodeId===nodeId);
+      if(!binding||binding.generation!==generation||binding.status!=="available"||binding.chatId!==0||binding.threadId!==0||binding.sessionId!==undefined||!binding.slot||!binding.projectId||!binding.serviceId||!binding.volumeId||!binding.endpoint)return undefined;
+      binding.status="pool-provisioning";
+      binding.updatedAt=new Date().toISOString();
+      return binding;
+    });
+  }
   reserve(chatId: number, threadId: number): Promise<NodeBinding> {
     return this.transaction((state) => {
       if (chatId===0 || !Number.isSafeInteger(chatId) || !Number.isSafeInteger(threadId) || threadId <= 1) throw new Error("AI node requires a Telegram Topic");
