@@ -29,8 +29,8 @@ export async function dispatchAuthenticatedNodeControl(envelope: NodeEnvelope): 
       return await integrationCredentialLeaseBroker.authorize(data,owner);
     }
     if (envelope.operation==="railway.tool") {
-      const {requestInfrastructureSetup}=await import("./application-transport.js");
-      return await requestInfrastructureSetup("railway.tool",data);
+      const {requestRailwayAgentTool}=await import("./application-transport.js");
+      return await requestRailwayAgentTool(data);
     }
     if (envelope.operation==="credential.get") {
       if(data.purpose==="mcp.request"){
