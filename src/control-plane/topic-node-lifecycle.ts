@@ -100,8 +100,9 @@ export class TopicNodeLifecycle {
           // An image-changing reconcile returns before the canary; verify the new
           // runtime boundary while still fenced, then expose the slot as available.
           if(reconciled.imageUpdated)await this.dependencies.infrastructure('reconcile',binding.nodeId,binding.generation);
+          // Both per-Worker boundary checks and any required cluster-level canary
+          // have completed while this slot remained pool-provisioning.
           binding=await this.dependencies.bindings.update(binding.nodeId,binding.generation,{status:'available'});
-          await this.dependencies.infrastructure('reconcile',binding.nodeId,binding.generation);
           logger.info("[WorkerCluster] idle Worker reconciled and verified: node="+binding.nodeId+" generation="+binding.generation);
         }catch(error){
           logger.warn("[WorkerCluster] idle Worker reconciliation failed; slot remains fenced: node="+binding.nodeId+" generation="+binding.generation,error);
@@ -131,8 +132,9 @@ export class TopicNodeLifecycle {
         // New provisioning and an image-changing reconcile both return before the
         // root-only replay/foreign-topic/stale-generation canary can be complete.
         if(!hasResources||reconciled.imageUpdated)await this.dependencies.infrastructure('reconcile',binding.nodeId,generation);
+        // Availability is committed only after the root boundary and cluster-level
+        // runtime canaries have completed with this slot still fenced.
         binding=await this.dependencies.bindings.update(binding.nodeId,generation,{status:'available'});
-        await this.dependencies.infrastructure('reconcile',binding.nodeId,generation);
       }catch(error){
         logger.warn("[WorkerCluster] Worker bootstrap failed; slot remains fenced: node="+binding.nodeId+" generation="+generation,error);
         const current=(await this.dependencies.bindings.list()).find(item=>item.nodeId===binding.nodeId);
@@ -163,11 +165,9 @@ export class TopicNodeLifecycle {
         if(observed.nodeId!==binding.nodeId||observed.generation!==binding.generation||!observed.serviceId||!observed.volumeId||!observed.endpoint||observed.serviceId!==binding.serviceId||observed.volumeId!==binding.volumeId||observed.projectId!==binding.projectId||observed.endpoint!==binding.endpoint)throw new WorkerProvisioningError("reconciliation_required");
         const synced=await this.syncGlobal(binding);
         if(reconciled.imageUpdated)await this.dependencies.infrastructure('reconcile',synced.nodeId,synced.generation);
-        const ready=await this.dependencies.bindings.update(synced.nodeId,synced.generation,{status:'available'});
-        await this.dependencies.infrastructure('reconcile',ready.nodeId,ready.generation).catch(error=>{
-          logger.warn("[WorkerCluster] post-preflight cluster readiness check deferred: node="+ready.nodeId+" generation="+ready.generation,error);
-        });
-        return ready;
+        // The reconcile immediately above performed root verification while the
+        // binding was fenced; do not expose capacity before that proof completes.
+        return await this.dependencies.bindings.update(synced.nodeId,synced.generation,{status:'available'});
       }catch(error){
         lastError=error;
         const current=(await this.dependencies.bindings.list()).find(item=>item.nodeId===binding.nodeId);
