@@ -336,8 +336,10 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       // Serverless sleep mode stops idle Worker compute while preserving its volume;
       // an inbound Worker request wakes it before lifecycle readiness is confirmed.
       // Existing attached volumes retain their region; discovery defaults must never move their service.
-      await this.mutate(`mutation WorkerConfig($environmentId:String!,$serviceId:String!,$input:ServiceInstanceUpdateInput!){serviceInstanceUpdate(environmentId:$environmentId,serviceId:$serviceId,input:$input)}`, {environmentId:pool.environmentId,serviceId:record.serviceId,input:{numReplicas:1,sleepApplication:binding.chatId===0&&binding.threadId===0,healthcheckPath:"/health",healthcheckTimeout:30,...(instances.length===0?{multiRegionConfig:{[pool.region]:{numReplicas:1}}}:{}),tracingEnabled:false,autoInstrumentationEnabled:false,restartPolicyType:"ON_FAILURE",restartPolicyMaxRetries:3}});
-      record.sleepApplication=binding.chatId===0&&binding.threadId===0;
+      const desiredSleep=binding.chatId===0&&binding.threadId===0;
+      const sleepPolicyChanged=record.sleepApplication!==desiredSleep;
+      await this.mutate(`mutation WorkerConfig($environmentId:String!,$serviceId:String!,$input:ServiceInstanceUpdateInput!){serviceInstanceUpdate(environmentId:$environmentId,serviceId:$serviceId,input:$input)}`, {environmentId:pool.environmentId,serviceId:record.serviceId,input:{numReplicas:1,sleepApplication:desiredSleep,healthcheckPath:"/health",healthcheckTimeout:30,...(instances.length===0?{multiRegionConfig:{[pool.region]:{numReplicas:1}}}:{}),tracingEnabled:false,autoInstrumentationEnabled:false,restartPolicyType:"ON_FAILURE",restartPolicyMaxRetries:3}});
+      record.sleepApplication=desiredSleep;
       await this.save(journal);
       if(record.volumeId){
         const volume=inventory.project.volumes.edges.find(entry=>entry.node.id===record!.volumeId)?.node;
@@ -379,7 +381,7 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       const desiredVersion=this.options.workerVersion??WORKER_CORE_VERSION;
       const managedImageDrift=Boolean(record.image&&desiredImage&&(record.image!==desiredImage||record.runtimeCommit!==desiredCommit||record.runtimeVersion!==desiredVersion));
       if(managedImageDrift&&(binding.chatId!==0||binding.threadId!==0))throw new WorkerProvisioningError("image_mismatch");
-      if (record.phase === "deploying" && record.endpoint && !managedImageDrift) {
+      if (record.phase === "deploying" && record.endpoint && !managedImageDrift && !sleepPolicyChanged) {
         const knownDomains = inventory.environment.serviceInstances.edges.find(entry => entry.node.serviceId === record!.serviceId)?.node.domains.serviceDomains ?? [];
         if (knownDomains.length !== 1 || `https://${knownDomains[0]?.domain}` !== record.endpoint || knownDomains[0]?.id !== record.domainId) throw new Error("Worker domain ownership mismatch");
         record.deploymentId = inventory.environment.serviceInstances.edges.find(entry => entry.node.serviceId === record!.serviceId)?.node.latestDeployment?.id;
