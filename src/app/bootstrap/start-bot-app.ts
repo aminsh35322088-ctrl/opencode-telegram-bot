@@ -255,13 +255,15 @@ export async function startBotApp(): Promise<void> {
     const workerSettings=normalizeRailwayWorkerSettings(await requestInfrastructureSetup("settings.get"));
     setTopicNodeCreationEnabled(workerSettings.workerCreationEnabled);
     logger.info(`[WorkerCluster] Railway policy loaded; onboarding owns initial warm bootstrap capacity=${workerSettings.warmCapacity}`);
-    // Reconcile only existing unbound slots after every Bot deploy. This never
-    // allocates extra Railway resources and never touches a Worker owned by a Topic.
+    // Finish already-recorded unbound Worker reservations after every deploy.
+    // ensurePoolSlots(0) never grows the slot count, and lifecycle skips every
+    // Topic-bound Worker. Onboarding remains the only path that chooses initial
+    // warm capacity; startup merely finishes reservations that already exist.
     safeBackgroundTask({
       taskName: "app.workerPoolReleaseReconcile",
       task: async () => {
         const { topicNodeLifecycle } = await import("../../control-plane/topic-node-lifecycle.js");
-        const nodes = await topicNodeLifecycle.bootstrapPool(undefined, true);
+        const nodes = await topicNodeLifecycle.bootstrapPool(undefined, false);
         const available = nodes.filter((node) => node.status === "available" && node.chatId === 0 && node.threadId === 0).length;
         logger.info(
           `[WorkerCluster] startup release reconciliation complete: nodes=${nodes.length} available=${available} target=${WORKER_CORE_VERSION}`,
