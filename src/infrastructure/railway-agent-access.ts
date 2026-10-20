@@ -27,8 +27,8 @@ function requiredId(value: unknown, name: string): string {
 function redact(value: unknown): unknown {
   if (typeof value === "string") {
     return value
-      .replace(/(bearer\\s+)[A-Za-z0-9._~+/-]+=*/giu, "$1[REDACTED]")
-      .replace(/((?:token|secret|password|api[_-]?key|authorization)\\s*[:=]\\s*)["']?[^\\s"',;}]+/giu, "$1[REDACTED]")
+      .replace(/(bearer\s+)[A-Za-z0-9._~+/-]+=*/giu, "$1[REDACTED]")
+      .replace(/((?:token|secret|password|api[_-]?key|authorization)\s*[:=]\s*)["']?[^\s"',;}]+/giu, "$1[REDACTED]")
       .replace(/(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|tskey-[A-Za-z0-9-]{20,}|railway_[A-Za-z0-9_-]{20,})/gu, "[REDACTED]");
   }
   if (Array.isArray(value)) return value.map(redact);
