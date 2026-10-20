@@ -143,8 +143,7 @@ export class InfrastructureController {
   // but they must not hold the global infrastructure mutation queue while doing
   // bounded network selftests. Canonical pool-provisioning status fences capacity.
   let verification:Promise<void>|undefined;
-  let task!:Promise<ProvisionedNode>;
-  task=this.queue.then(async()=>{
+  const task=this.queue.then(async()=>{
    if(!['provision','rebind','recycle','retire','reconcile','inspect'].includes(operation)||typeof nodeId!=='string'||nodeId.length>128||!Number.isSafeInteger(generation)||generation<1)throw Error('Infrastructure operation denied');
    const binding=await this.lookup(nodeId);if(!binding||binding.generation!==generation)throw Error('Infrastructure binding denied');
    if(operation==='inspect'){if(this.poolConfiguration)await this.poolConfiguration;if(!this.provisioner)throw Error('Worker pools not configured');return this.provisioner.inspectWorker(nodeId,generation);}
