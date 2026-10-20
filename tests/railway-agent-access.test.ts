@@ -19,7 +19,7 @@ function requestFixture() {
     if (document.includes("WorkerRailwayProject")) return { project } as T;
     if (document.includes("WorkerRailwayServiceInstance")) return { serviceInstance: { serviceName: "api", latestDeployment: { id: "deployment-1", status: "SUCCESS", createdAt: "2026-10-20T00:00:00Z" } } } as T;
     if (document.includes("WorkerRailwayDeployments")) return { deployments: { edges: [{ node: { id: "deployment-1", status: "SUCCESS", createdAt: "2026-10-20T00:00:00Z" } }] } } as T;
-    if (document.includes("WorkerRailwayDeploymentLogs")) return { deploymentLogs: [{ timestamp: "2026-10-20T00:00:00Z", severity: "info", message: "token=supersecret" }] } as T;
+    if (document.includes("WorkerRailwayDeploymentLogs")) return { deploymentLogs: [{ timestamp: "2026-10-20T00:00:00Z", severity: "info", message: "token=supersecret --password hunter2" }] } as T;
     throw new Error("unexpected GraphQL document");
   };
   return { request, calls };
@@ -50,7 +50,7 @@ test("Railway logs are deployment-scoped and redact token-like values", async ()
   const result = await runRailwayAgentAccess(request, "workspace-1", {
     action: "logs", projectId: "project-1", serviceId: "service-1", deploymentId: "deployment-1", limit: 10,
   }) as { logs: Array<{ message: string }> };
-  assert.equal(result.logs[0]?.message, "token=[REDACTED]");
+  assert.equal(result.logs[0]?.message, "token=[REDACTED] --password [REDACTED]");
 });
 
 test("Railway agent access rejects arbitrary GraphQL and mutation actions", async () => {
