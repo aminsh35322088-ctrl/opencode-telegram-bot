@@ -236,6 +236,22 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       let lastQuotaError:InfrastructureRequestError|undefined;
       const expand=async()=>{
         if(expanded||!this.options.createPool)throw lastQuotaError??new WorkerProvisioningError("capacity_exhausted");
+        // Hard account-level fleet ceiling: at most four Worker services, plus
+        // the separate Control Plane service. Never create another Railway
+        // project when the four Worker slots are already live or durably reserved.
+        const journal=await this.read();
+        let actualWorkers=0;
+        try{
+          for(const candidate of this.options.pools){
+            const inventory=await this.inventory(candidate);
+            actualWorkers+=inventory.project.services.edges.filter(entry=>entry.node.name.startsWith("topic-node-")&&!entry.node.deletedAt).length;
+          }
+        }catch{
+          // An incomplete inventory must never authorize additional resources.
+          throw new WorkerProvisioningError("reconciliation_required");
+        }
+        const ownedWorkers=journal.nodes.filter(item=>item.phase!=="retired").length;
+        if(Math.max(actualWorkers,ownedWorkers)>=4)throw new WorkerProvisioningError("capacity_exhausted");
         expanded=true;
         const known=new Set(this.options.pools.map(candidate=>candidate.projectId));
         for(const projectId of excluded)known.add(projectId);
