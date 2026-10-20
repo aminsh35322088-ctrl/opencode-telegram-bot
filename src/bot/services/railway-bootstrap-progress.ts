@@ -38,7 +38,7 @@ export function summarizeRailwayBootstrap(
   projectCount: number,
   workerTarget: number,
 ): RailwayBootstrapProgress {
-  const target = Number.isSafeInteger(workerTarget) && workerTarget > 0 ? workerTarget : 5;
+  const target = Number.isSafeInteger(workerTarget) && workerTarget > 0 ? Math.min(workerTarget,4) : 4;
   const active = bindings.filter((binding) =>
     binding.status !== "retired" && (binding.slot === undefined || binding.slot <= target),
   );
