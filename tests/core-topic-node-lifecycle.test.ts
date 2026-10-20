@@ -15,11 +15,18 @@ async function fixture(mode='normal') {
       const result:ProvisionedNode={nodeId,generation,projectId:'workers',environmentId:'production',serviceId:'service-'+nodeId,volumeId:'volume-'+nodeId,endpoint:'https://worker.up.railway.app',phase:operation==='retire'?'retired':operation==='recycle'||operation==='rebind'?'recycled':'deploying'};
       if(mode==='image-mismatch')Object.assign(result,{runtimeCommit:'a'.repeat(40),runtimeVersion:'1.18.33-bot.13-pre.17',image:'ghcr.io/example/core@sha256:'+'b'.repeat(64)});
       if(operation==='reconcile'){const all=await bindings.list();assert.equal(all.some(item=>item.status==='ready'||item.status==='available'||item.status==='pool-provisioning'),true);}
+      if(mode==='rolling-image-upgrade'&&operation==='reconcile'){
+        Object.assign(result,{image:'ghcr.io/example/worker@sha256:'+'e'.repeat(64),runtimeCommit:'d'.repeat(40),runtimeVersion:'1.18.33-bot.13-pre.39'});
+        if(calls.filter(item=>item==='reconcile').length===1)Object.assign(result,{imageUpdated:true});
+      }
+      if(mode==='rolling-image-upgrade'&&operation==='inspect'){
+        Object.assign(result,{image:'ghcr.io/example/worker@sha256:'+'e'.repeat(64),runtimeCommit:'d'.repeat(40),runtimeVersion:'1.18.33-bot.13-pre.39'});
+      }
       return result;
     },
     node:async(binding,operation)=>{
       calls.push(operation);
-      if(operation==='health'){if(mode==='legacy-ready')return {ok:true,result:{ready:true}};healthCalls++;const readiness=mode==='timeout'?'warming':mode==='warming-once'&&healthCalls===1?'warming':binding.chatId===0?'ready-unbound':'ready';return {ok:true,result:{ready:readiness==='ready'||readiness==='ready-unbound',readiness,...(mode==='image-mismatch'?{runtime:{telegramCoreCommit:'c'.repeat(40),telegramCoreVersion:'1.18.33-bot.13-pre.17'}}:{})}};}
+      if(operation==='health'){if(mode==='legacy-ready')return {ok:true,result:{ready:true}};healthCalls++;const readiness=mode==='timeout'?'warming':mode==='warming-once'&&healthCalls===1?'warming':binding.chatId===0?'ready-unbound':'ready';const runtime=mode==='image-mismatch'?{telegramCoreCommit:'c'.repeat(40),telegramCoreVersion:'1.18.33-bot.13-pre.17'}:mode==='rolling-image-upgrade'?{telegramCoreCommit:healthCalls===1?'a'.repeat(40):'d'.repeat(40),telegramCoreVersion:healthCalls===1?'1.18.33-bot.13-pre.38':'1.18.33-bot.13-pre.39'}:undefined;return {ok:true,result:{ready:readiness==='ready'||readiness==='ready-unbound',readiness,...(runtime?{runtime}:{})}};}
       if(operation==='sync-global')return {ok:true,result:{revision:7,hash:mode==='corrupt'?'wrong':'hash7'}};
       if(operation==='session.create')return {ok:true,result:{sessionId:'session'}};
       if(operation==='session.get'){assert.equal(binding.sessionId,'session');return {ok:true,result:{id:'session',title:'Worker session',directory:'/data/topic'}};}
