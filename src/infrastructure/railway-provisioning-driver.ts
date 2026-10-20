@@ -81,7 +81,7 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
   listWorkers():Promise<ProvisionedNode[]>{return this.singleFlight(async()=>structuredClone((await this.read()).nodes));}
   inspectWorker(nodeId:string,generation:number):Promise<ProvisionedNode>{
     return this.singleFlight(async()=>{
-      const binding=await this.binding(nodeId,generation);
+      await this.binding(nodeId,generation);
       const journal=await this.read();const record=journal.nodes.find(n=>n.nodeId===nodeId&&n.generation===generation);
       if(!record)throw new WorkerProvisioningError("reconciliation_required");
       const pool=this.options.pools.find(p=>p.projectId===record.projectId)!;const inventory=await this.inventory(pool);
@@ -92,7 +92,7 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       // A setting read-back is not proof that the running container was created
       // with Serverless enabled. Railway applies sleepApplication only on deployment.
       // Keep inspection observational; the fenced reconcile/provision path owns rollout.
-      let deploymentStatus=instance.latestDeployment.status;
+      const deploymentStatus=instance.latestDeployment.status;
       if(record.sleepPolicyDeploymentPending===true){
         if(!record.sleepPolicyDeploymentId){
           if(instance.latestDeployment.id!==record.deploymentId){
