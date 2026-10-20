@@ -101,9 +101,7 @@ export class TopicNodeLifecycle {
           // runtime boundary while still fenced, then expose the slot as available.
           if(reconciled.imageUpdated)await this.dependencies.infrastructure('reconcile',binding.nodeId,binding.generation);
           binding=await this.dependencies.bindings.update(binding.nodeId,binding.generation,{status:'available'});
-          await this.dependencies.infrastructure('reconcile',binding.nodeId,binding.generation).catch(error=>{
-            logger.warn("[WorkerCluster] post-availability cluster readiness check deferred: node="+binding.nodeId+" generation="+binding.generation,error);
-          });
+          await this.dependencies.infrastructure('reconcile',binding.nodeId,binding.generation);
           logger.info("[WorkerCluster] idle Worker reconciled and verified: node="+binding.nodeId+" generation="+binding.generation);
         }catch(error){
           logger.warn("[WorkerCluster] idle Worker reconciliation failed; slot remains fenced: node="+binding.nodeId+" generation="+binding.generation,error);
@@ -134,11 +132,13 @@ export class TopicNodeLifecycle {
         // root-only replay/foreign-topic/stale-generation canary can be complete.
         if(!hasResources||reconciled.imageUpdated)await this.dependencies.infrastructure('reconcile',binding.nodeId,generation);
         binding=await this.dependencies.bindings.update(binding.nodeId,generation,{status:'available'});
-        await this.dependencies.infrastructure('reconcile',binding.nodeId,generation).catch(error=>{
-          logger.warn("[WorkerCluster] post-bootstrap cluster readiness check deferred: node="+binding.nodeId+" generation="+generation,error);
-        });
+        await this.dependencies.infrastructure('reconcile',binding.nodeId,generation);
       }catch(error){
         logger.warn("[WorkerCluster] Worker bootstrap failed; slot remains fenced: node="+binding.nodeId+" generation="+generation,error);
+        const current=(await this.dependencies.bindings.list()).find(item=>item.nodeId===binding.nodeId);
+        if(current?.generation===generation&&current.chatId===0&&current.threadId===0&&current.status==='available'){
+          binding=await this.dependencies.bindings.update(binding.nodeId,generation,{status:'pool-provisioning'});
+        }
         if(!repairOnly)throw error;
       }
     }
@@ -170,6 +170,10 @@ export class TopicNodeLifecycle {
         return ready;
       }catch(error){
         lastError=error;
+        const current=(await this.dependencies.bindings.list()).find(item=>item.nodeId===binding.nodeId);
+        if(current?.generation===binding.generation&&current.chatId===0&&current.threadId===0&&current.status==='available'){
+          await this.dependencies.bindings.update(binding.nodeId,generation,{status:'pool-provisioning'});
+        }
         logger.warn("[WorkerCluster] New Chat candidate failed runtime reconciliation; slot remains fenced: node="+binding.nodeId+" generation="+binding.generation,error);
       }
     }
