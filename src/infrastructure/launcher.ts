@@ -174,6 +174,12 @@ async function main(): Promise<void> {
       selectWorkspace:async(workspaceId:string)=>{const result=await onboarding.selectWorkspace(workspaceId);configuredWorkspaceName=result.configured?result.workspaceName:undefined;return result;},
       getSettings:async()=>({...workerSettings}),
       updateSettings:async(patch:unknown)=>{workerSettings=await workerSettingsStore.update(patch);controller.setPoolCapacity(workerSettings.workersPerProject);return {...workerSettings};},
+      railwayTool:async(payload:unknown)=>{
+        await startupPoolConfiguration.catch(()=>undefined);
+        if(!infrastructure.configured||!configuredWorkspaceId||secretInvalid)throw new Error("Railway integration unavailable");
+        const {runRailwayAgentAccess}=await import("./railway-agent-access.js");
+        return await runRailwayAgentAccess(infrastructure.request,configuredWorkspaceId,payload);
+      },
     };
     gatewayStart=child=>{stopGateway=startNodeGateway(child,nodes,protocol,port,controller,setupController,bootstrapGrants);};
   }
