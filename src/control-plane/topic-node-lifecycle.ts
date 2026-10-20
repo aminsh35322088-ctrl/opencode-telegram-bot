@@ -32,9 +32,9 @@ export class TopicNodeLifecycle {
     return response.result as T;
   }
   /** Reconcile existing unbound Workers; New Chat allocates additional capacity lazily. */
-  bootstrapPool(warmCapacity?:number,repairOnly=false):Promise<NodeBinding[]> {
+  bootstrapPool(warmCapacity?:number,repairOnly=false,continueOnError=false):Promise<NodeBinding[]> {
     if(this.poolFlight)return this.poolFlight;
-    const operation=this.preparePool(warmCapacity,repairOnly).finally(()=>{if(this.poolFlight===operation)this.poolFlight=undefined;});
+    const operation=this.preparePool(warmCapacity,repairOnly,continueOnError).finally(()=>{if(this.poolFlight===operation)this.poolFlight=undefined;});
     this.poolFlight=operation;return operation;
   }
   private async waitReady(binding:NodeBinding,status:'provisioning'|'pool-provisioning'|'available'|'retiring',expected?:ProvisionedNode,allowRuntimeTransition=false):Promise<void> {
@@ -72,8 +72,9 @@ export class TopicNodeLifecycle {
     }
     throw new Error("Global state changed repeatedly during bootstrap; retry Topic readiness");
   }
-  private async preparePool(warmCapacity?:number,repairOnly=false):Promise<NodeBinding[]> {
+  private async preparePool(warmCapacity?:number,repairOnly=false,continueOnError=false):Promise<NodeBinding[]> {
     const slots=await this.dependencies.bindings.ensurePoolSlots(warmCapacity??0);
+    let firstError:unknown;
     for(let binding of slots) {
       // A claimed Topic owns its Worker. Release reconciliation never enters that path.
       if(binding.chatId!==0||binding.threadId!==0)continue;
@@ -106,7 +107,10 @@ export class TopicNodeLifecycle {
           logger.info("[WorkerCluster] idle Worker reconciled and verified: node="+binding.nodeId+" generation="+binding.generation);
         }catch(error){
           logger.warn("[WorkerCluster] idle Worker reconciliation failed; slot remains fenced: node="+binding.nodeId+" generation="+binding.generation,error);
-          if(!repairOnly)throw error;
+          if(!repairOnly){
+            firstError??=error;
+            if(!continueOnError)throw error;
+          }
         }
         continue;
       }
@@ -141,10 +145,15 @@ export class TopicNodeLifecycle {
         if(current?.generation===generation&&current.chatId===0&&current.threadId===0&&current.status==='available'){
           binding=await this.dependencies.bindings.update(binding.nodeId,generation,{status:'pool-provisioning'});
         }
-        if(!repairOnly)throw error;
+        if(!repairOnly){
+          firstError??=error;
+          if(!continueOnError)throw error;
+        }
       }
     }
-    return (await this.dependencies.bindings.list()).filter(binding=>binding.status!=='retired').sort((a,b)=>a.slot!-b.slot!);
+    const remaining=(await this.dependencies.bindings.list()).filter(binding=>binding.status!=='retired').sort((a,b)=>a.slot!-b.slot!);
+    if(firstError)throw firstError;
+    return remaining;
   }
   async verifyAvailableWorker():Promise<NodeBinding>{
     let lastError:unknown;
@@ -160,7 +169,9 @@ export class TopicNodeLifecycle {
       // New Chat may finish a reservation that already exists in the durable pool.
       // ensurePoolSlots(0) does not add slots, and preparePool ignores every
       // Topic-bound binding, so this cannot grow capacity or disturb active Topics.
-      try{await this.bootstrapPool(undefined,false);}catch(error){lastError=error;}
+      // Try every existing reservation so one broken slot does not hide another
+      // viable Worker. The first error is still surfaced if no verified capacity remains.
+      try{await this.bootstrapPool(undefined,false,true);}catch(error){lastError=error;}
       available=await listAvailable();
     }
     for(const candidate of available){

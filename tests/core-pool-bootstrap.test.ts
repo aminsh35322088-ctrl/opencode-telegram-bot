@@ -60,6 +60,16 @@ test('failure preserves earlier ready slots and retries only incomplete persiste
   assert.deepEqual(after.map(item=>item.nodeId),before.map(item=>item.nodeId));assert.equal(after[0]!.serviceId,before[0]!.serviceId);
 });
 
+test('best-effort recovery continues through existing slots after one Worker fails',async()=>{
+ const f=await fixture();f.setFail(1);
+ await assert.rejects(f.lifecycle.bootstrapPool(undefined,false,true),error=>error===f.failure);
+ const slots=await f.bindings.list();
+ assert.equal(slots.length,4,'recovery must not increase the existing slot count');
+ assert.deepEqual(f.provisioned,[1,2,3,4],'later existing reservations must still be attempted');
+ assert.equal(slots[0]!.status,'pool-provisioning','failed Worker remains fenced');
+ assert.ok(slots.slice(1).every(slot=>slot.status==='available'),'healthy later Workers remain usable');
+});
+
 test('unready bootstrap has finite readiness deadline and retains provisioned resources without idle retries',async()=>{
   const f=await fixture();f.setTimeout();await assert.rejects(f.lifecycle.bootstrapPool(),/timed out/);assert.equal(f.now(),300000);
   const slot=(await f.bindings.list())[0]!;assert.equal(slot.status,'pool-provisioning');assert.ok(slot.serviceId&&slot.volumeId&&slot.endpoint);
