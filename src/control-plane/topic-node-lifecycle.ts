@@ -79,8 +79,8 @@ export class TopicNodeLifecycle {
       // A claimed Topic owns its Worker. Release reconciliation never enters that path.
       if(binding.chatId!==0||binding.threadId!==0)continue;
       // Recovery is deliberately limited to already-existing complete resources.
-      if(repairOnly&&['pool-reserved','pool-provisioning'].includes(binding.status)&&(!binding.serviceId||!binding.volumeId||!binding.endpoint))continue;
-      if(warmCapacity!==undefined&&binding.slot!>warmCapacity&&['pool-reserved','pool-provisioning','available','retiring'].includes(binding.status)){
+      if(repairOnly&&binding.slot!<=4&&['pool-reserved','pool-provisioning'].includes(binding.status)&&(!binding.serviceId||!binding.volumeId||!binding.endpoint))continue;
+      if((binding.slot!>4||warmCapacity!==undefined&&binding.slot!>warmCapacity)&&['pool-reserved','pool-provisioning','available','retiring'].includes(binding.status)){
         if(binding.status!=='retiring')binding=await this.dependencies.bindings.fence(binding.nodeId,binding.generation);
         const retired=await this.dependencies.infrastructure('retire',binding.nodeId,binding.generation);
         if(retired.nodeId!==binding.nodeId||retired.phase!=='retired')throw new Error("Warm Worker retirement not confirmed");
