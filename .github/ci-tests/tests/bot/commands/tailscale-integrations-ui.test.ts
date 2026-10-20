@@ -186,7 +186,7 @@ describe("Tailscale Integrations UI", () => {
       daemonRunning: true,
       hostname: "opencode-bot",
       ips: ["100.64.0.2"],
-      selfTags: ["tag:opencode-bot"],
+      selfTags: ["tag:co-admin"],
       visiblePeers: 2,
       sshDevices: 1,
     });

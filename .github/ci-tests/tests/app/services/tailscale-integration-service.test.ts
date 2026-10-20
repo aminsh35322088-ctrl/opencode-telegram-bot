@@ -41,7 +41,7 @@ esac
     await fs.writeFile(statusFile, JSON.stringify({
       BackendState: "Running",
       CurrentTailnet: { Name: "example.ts.net" },
-      Self: { HostName: "opencode-bot", TailscaleIPs: ["100.64.0.2"], Online: true, Tags: ["tag:opencode-bot"] },
+      Self: { HostName: "opencode-bot", TailscaleIPs: ["100.64.0.2"], Online: true, Tags: ["tag:co-admin"] },
       Peer: {
         ssh: { HostName: "github-exit", DNSName: "github-exit.example.ts.net.", TailscaleIPs: ["100.64.0.10"], Online: true, Tags: ["tag:exit", "tag:ssh"], OS: "linux", ID: "node-github-exit", PublicKey: "nodekey:github-exit", sshHostKeys: ["ssh-ed25519 AAAATEST"] },
         normal: { HostName: "phone", TailscaleIPs: ["100.64.0.11"], Online: true, Tags: [] },
@@ -80,7 +80,7 @@ esac
       daemonRunning: true,
       hostname: "opencode-bot",
       tailnet: "example.ts.net",
-      selfTags: ["tag:opencode-bot"],
+      selfTags: ["tag:co-admin"],
       visiblePeers: 3,
       sshDevices: 2,
     }));
