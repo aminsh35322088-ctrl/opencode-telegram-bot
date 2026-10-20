@@ -98,7 +98,7 @@ export class NodeBindingStore {
       const existing = state.bindings.find((binding) => binding.chatId === chatId && binding.threadId === threadId && binding.status !== "retired");
       if (existing) return existing;
       if(state.clusterId){
-        const available=state.bindings.find(binding=>binding.status==="available" && binding.chatId===0 && binding.threadId===0);
+        const available=state.bindings.find(binding=>binding.status==="available" && binding.chatId===0 && binding.threadId===0 && binding.slot!==undefined && binding.slot<=4);
         if(available){available.generation++;available.chatId=chatId;available.threadId=threadId;available.status="reserved";available.updatedAt=new Date().toISOString();return available;}
       }
       state.clusterId??=randomUUID();
