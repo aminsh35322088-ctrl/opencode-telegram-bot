@@ -12,8 +12,8 @@ export interface RailwayWorkerSettings {
 
 export const DEFAULT_RAILWAY_WORKER_SETTINGS: RailwayWorkerSettings = {
   workerCreationEnabled: true,
-  warmCapacity: 5,
-  workersPerProject: 5,
+  warmCapacity: 4,
+  workersPerProject: 4,
 };
 
 function integer(value: unknown, minimum: number, maximum: number, name: string): number {
@@ -36,8 +36,8 @@ export function normalizeRailwayWorkerSettings(value: unknown): RailwayWorkerSet
   if (typeof workerCreationEnabled !== "boolean") throw new Error("Invalid Railway Worker setting: workerCreationEnabled");
   return {
     workerCreationEnabled,
-    warmCapacity: integer(candidate.warmCapacity ?? DEFAULT_RAILWAY_WORKER_SETTINGS.warmCapacity, 0, 100, "warmCapacity"),
-    workersPerProject: integer(candidate.workersPerProject ?? DEFAULT_RAILWAY_WORKER_SETTINGS.workersPerProject, 1, 100, "workersPerProject"),
+    warmCapacity: integer(candidate.warmCapacity ?? DEFAULT_RAILWAY_WORKER_SETTINGS.warmCapacity, 0, 4, "warmCapacity"),
+    workersPerProject: integer(candidate.workersPerProject ?? DEFAULT_RAILWAY_WORKER_SETTINGS.workersPerProject, 1, 4, "workersPerProject"),
   };
 }
 
