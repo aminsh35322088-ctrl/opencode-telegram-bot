@@ -91,8 +91,35 @@ export class TopicNodeLifecycle {
     const slots=await this.dependencies.bindings.ensurePoolSlots(warmCapacity??0);
     let firstError:unknown;
     for(let binding of slots) {
-      // A claimed Topic owns its Worker. Release reconciliation never enters that path.
-      if(binding.chatId!==0||binding.threadId!==0)continue;
+      // Topic ownership is preserved during release rollout. At startup only, a bound
+      // Worker may be updated in place if its exact session proves idle; busy or
+      // unverifiable sessions are left untouched. /data, session identity and binding stay.
+      if(binding.chatId!==0||binding.threadId!==0){
+        if(continueOnError&&!repairOnly&&binding.status==="ready"&&binding.sessionId){
+          try{
+            const current=await this.dependencies.infrastructure("inspect",binding.nodeId,binding.generation);
+            const imageDrift=Boolean(current.image&&(current.image!==WORKER_RUNTIME_IMAGE||current.runtimeCommit!==WORKER_CORE_COMMIT||current.runtimeVersion!==WORKER_CORE_VERSION));
+            if(imageDrift){
+              const status=await this.rpc<{continuation?:string;externalRunId?:string|null}>(binding,"status");
+              if(status.continuation!=="idle"||status.externalRunId!==null){
+                logger.info("[WorkerCluster] bound Worker image rollout deferred; run is not idle: node="+binding.nodeId+" generation="+binding.generation);
+                continue;
+              }
+              const reconciled=await this.dependencies.infrastructure("reconcile",binding.nodeId,binding.generation);
+              await this.waitReady(binding,"ready",reconciled,true);
+              const observed=await this.dependencies.infrastructure("inspect",binding.nodeId,binding.generation);
+              if(observed.nodeId!==binding.nodeId||observed.generation!==binding.generation||observed.projectId!==binding.projectId||observed.serviceId!==binding.serviceId||observed.volumeId!==binding.volumeId||observed.endpoint!==binding.endpoint)throw new WorkerProvisioningError("reconciliation_required");
+              binding=await this.syncGlobal(binding);
+              if(reconciled.imageUpdated)await this.dependencies.infrastructure("reconcile",binding.nodeId,binding.generation);
+              logger.info("[WorkerCluster] idle bound Worker image rollout verified: node="+binding.nodeId+" generation="+binding.generation+" runtime="+WORKER_CORE_VERSION);
+            }
+          }catch(error){
+            logger.warn("[WorkerCluster] bound Worker image rollout deferred; existing Topic binding retained: node="+binding.nodeId+" generation="+binding.generation,error);
+            firstError??=error;
+          }
+        }
+        continue;
+      }
       // Recovery is deliberately limited to already-existing complete resources.
       // Never provision legacy overflow slots. Keep their persistent volumes intact;
       // an existing idle overflow Worker may still be reconciled into sleep mode below.
