@@ -1,11 +1,24 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
-import { DEFAULT_RAILWAY_WORKER_SETTINGS } from "../src/infrastructure/railway-worker-settings.js";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { DEFAULT_RAILWAY_WORKER_SETTINGS, normalizeRailwayWorkerSettings, RailwayWorkerSettingsStore } from "../src/infrastructure/railway-worker-settings.js";
 
 test("initial Railway fleet is hard-capped at four Workers", () => {
   assert.equal(DEFAULT_RAILWAY_WORKER_SETTINGS.workersPerProject, 4);
   assert.equal(DEFAULT_RAILWAY_WORKER_SETTINGS.warmCapacity, 4);
+});
+
+test("legacy Worker settings migrate down to four and updates cannot exceed the hard cap", async () => {
+  const directory=await mkdtemp(path.join(tmpdir(),"railway-worker-settings-"));
+  const filename=path.join(directory,"settings.json");
+  await writeFile(filename,JSON.stringify({workerCreationEnabled:true,warmCapacity:5,workersPerProject:5}),{mode:0o600});
+  const store=new RailwayWorkerSettingsStore(filename);
+  assert.deepEqual(await store.load(),{workerCreationEnabled:true,warmCapacity:4,workersPerProject:4});
+  assert.deepEqual(JSON.parse(await readFile(filename,"utf8")),{workerCreationEnabled:true,warmCapacity:4,workersPerProject:4});
+  assert.throws(()=>normalizeRailwayWorkerSettings({workerCreationEnabled:true,warmCapacity:5,workersPerProject:4}),/warmCapacity/);
+  assert.throws(()=>normalizeRailwayWorkerSettings({workerCreationEnabled:true,warmCapacity:4,workersPerProject:5}),/workersPerProject/);
 });
 
 test("Railway setup progress derives services, volumes, health and project counts from durable bindings", async () => {
