@@ -86,6 +86,15 @@ test('New Chat preflight verifies the selected live Worker before returning it',
  assert.ok(f.calls.indexOf('reconcile')<f.calls.indexOf('inspect'));
  assert.equal(f.calls.includes('health'),true);assert.equal(f.calls.includes('session.create'),false);
 });
+
+test('New Chat reconciles an existing slot when no Worker is currently marked available',async()=>{
+ const f=await fixture();await f.lifecycle.bootstrapPool(1);
+ const [first]=await f.bindings.list();
+ await f.bindings.update(first!.nodeId,first!.generation,{status:'pool-provisioning'});
+ const worker=await f.lifecycle.verifyAvailableWorker();
+ assert.equal(worker.nodeId,first!.nodeId);assert.equal(worker.status,'available');
+ assert.equal((await f.bindings.list()).filter(item=>item.status==='available'&&item.chatId===0&&item.threadId===0).length,1);
+});
 test('failed recycle quarantines the Worker and never deletes its service or volume',async()=>{
  const f=await fixture('recycle-failure');await f.lifecycle.ensureReady(-100,2,'/topic');
  await assert.rejects(f.lifecycle.retire(-100,2),/recycle failure/);

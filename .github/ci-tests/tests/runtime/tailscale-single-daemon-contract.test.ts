@@ -31,7 +31,7 @@ describe("Railway Tailscale single-daemon contract", () => {
     const integrations = fs.readFileSync("src/bot/commands/integrations-command.ts", "utf8");
     expect(integrations).toContain("Reusable: ON");
     expect(integrations).toContain("Ephemeral: OFF");
-    expect(integrations).toContain("tag:opencode-bot");
+    expect(integrations).toContain("tag:co-admin");
     expect(integrations).toContain("persistent node identity");
   });
 });
