@@ -124,7 +124,7 @@ export class InfrastructureController {
     if(this.poolConfiguration)await this.poolConfiguration;
     if(!this.provisioner||typeof nodeId!=="string"||nodeId.length>128||!Number.isSafeInteger(generation)||generation<1)throw Error("Worker cleanup unavailable");
     const before=await this.lookup(nodeId);
-    const available=(binding:NodeBinding|undefined)=>binding?.nodeId===nodeId&&binding.generation===generation&&binding.slot===1&&binding.chatId===0&&binding.threadId===0&&binding.status==="available"&&binding.sessionId===undefined&&!!binding.projectId&&!!binding.serviceId&&!!binding.volumeId;
+    const available=(binding:NodeBinding|undefined)=>binding?.nodeId===nodeId&&binding.generation===generation&&binding.slot===1&&binding.chatId===0&&binding.threadId===0&&["available","pool-provisioning"].includes(binding.status)&&binding.sessionId===undefined&&!!binding.projectId&&!!binding.serviceId&&!!binding.volumeId;
     if(!available(before))throw Error("Worker cleanup fence changed");
     await this.provisioner.cleanupDeprecatedWorkerVariables(nodeId,generation,selftest);
     const after=await this.lookup(nodeId);
@@ -187,14 +187,13 @@ export class InfrastructureController {
      process.stdout.write("[InfrastructureBoundary] worker_boundary_verified node="+nodeId+" generation="+generation+" health=true replayRejected=true foreignTopicRejected=true staleGenerationRejected=true\n");
      this.verifiedUnbound.set(nodeId,generation);
     }
-    // A newly verified runtime remains fenced through its lifecycle proof.
-    // The next reconcile after the canonical slot becomes available will revisit
-    // this gate without re-running the network canary and can activate the
-    // cluster-level runtime selftest only after every free slot is available.
+    // Keep a newly verified Worker fenced until the cluster-level runtime
+    // canary and startup cleanup also pass. Lifecycle marks it available only
+    // after this request returns successfully.
     if(!this.clusterVerified&&this.verifiedUnbound.size>0&&this.options.registry.metadata().filter(b=>b.chatId===0&&b.threadId===0&&b.status!=='retired').every(b=>this.verifiedUnbound.get(b.nodeId)===b.generation)){
      const current=await Promise.all([...this.verifiedUnbound].map(async([id,verifiedGeneration])=>{
       const canonical=await this.lookup(id);const registered=await this.options.registry.resolve(id);
-      return canonical?.generation===verifiedGeneration&&canonical.status==='available'&&canonical.chatId===0&&canonical.threadId===0&&registered?.binding.generation===verifiedGeneration&&registered.binding.status==='available';
+      return canonical?.generation===verifiedGeneration&&["available","pool-provisioning"].includes(canonical.status)&&canonical.chatId===0&&canonical.threadId===0&&registered?.binding.generation===verifiedGeneration&&["available","pool-provisioning"].includes(registered.binding.status);
      }));
      if(current.every(Boolean)){await this.options.onClusterVerified?.();this.clusterVerified=true;}
     }
