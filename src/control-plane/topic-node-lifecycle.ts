@@ -172,7 +172,7 @@ export class TopicNodeLifecycle {
         lastError=error;
         const current=(await this.dependencies.bindings.list()).find(item=>item.nodeId===binding.nodeId);
         if(current?.generation===binding.generation&&current.chatId===0&&current.threadId===0&&current.status==='available'){
-          await this.dependencies.bindings.update(binding.nodeId,generation,{status:'pool-provisioning'});
+          await this.dependencies.bindings.update(binding.nodeId,binding.generation,{status:'pool-provisioning'});
         }
         logger.warn("[WorkerCluster] New Chat candidate failed runtime reconciliation; slot remains fenced: node="+binding.nodeId+" generation="+binding.generation,error);
       }
