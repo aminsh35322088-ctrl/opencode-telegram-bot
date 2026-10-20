@@ -96,7 +96,6 @@ export class TopicNodeLifecycle {
           await this.waitReady(binding,'pool-provisioning',reconciled,reconciled.imageUpdated===true);
           const observed=await this.dependencies.infrastructure('inspect',binding.nodeId,binding.generation);
           if(observed.nodeId!==binding.nodeId||observed.generation!==binding.generation||!observed.serviceId||!observed.volumeId||!observed.endpoint||observed.serviceId!==binding.serviceId||observed.volumeId!==binding.volumeId||observed.projectId!==binding.projectId||observed.endpoint!==binding.endpoint)throw new WorkerProvisioningError("reconciliation_required");
-          await this.waitReady(binding,'pool-provisioning',observed);
           binding=await this.syncGlobal(binding);
           // An image-changing reconcile returns before the canary; verify the new
           // runtime boundary while still fenced, then expose the slot as available.
@@ -129,7 +128,8 @@ export class TopicNodeLifecycle {
         binding=await this.syncGlobal(binding);
         const observed=await this.dependencies.infrastructure('inspect',binding.nodeId,generation);
         if(observed.nodeId!==binding.nodeId||observed.generation!==generation||observed.projectId!==binding.projectId||observed.serviceId!==binding.serviceId||observed.volumeId!==binding.volumeId||observed.endpoint!==binding.endpoint)throw new WorkerProvisioningError("reconciliation_required");
-        await this.waitReady(binding,'pool-provisioning',observed);
+        // The live runtime was checked against the reconciled immutable identity above;
+        // inspect supplies a separate infrastructure ownership check, not another health poll.
         // New provisioning and an image-changing reconcile both return before the
         // root-only replay/foreign-topic/stale-generation canary can be complete.
         if(!hasResources||reconciled.imageUpdated)await this.dependencies.infrastructure('reconcile',binding.nodeId,generation);
@@ -161,7 +161,6 @@ export class TopicNodeLifecycle {
         await this.waitReady(binding,'pool-provisioning',reconciled,reconciled.imageUpdated===true);
         const observed=await this.dependencies.infrastructure('inspect',binding.nodeId,binding.generation);
         if(observed.nodeId!==binding.nodeId||observed.generation!==binding.generation||!observed.serviceId||!observed.volumeId||!observed.endpoint||observed.serviceId!==binding.serviceId||observed.volumeId!==binding.volumeId||observed.projectId!==binding.projectId||observed.endpoint!==binding.endpoint)throw new WorkerProvisioningError("reconciliation_required");
-        await this.waitReady(binding,'pool-provisioning',observed);
         const synced=await this.syncGlobal(binding);
         if(reconciled.imageUpdated)await this.dependencies.infrastructure('reconcile',synced.nodeId,synced.generation);
         const ready=await this.dependencies.bindings.update(synced.nodeId,synced.generation,{status:'available'});
