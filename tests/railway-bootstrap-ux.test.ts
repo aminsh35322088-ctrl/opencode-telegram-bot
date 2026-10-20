@@ -83,8 +83,8 @@ test("Telegram onboarding gates Main panel behind bootstrap Continue and support
   assert.match(launcher, /secret-invalid/);
   assert.match(launcher, /validateRailwayInfrastructureCredential/);
   assert.match(startup, /workerPoolReleaseReconcile/);
-  assert.match(startup, /bootstrapPool\(undefined,\s*false(?:,\s*true)?\)/, "startup may finish existing reservations best-effort, while lifecycle skips Topic-bound slots");
-  assert.doesNotMatch(startup, /bootstrapPool\(INITIAL_BOOTSTRAP_WORKERS/, "new fleet capacity remains onboarding-owned");
+  assert.match(startup, /bootstrapPool\(4,\s*false,\s*true\)/, "startup must enforce the hard four-Worker free-tier capacity");
+  assert.match(startup, /startup hard-capacity=4 warmWorkers=4/, "startup logs the enforced fleet limit");
 });
 
 test("Railway bootstrap self-heals transient Worker readiness failures without asking for /start", async () => {
