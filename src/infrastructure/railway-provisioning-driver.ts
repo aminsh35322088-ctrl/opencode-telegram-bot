@@ -367,7 +367,10 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       const desiredImage=this.options.workerImage;
       const desiredCommit=this.options.coreCommit??WORKER_CORE_COMMIT;
       const desiredVersion=this.options.workerVersion??WORKER_CORE_VERSION;
-      const configuredImage=inventory.environment.serviceInstances.edges.find(entry=>entry.node.serviceId===record!.serviceId)?.node.source?.image??undefined;\n      // The durable journal is not authoritative for the image Railway has actually configured.\n      // Older deployments may have advanced journal metadata without changing source.image.\n      const managedImageDrift=Boolean(desiredImage&&(record.image!==desiredImage||record.runtimeCommit!==desiredCommit||record.runtimeVersion!==desiredVersion||configuredImage!==desiredImage));
+      const configuredImage=inventory.environment.serviceInstances.edges.find(entry=>entry.node.serviceId===record!.serviceId)?.node.source?.image??undefined;
+      // The durable journal is not authoritative for the image Railway has actually configured.
+      // Older deployments may have advanced journal metadata without changing source.image.
+      const managedImageDrift=Boolean(desiredImage&&(record.image!==desiredImage||record.runtimeCommit!==desiredCommit||record.runtimeVersion!==desiredVersion||configuredImage!==desiredImage));
       if(managedImageDrift&&(binding.chatId!==0||binding.threadId!==0))throw new WorkerProvisioningError("image_mismatch");
       if (record.phase === "deploying" && record.endpoint && !managedImageDrift) {
         const knownDomains = inventory.environment.serviceInstances.edges.find(entry => entry.node.serviceId === record!.serviceId)?.node.domains.serviceDomains ?? [];
