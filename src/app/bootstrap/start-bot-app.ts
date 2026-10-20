@@ -29,6 +29,7 @@ import { requestInfrastructureSetup } from "../../control-plane/application-tran
 import { normalizeRailwayWorkerSettings } from "../../infrastructure/railway-worker-settings.js";
 import { isDistributedControl } from "../../infrastructure/control-runtime-config.js";
 import { setTopicNodeCreationEnabled } from "../../control-plane/topic-node-lifecycle.js";
+import { WORKER_CORE_VERSION } from "../../infrastructure/worker-core-release.js";
 
 const SHUTDOWN_TIMEOUT_MS = 5000;
 const SETTINGS_FLUSH_TIMEOUT_MS = 1000;
@@ -262,7 +263,9 @@ export async function startBotApp(): Promise<void> {
         const { topicNodeLifecycle } = await import("../../control-plane/topic-node-lifecycle.js");
         const nodes = await topicNodeLifecycle.bootstrapPool(undefined, true);
         const available = nodes.filter((node) => node.status === "available" && node.chatId === 0 && node.threadId === 0).length;
-        logger.info(`[WorkerCluster] startup release reconciliation complete: nodes=${nodes.length} available=${available} target=${(await import("../../infrastructure/worker-core-release.js")).WORKER_CORE_VERSION}`);
+        logger.info(
+          `[WorkerCluster] startup release reconciliation complete: nodes=${nodes.length} available=${available} target=${WORKER_CORE_VERSION}`,
+        );
       },
     });
   }
