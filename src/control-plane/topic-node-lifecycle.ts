@@ -65,10 +65,12 @@ export class TopicNodeLifecycle {
             break;
           }
         }
-        // Railway's old replica can still answer health while an immutable image
-        // deployment is rolling out. Only an explicitly reported image transition
-        // gets a bounded chance to converge; all other mismatches fail closed.
-        if(!allowRuntimeTransition)throw new WorkerProvisioningError("image_mismatch");
+        }else{
+          // Railway's old replica can still answer health while an immutable image
+          // deployment is rolling out. Only an explicitly reported image transition
+          // gets a bounded chance to converge; all other mismatches fail closed.
+          if(!allowRuntimeTransition)throw new WorkerProvisioningError("image_mismatch");
+        }
       }
       if(this.dependencies.now()>=deadline)throw new Error("Topic node readiness timed out");
       await this.dependencies.wait(Math.min(delay,Math.max(0,deadline-this.dependencies.now())));delay=Math.min(delay*2,1_000);
