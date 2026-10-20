@@ -71,7 +71,7 @@ export class NodeBindingStore {
   }
   /** Reconcile persisted Workers; optional explicit warm capacity, never a fixed topology. */
   ensurePoolSlots(warmCapacity=0):Promise<NodeBinding[]>{
-    if(!Number.isSafeInteger(warmCapacity)||warmCapacity<0||warmCapacity>1000)throw new Error("Invalid warm Worker policy");
+    if(!Number.isSafeInteger(warmCapacity)||warmCapacity<0||warmCapacity>4)throw new Error("Worker pool capacity is capped at four");
     return this.transaction(state=>{
       state.clusterId??=randomUUID();
       for(let slot=1;slot<=warmCapacity;slot++){
@@ -103,7 +103,9 @@ export class NodeBindingStore {
       }
       state.clusterId??=randomUUID();
       const usedSlots=new Set(state.bindings.filter(binding=>binding.status!=="retired"&&binding.slot!==undefined).map(binding=>binding.slot!));
+      if(usedSlots.size>=4)throw new Error("NO WORKER AVAILABLE / CAPACITY EXHAUSTED");
       let slot=1;while(usedSlots.has(slot))slot++;
+      if(slot>4)throw new Error("NO WORKER AVAILABLE / CAPACITY EXHAUSTED");
       const now = new Date().toISOString();
       const binding: NodeBinding = { nodeId: randomUUID(), clusterId:state.clusterId, slot, chatId, threadId, generation: 1, currentRevision: 0, status: "reserved", createdAt: now, updatedAt: now };
       state.bindings.push(binding); return binding;
