@@ -50,6 +50,10 @@ async function fixture() {
         const serviceId=Object.keys(patch.services)[0]!;
         deploymentVersions.set(serviceId,(deploymentVersions.get(serviceId)??0)+1);
         result={environmentPatchCommit:'workflow'};
+      } else if(document.includes('mutation WorkerRedeploy')) {
+        const serviceId=variables.serviceId as string;
+        deploymentVersions.set(serviceId,(deploymentVersions.get(serviceId)??0)+1);
+        result={serviceInstanceRedeploy:true};
       } else if(document.includes('mutation WorkerLimits')) result={serviceInstanceLimitsUpdate:!rejected};
       else if((document.includes('mutation RetireService')||document.includes('mutation WorkerRolloverService'))) {services.splice(services.findIndex(s=>s.id===variables.id),1);result={serviceDelete:true};}
       else if((document.includes('mutation RetireVolume')||document.includes('mutation WorkerRolloverVolume'))) {volumes.splice(volumes.findIndex(v=>v.id===variables.volumeId),1);result={volumeDelete:true};}
