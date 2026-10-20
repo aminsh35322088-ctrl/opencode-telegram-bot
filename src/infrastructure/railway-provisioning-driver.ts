@@ -6,7 +6,7 @@ import { syncDirectory } from "../utils/sync-directory.js";
 import { isOwnUser, isRestrictiveMode } from "../utils/file-ownership.js";
 import type { NodeBinding } from "../control-plane/node-bindings.js";
 
-import {WorkerProvisioningError,type WorkerProvisioningDriver,type WorkerPool,type ProvisionedNode} from "./worker-provisioning-driver.js";
+import {nextCapacityAfterProjectQuota,WorkerProvisioningError,type WorkerProvisioningDriver,type WorkerPool,type ProvisionedNode} from "./worker-provisioning-driver.js";
 import {InfrastructureRequestError} from "./railway-client.js";
 export type {WorkerPool,ProvisionedNode} from "./worker-provisioning-driver.js";
 interface Journal { version: 1; nodes: ProvisionedNode[] }
@@ -222,7 +222,7 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
           // volume limit still fails closed and the slot remains fenced.
           lastQuotaError=error;
           const journal=await this.read();
-          const candidates:Array<{pool:WorkerPool;used:number;actual:number;baseline:number}>=[];
+          const candidates:Array<{pool:WorkerPool;used:number;actual:number;baseline:number;effective:number}>=[];
           try{
             for(const candidate of this.options.pools){
               if(excluded.has(candidate.projectId)||candidate.capacity===undefined)continue;
@@ -230,7 +230,8 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
               const actual=inventory.project.services.edges.filter(entry=>entry.node.name.startsWith("topic-node-")).length;
               const used=journal.nodes.filter(item=>item.projectId===candidate.projectId&&item.phase!=="retired").length;
               const baseline=Math.max(used,actual);
-              if(baseline>=candidate.capacity)candidates.push({pool:candidate,used,actual,baseline});
+              const effective=nextCapacityAfterProjectQuota(candidate.capacity,used,actual);
+              if(effective!==undefined)candidates.push({pool:candidate,used,actual,baseline,effective});
             }
           }catch{
             // If ownership/inventory cannot be verified, never widen an existing pool.
@@ -240,11 +241,9 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
           const fallback=candidates[0];
           if(!fallback)throw error;
           const configured=fallback.pool.capacity!;
-          const effective=Math.max(configured,fallback.baseline+1);
-          if(effective<=configured)throw error;
-          fallback.pool.capacity=effective;
+          fallback.pool.capacity=fallback.effective;
           process.stdout.write(
-            `[InfrastructureBoundary] worker_pool_capacity_fallback project=${fallback.pool.projectId} configured=${configured} effective=${effective} liveServices=${fallback.actual} ownedRecords=${fallback.used} reason=project_expansion_resource_limit\\n`,
+            `[InfrastructureBoundary] worker_pool_capacity_fallback project=${fallback.pool.projectId} configured=${configured} effective=${fallback.effective} liveServices=${fallback.actual} ownedRecords=${fallback.used} reason=project_expansion_resource_limit\n`,
           );
           return;
         }
