@@ -70,6 +70,7 @@ jobs:
     timeout-minutes: 35
     permissions:
       contents: write
+      pull-requests: write
     concurrency:
       group: core-release-sync-main
       cancel-in-progress: false
@@ -85,8 +86,25 @@ jobs:
         with:
           node-version: 22.14.0
 
+      - name: Avoid duplicate updater pull requests
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          number="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --json number,headRefName \
+            --jq '[.[] | select(.headRefName | startswith("automation/core-release-sync-"))] | .[0].number // empty')"
+          if [[ -n "$number" ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "An OpenCode Core update PR (#$number) is already waiting for review."
+            echo "- Existing Core updater PR: #$number; duplicate update skipped." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Discover and verify the newest Core prerelease
         id: sync
+        if: steps.existing.outputs.skip != 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/sync-core-release.mjs
@@ -140,18 +158,40 @@ jobs:
         if: always() && steps.sync.outputs.changed == 'true'
         run: rm -rf tests node_modules/vitest node_modules/@vitest
 
-      - name: Commit and deploy the tested Core pin
-        if: success() && steps.sync.outputs.changed == 'true'
+      - name: Propose the fully tested Core pin
+        if: success() && steps.existing.outputs.skip != 'true' && steps.sync.outputs.changed == 'true'
         env:
           CORE_VERSION: ${{ steps.sync.outputs.version }}
+          CORE_TAG: ${{ steps.sync.outputs.tag }}
+          CORE_COMMIT: ${{ steps.sync.outputs.commit }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
+          set -euo pipefail
+          branch="automation/core-release-sync-${CORE_VERSION}-${GITHUB_RUN_ID}"
+          git switch -c "$branch"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add core-release.lock.json package.json package-lock.json src/infrastructure/worker-core-release.ts
           git diff --cached --check
           if git diff --cached --quiet; then
-            echo "Verified pin matched main; nothing to commit."
+            echo "Verified pin matched main; nothing to propose."
             exit 0
           fi
-          git commit -m "release: pin worker runtime to Core ${CORE_VERSION}"
-          git push origin HEAD:main
+          git commit -m "chore: sync OpenCode Telegram Core ${CORE_VERSION}"
+          git push origin "$branch"
+          body_file="$RUNNER_TEMP/core-release-sync-pr.md"
+          cat > "$body_file" <<EOF
+          ## Verified Core release update
+
+          - Core release: ${CORE_TAG}
+          - Verified Core source commit: ${CORE_COMMIT}
+          - Complete Bot CI, routing/lifecycle tests, typecheck, lint, build, and Vitest suite passed in [this run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID).
+          - Runtime, SDK, native-runtime assets, npm package integrity, immutable Worker image digest, and embedded image source revision were verified before changing the release pins.
+          - Existing Topic-bound Workers are never force-replaced; only unbound slots are drained, reconciled, health-verified, and released back to allocation.
+
+          This is intentionally a pull request: production main is not updated automatically without review.
+          EOF
+          gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$branch" \
+            --title "chore: sync OpenCode Telegram Core ${CORE_VERSION}" --body-file "$body_file"
+          echo "- Opened reviewed Core pin PR for ${CORE_TAG} after the full Bot test gate passed." >> "$GITHUB_STEP_SUMMARY"
