@@ -2,6 +2,9 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { SessionOwner } from "@opencode-telegram/native-runtime";
+import { nodeBindings } from "../../control-plane/node-bindings.js";
+import { findTelegramTopicBindingByThread } from "./telegram-topic-store.js";
+import { downloadRemoteWorkerFile } from "./remote-worker-file-service.js";
 import { createOpenCodeTemporarySessionRunner } from "../../core/opencode-session-port.js";
 import { opencodeClient } from "../../opencode/client.js";
 import type { ImageBinary, ImageModelSelection } from "../types/image-model.js";
@@ -18,6 +21,7 @@ async function imageFromUrl(
   mime: string,
   worktree: string,
   signal: AbortSignal,
+  owner?: SessionOwner,
 ): Promise<ImageBinary> {
   let buffer: Buffer;
 
@@ -32,7 +36,21 @@ async function imageFromUrl(
     if (relative.startsWith("..") || path.isAbsolute(relative)) {
       throw new Error("OpenCode image model returned a file outside the Topic worktree.");
     }
-    buffer = await fs.readFile(filePath);
+    // Prefer the authenticated Worker file channel whenever this session is bound.
+    // A coincidentally existing local path must never shadow the owning Worker's output.
+    const binding = owner
+      ? (await nodeBindings.list()).find((item) => item.status === "ready" && item.sessionId === owner.sessionId)
+      : undefined;
+    if (binding && owner) {
+      const topic = await findTelegramTopicBindingByThread(binding.chatId, binding.threadId);
+      if (!topic || topic.sessionId !== owner.sessionId || path.resolve(topic.directory) !== path.resolve(worktree)) {
+        throw new Error("Image output belongs to a different or stale Topic session.");
+      }
+      const remote = await downloadRemoteWorkerFile(binding, filePath);
+      try { buffer = await fs.readFile(remote.path); } finally { await remote.cleanup(); }
+    } else {
+      buffer = await fs.readFile(filePath);
+    }
   } else if (/^https?:\/\//i.test(url)) {
     const response = await fetch(url, { signal, redirect: "follow" });
     if (!response.ok) throw new Error(`OpenCode image download failed: HTTP ${response.status}`);
@@ -116,6 +134,6 @@ export async function runOpenCodeImageModel(
       throw new Error("The selected model returned no image output.");
     }
 
-    return await imageFromUrl(imagePart.url, imagePart.mime, worktree, signal);
+    return await imageFromUrl(imagePart.url, imagePart.mime, worktree, signal, owner);
   }, signal);
 }

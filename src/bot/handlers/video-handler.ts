@@ -1,8 +1,10 @@
 import type { Context } from "grammy";
 import type { FilePartInput } from "@opencode-ai/sdk/v2";
+import type { ModelInfo } from "../../app/types/model.js";
+import { resolveCapabilityRoute } from "../../app/services/model-capability-routing-service.js";
+import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 import { downloadTelegramFile, toDataUri, type DownloadedFile } from "../../app/services/file-download-service.js";
 import { getModelCapabilities, supportsInput } from "../../app/services/model-capabilities-service.js";
-import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { isSttConfigured, transcribeAudio } from "../../app/services/stt-service.js";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
@@ -16,8 +18,8 @@ export const MAX_VIDEO_BYTES = 20 * 1024 * 1024;
 export interface VideoHandlerDeps extends ProcessPromptDeps {
   downloadFile?: (api: Context["api"], fileId: string) => Promise<DownloadedFile>;
   getModelCapabilities?: (providerId: string, modelId: string) => Promise<Awaited<ReturnType<typeof getModelCapabilities>> | null>;
-  getStoredModel?: () => { providerID: string; modelID: string };
-  processPrompt?: (ctx: Context, text: string, deps: ProcessPromptDeps, fileParts?: FilePartInput[]) => Promise<boolean>;
+  getStoredModel?: () => { providerID: string; modelID: string }; // Backward-compatible test seam; routing is capability-based.
+  processPrompt?: (ctx: Context, text: string, deps: ProcessPromptDeps, fileParts?: FilePartInput[], modelOverride?: ModelInfo) => Promise<boolean>;
   extractFrames?: (videoBuffer: Buffer, sourceFilename: string) => Promise<ExtractedVideoFrame[]>;
 }
 
@@ -45,20 +47,25 @@ export async function handleVideoMessage(ctx: Context, deps: VideoHandlerDeps): 
 
   const downloadFile = deps.downloadFile ?? downloadTelegramFile;
   const getCapabilities = deps.getModelCapabilities ?? getModelCapabilities;
-  const getStored = deps.getStoredModel ?? getStoredModel;
   const processPrompt = deps.processPrompt ?? processUserPrompt;
   const extractFrames = deps.extractFrames ?? extractVideoFrames;
 
   try {
-    const storedModel = getStored();
-    const capabilities = await getCapabilities(storedModel.providerID, storedModel.modelID);
-    if (!supportsInput(capabilities, "image")) {
-      logger.warn(`[Video] Model ${storedModel.providerID}/${storedModel.modelID} doesn't support image input`);
-      await ctx.reply(t("bot.photo_model_no_image"));
-      return;
-    }
     if ((video.file_size ?? 0) > MAX_VIDEO_BYTES) {
       await ctx.reply(t("bot.video_too_large", { maxSizeMb: String(Math.floor(MAX_VIDEO_BYTES / (1024 * 1024))) }));
+      return;
+    }
+    const topic = getTopicRuntimeContext();
+    const route = await resolveCapabilityRoute("vision", topic?.directory);
+    if (!route.model) {
+      await ctx.reply(route.reason ?? "No image-capable Vision model is configured for this Topic.");
+      return;
+    }
+    const storedModel = route.model;
+    const capabilities = await getCapabilities(storedModel.providerID, storedModel.modelID);
+    if (!supportsInput(capabilities, "image")) {
+      logger.warn(`[Video] Routed Vision model ${storedModel.providerID}/${storedModel.modelID} doesn't support image input`);
+      await ctx.reply(t("bot.photo_model_no_image"));
       return;
     }
     await ctx.reply(t("bot.video_downloading"));
@@ -89,7 +96,7 @@ export async function handleVideoMessage(ctx: Context, deps: VideoHandlerDeps): 
     }
 
     logger.info(`[Video] Sending ${fileParts.length} frames (${downloaded.buffer.length} byte source) to selected coding model`);
-    await processPrompt(ctx, buildVideoAnalysisPrompt(caption, fileParts.length, transcription), deps, fileParts);
+    await processPrompt(ctx, buildVideoAnalysisPrompt(caption, fileParts.length, transcription), deps, fileParts, { providerID: storedModel.providerID, modelID: storedModel.modelID });
   } catch (err) {
     logger.error("[Video] Error handling video message:", err);
     await ctx.reply(t("bot.video_error"));

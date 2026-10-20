@@ -7,6 +7,9 @@ vi.mock("../../../src/bot/handlers/message-merger.js", () => ({
   flushPendingPrompt: flushPendingPromptMock,
   __resetMessageMergerForTests: vi.fn(),
 }));
+vi.mock("../../../src/app/services/model-capability-routing-service.js", () => ({
+  resolveCapabilityRoute: async () => ({ model: { providerID: "test-provider", modelID: "test-model" }, routeSource: "primary-native" }),
+}));
 
 import { handlePhotoMessage, type PhotoHandlerDeps } from "../../../src/bot/handlers/photo-handler.js";
 import { t } from "../../../src/i18n/index.js";
@@ -81,6 +84,7 @@ describe("bot/handlers/photo-handler", () => {
           url: expect.stringMatching(/^data:image\/jpeg;base64,/),
         }),
       ],
+      { providerID: "test-provider", modelID: "test-model" },
     );
   });
 
@@ -91,6 +95,6 @@ describe("bot/handlers/photo-handler", () => {
     await handlePhotoMessage(ctx, deps);
 
     expect(downloadMock).toHaveBeenCalledWith(ctx.api, "large-photo");
-    expect(processPromptMock).toHaveBeenCalledWith(ctx, "Use this caption", deps, [expect.objectContaining({ type: "file", mime: "image/jpeg" })]);
+    expect(processPromptMock).toHaveBeenCalledWith(ctx, "Use this caption", deps, [expect.objectContaining({ type: "file", mime: "image/jpeg" })], { providerID: "test-provider", modelID: "test-model" });
   });
 });

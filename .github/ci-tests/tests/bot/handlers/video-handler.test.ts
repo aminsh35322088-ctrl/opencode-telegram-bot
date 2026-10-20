@@ -5,6 +5,9 @@ vi.mock("../../../src/bot/handlers/message-merger.js", () => ({
   flushPendingPrompt: vi.fn(),
   __resetMessageMergerForTests: vi.fn(),
 }));
+vi.mock("../../../src/app/services/model-capability-routing-service.js", () => ({
+  resolveCapabilityRoute: async () => ({ model: { providerID: "test-provider", modelID: "test-model" }, routeSource: "primary-native" }),
+}));
 
 import { buildVideoAnalysisPrompt, handleVideoMessage, MAX_VIDEO_BYTES, type VideoHandlerDeps } from "../../../src/bot/handlers/video-handler.js";
 import { t } from "../../../src/i18n/index.js";

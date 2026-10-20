@@ -1,6 +1,10 @@
 import nodeFetch, { type RequestInit as NodeFetchRequestInit } from "node-fetch";
+import { promises as fs } from "node:fs";
+import path from "node:path";
 import type { Api } from "grammy";
 import { Agent as HttpsAgent } from "https";
+import { HttpsProxyAgent } from "https-proxy-agent";
+import { SocksProxyAgent } from "socks-proxy-agent";
 import { config } from "../../config.js";
 import { logger } from "../../utils/logger.js";
 
@@ -22,59 +26,94 @@ function telegramFileUrlBase(): string {
 }
 
 export function buildTelegramFileUrl(filePath: string): string {
-  return `${telegramFileUrlBase()}${config.telegram.token}/${filePath}`;
+  if (path.isAbsolute(filePath)) throw new Error("Telegram returned a local file path; use the configured local Bot API file reader.");
+  const normalized = filePath.replaceAll("\\", "/");
+  if (!normalized || normalized.split("/").some((part) => part === "..") || normalized.startsWith("/")) {
+    throw new Error("Telegram returned an invalid file path.");
+  }
+  return `${telegramFileUrlBase()}${config.telegram.token}/${normalized.split("/").map(encodeURIComponent).join("/")}`;
+}
+
+function buildTelegramFetchOptions(options?: { signal?: AbortSignal; maxBytes?: number }): NodeFetchRequestInit {
+  const maxBytes = options?.maxBytes ?? MAX_FILE_SIZE_BYTES;
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_FILE_SIZE_BYTES) throw new Error("Invalid Telegram download size limit.");
+  const fetchOptions: NodeFetchRequestInit = {
+    size: maxBytes,
+    redirect: "error",
+    signal: AbortSignal.any([...(options?.signal ? [options.signal] : []), AbortSignal.timeout(30_000)]),
+  };
+  if (config.telegram.proxyUrl) {
+    // Keep both HTTP CONNECT and SOCKS proxies supported for all media handlers.
+    // Use the same configured proxy for getFile and the actual file transfer.
+    fetchOptions.agent = config.telegram.proxyUrl.startsWith("socks")
+      ? new SocksProxyAgent(config.telegram.proxyUrl)
+      : new HttpsProxyAgent(config.telegram.proxyUrl);
+  } else if (config.telegram.forceIpv4) {
+    fetchOptions.agent = new HttpsAgent({ family: 4, keepAlive: true });
+  }
+  if (config.telegram.proxySecret) fetchOptions.headers = { "X-Proxy-Secret": config.telegram.proxySecret };
+  return fetchOptions;
+}
+
+async function readLocalBotApiFile(filePath: string, maxBytes: number): Promise<Buffer> {
+  const apiRoot = config.telegram.apiRoot ? new URL(config.telegram.apiRoot) : null;
+  const localHost = apiRoot && ["localhost", "127.0.0.1", "::1"].includes(apiRoot.hostname.replace(/^\[|\]$/gu, ""));
+  if (!localHost || !path.isAbsolute(filePath)) throw new Error("Telegram returned an unsupported absolute file path.");
+  const metadata = await fs.lstat(filePath);
+  if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > maxBytes) throw new Error("Telegram local file is unavailable or too large.");
+  const buffer = await fs.readFile(filePath);
+  if (buffer.length > maxBytes) throw new Error("Telegram local file exceeds the configured size limit.");
+  return buffer;
+}
+
+async function downloadTelegramFilePath(filePath: string, options?: { signal?: AbortSignal; maxBytes?: number }): Promise<DownloadedFile> {
+  const maxBytes = options?.maxBytes ?? MAX_FILE_SIZE_BYTES;
+  if (path.isAbsolute(filePath)) {
+    const buffer = await readLocalBotApiFile(filePath, maxBytes);
+    return { buffer, filePath };
+  }
+  const fileUrl = buildTelegramFileUrl(filePath);
+  logger.debug(`[FileDownload] Downloading Telegram file path=${filePath}`);
+  options?.signal?.throwIfAborted();
+  const response = await nodeFetch(fileUrl, buildTelegramFetchOptions(options));
+  if (!response.ok) throw new Error(`Failed to download file: ${response.status} ${response.statusText}`);
+  const declaredLength = Number(response.headers.get("content-length") ?? "0");
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    (response.body as unknown as { destroy?: () => void } | null)?.destroy?.();
+    throw new Error(`File too large: ${(declaredLength / (1024 * 1024)).toFixed(2)}MB (max ${(maxBytes / (1024 * 1024)).toFixed(2)}MB)`);
+  }
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (buffer.length > maxBytes) throw new Error(`Downloaded file exceeded the ${(maxBytes / (1024 * 1024)).toFixed(2)}MB limit.`);
+  logger.debug(`[FileDownload] Downloaded ${buffer.length} bytes`);
+  return { buffer, filePath };
 }
 
 export async function downloadTelegramFile(api: Api, fileId: string, options?: { signal?: AbortSignal; maxBytes?: number }): Promise<DownloadedFile> {
   logger.debug(`[FileDownload] Getting file info for fileId=${fileId}`);
-
-  const file = await api.getFile(fileId);
-
-  if (!file.file_path) {
-    throw new Error("File path not available from Telegram");
-  }
-
-  const maxBytes = options?.maxBytes ?? MAX_FILE_SIZE_BYTES;
-  if (file.file_size && file.file_size > maxBytes) {
-    const sizeMb = (file.file_size / (1024 * 1024)).toFixed(2);
-    throw new Error(`File too large: ${sizeMb}MB (max 20MB)`);
-  }
-
-  const fileUrl = buildTelegramFileUrl(file.file_path);
-  logger.debug(`[FileDownload] Downloading from ${fileUrl.replace(config.telegram.token, "***")}`);
-
   options?.signal?.throwIfAborted();
-  const fetchOptions: NodeFetchRequestInit = { size: maxBytes, signal: AbortSignal.any([...(options?.signal ? [options.signal] : []), AbortSignal.timeout(30_000)]) };
-
-  if (config.telegram.proxyUrl) {
-    const { HttpsProxyAgent } = await import("https-proxy-agent");
-    fetchOptions.agent = new HttpsProxyAgent(config.telegram.proxyUrl);
-  } else if (config.telegram.forceIpv4) {
-    fetchOptions.agent = new HttpsAgent({ family: 4, keepAlive: true });
+  const maxBytes = options?.maxBytes ?? MAX_FILE_SIZE_BYTES;
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_FILE_SIZE_BYTES) throw new Error("Invalid Telegram download size limit.");
+  const file = await api.getFile(fileId);
+  if (!file.file_path) throw new Error("File path not available from Telegram");
+  if (file.file_size !== undefined && file.file_size > maxBytes) {
+    throw new Error(`File too large: ${(file.file_size / (1024 * 1024)).toFixed(2)}MB (max ${(maxBytes / (1024 * 1024)).toFixed(2)}MB)`);
   }
+  return downloadTelegramFilePath(file.file_path, options);
+}
 
-  if (config.telegram.proxySecret) {
-    fetchOptions.headers = {
-      ...(fetchOptions.headers as Record<string, string> | undefined),
-      "X-Proxy-Secret": config.telegram.proxySecret,
-    };
+export async function downloadTelegramFileById(fileId: string, options?: { signal?: AbortSignal; maxBytes?: number }): Promise<DownloadedFile> {
+  const token = config.telegram.token;
+  if (!token) throw new Error("Telegram bot token is not configured.");
+  const apiRoot = config.telegram.apiRoot ? config.telegram.apiRoot.replace(/\/+$/u, "") : DEFAULT_TELEGRAM_API_ROOT;
+  const response = await nodeFetch(`${apiRoot}/bot${token}/getFile?file_id=${encodeURIComponent(fileId)}`, buildTelegramFetchOptions(options));
+  if (!response.ok) throw new Error(`Telegram getFile failed: ${response.status} ${response.statusText}`);
+  const payload = await response.json() as { ok?: boolean; result?: { file_path?: string; file_size?: number }; description?: string };
+  if (payload.ok !== true || !payload.result?.file_path) throw new Error(payload.description || "Telegram getFile returned no file path.");
+  const maxBytes = options?.maxBytes ?? MAX_FILE_SIZE_BYTES;
+  if (payload.result.file_size !== undefined && payload.result.file_size > maxBytes) {
+    throw new Error(`File too large: ${(payload.result.file_size / (1024 * 1024)).toFixed(2)}MB (max ${(maxBytes / (1024 * 1024)).toFixed(2)}MB)`);
   }
-
-  const response = await nodeFetch(fileUrl, fetchOptions);
-
-  if (!response.ok) {
-    throw new Error(`Failed to download file: ${response.status} ${response.statusText}`);
-  }
-
-  const arrayBuffer = await response.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
-
-  logger.debug(`[FileDownload] Downloaded ${buffer.length} bytes`);
-
-  return {
-    buffer,
-    filePath: file.file_path,
-  };
+  return downloadTelegramFilePath(payload.result.file_path, options);
 }
 
 export function toDataUri(buffer: Buffer, mimeType: string): string {

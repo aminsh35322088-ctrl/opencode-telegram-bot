@@ -10,7 +10,7 @@ export type WorkerBoundaryCheck="replay"|"foreign-topic"|"stale-generation";
 export class WorkerBoundaryVerificationError extends Error{
  constructor(readonly check:WorkerBoundaryCheck,readonly status:number){super("Worker boundary verification failed");}
 }
-const operations=new Set(["health","status","sync-global","session.create","session.get","session.status","session.query","session.messages","session.events","session.delete","session.compact","models.list","agents.list","commands.list","permission.list","permission.reply","question.list","question.reply","question.reject","run.prepare","run","pause","resume","stop","retire"]);
+const operations=new Set(["health","status","sync-global","session.create","session.get","session.status","session.query","session.messages","session.events","session.delete","session.compact","models.list","agents.list","commands.list","file.list","file.read","file.stat","file.download","permission.list","permission.reply","question.list","question.reply","question.reject","run.prepare","run","pause","resume","stop","retire"]);
 export class InfrastructureNodeTransport {
  constructor(private readonly registry:ReturnType<typeof captureNodeRegistry>,private readonly protocol:NodeProtocol,private readonly persist:()=>Promise<void>,private readonly fetcher:typeof fetch=fetch,private readonly wait:(milliseconds:number)=>Promise<void>=milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds))){}
  /** Root-only fixed canary for an available, unassigned Worker. Not a model/IPC operation. */

@@ -1,8 +1,10 @@
 import type { Context } from "grammy";
 import type { FilePartInput, Model } from "@opencode-ai/sdk/v2";
+import type { ModelInfo } from "../../app/types/model.js";
+import { resolveCapabilityRoute } from "../../app/services/model-capability-routing-service.js";
+import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 import { downloadTelegramFile, toDataUri } from "../../app/services/file-download-service.js";
 import { getModelCapabilities, supportsInput } from "../../app/services/model-capabilities-service.js";
-import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import { flushPendingPrompt } from "./message-merger.js";
@@ -11,8 +13,8 @@ import { processUserPrompt, type ProcessPromptDeps } from "./prompt.js";
 export interface PhotoHandlerDeps extends ProcessPromptDeps {
   downloadFile?: (api: Context["api"], fileId: string) => Promise<{ buffer: Buffer; filePath: string }>;
   getModelCapabilities?: (providerId: string, modelId: string) => Promise<Model["capabilities"] | null>;
-  getStoredModel?: () => { providerID: string; modelID: string };
-  processPrompt?: (ctx: Context, text: string, deps: ProcessPromptDeps, fileParts?: FilePartInput[]) => Promise<boolean>;
+  getStoredModel?: () => { providerID: string; modelID: string }; // Backward-compatible test seam; routing is capability-based.
+  processPrompt?: (ctx: Context, text: string, deps: ProcessPromptDeps, fileParts?: FilePartInput[], modelOverride?: ModelInfo) => Promise<boolean>;
 }
 
 export async function handlePhotoMessage(ctx: Context, deps: PhotoHandlerDeps): Promise<void> {
@@ -25,13 +27,18 @@ export async function handlePhotoMessage(ctx: Context, deps: PhotoHandlerDeps): 
 
   const downloadFile = deps.downloadFile ?? downloadTelegramFile;
   const getCapabilities = deps.getModelCapabilities ?? getModelCapabilities;
-  const getStored = deps.getStoredModel ?? getStoredModel;
   const processPrompt = deps.processPrompt ?? processUserPrompt;
   try {
-    const storedModel = getStored();
+    const topic = getTopicRuntimeContext();
+    const route = await resolveCapabilityRoute("vision", topic?.directory);
+    if (!route.model) {
+      await ctx.reply(route.reason ?? "No image-capable Vision model is configured for this Topic.");
+      return;
+    }
+    const storedModel = route.model;
     const capabilities = await getCapabilities(storedModel.providerID, storedModel.modelID);
     if (!supportsInput(capabilities, "image")) {
-      logger.warn(`[Bot] Model ${storedModel.providerID}/${storedModel.modelID} doesn't support image input`);
+      logger.warn(`[Bot] Routed Vision model ${storedModel.providerID}/${storedModel.modelID} doesn't support image input`);
       await ctx.reply(t("bot.photo_model_no_image"));
       return;
     }
@@ -39,7 +46,7 @@ export async function handlePhotoMessage(ctx: Context, deps: PhotoHandlerDeps): 
     const downloadedFile = await downloadFile(ctx.api, largestPhoto.file_id);
     const filePart: FilePartInput = { type: "file", mime: "image/jpeg", filename: "photo.jpg", url: toDataUri(downloadedFile.buffer, "image/jpeg") };
     logger.info(`[Bot] Sending photo (${downloadedFile.buffer.length} bytes) to selected coding model`);
-    await processPrompt(ctx, caption, deps, [filePart]);
+    await processPrompt(ctx, caption, deps, [filePart], { providerID: storedModel.providerID, modelID: storedModel.modelID });
   } catch (err) {
     logger.error("[Bot] Error handling photo message:", err);
     await ctx.reply(t("bot.photo_download_error"));

@@ -27,7 +27,8 @@ describe("bot/messages/canonical entity fallback", () => {
       sendRenderedBotPart({ api: { sendMessage, sendRichMessage }, chatId: 100, part: rendered }),
     ).resolves.toMatchObject({ messageId: 77 });
     expect(sendRichMessage).toHaveBeenCalledTimes(1);
-    expect(sendMessage).toHaveBeenCalledExactlyOnceWith(100, rendered.fallbackText, {
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenLastCalledWith(100, rendered.fallbackText, {
       entities: rendered.entities,
     });
     expect(rendered.fallbackText).toContain("<script>x</script>");
@@ -43,7 +44,8 @@ describe("bot/messages/canonical entity fallback", () => {
       chatId: 100,
       part: rendered,
     });
-    expect(sendMessage).toHaveBeenCalledExactlyOnceWith(100, "سلام می‌توانم <test> دنیا", {
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenLastCalledWith(100, "سلام می‌توانم <test> دنیا", {
       entities: rendered.entities,
     });
   });

@@ -7,6 +7,7 @@ import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context
 import { isCurrentCoreSessionRoute, resolveCoreTopicBinding } from "../../core/native-core-service.js";
 import type { BindingIdentity } from "@opencode-telegram/native-runtime";
 import { createCoreSessionApi } from "./core-session-api.js";
+import { downloadRemoteWorkerFile, readRemoteWorkerFilePrefix, resolveReadyTopicWorker } from "../../app/services/remote-worker-file-service.js";
 
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 const DEBOUNCE_MS = 1500;
@@ -185,7 +186,10 @@ class AgentArtifactDeliveryService {
   private async scheduleAutoDetection(filePath: string, scope: DeliveryScope): Promise<void> {
     try {
       if (isIgnoredPath(filePath) || isSensitiveArtifactPath(filePath)) return;
-      const sample = await fs.readFile(filePath).then((buffer) => buffer.subarray(0, 4096)).catch(() => null);
+      let sample: Buffer | null = null;
+      const worker = await resolveReadyTopicWorker(scope.route.chatId, scope.route.threadId, scope.route.sessionId);
+      if (worker) sample = await readRemoteWorkerFilePrefix(worker, filePath).catch(() => null);
+      else sample = await fs.readFile(filePath).then((buffer) => buffer.subarray(0, 4096)).catch(() => null);
       if (!this.isCurrent(scope) || !sample || !isLikelyArtifactFromFileEvent(filePath, sample)) return;
       this.scheduleDelivery(filePath, scope);
     } catch (error) {
@@ -216,26 +220,57 @@ class AgentArtifactDeliveryService {
       if (isSensitiveArtifactPath(filePath)) return;
       if (!this.isCurrent(scope)) return;
       const targetChatId = scope.route.chatId;
-      const stat = await fs.stat(filePath).catch(() => null);
-      if (!stat?.isFile() || stat.size > MAX_FILE_SIZE_BYTES || stat.size === 0) {
-        logger.warn(`[Artifact] Skipping unavailable/empty/oversized file: ${filePath}`);
-        return;
+      const worker = await resolveReadyTopicWorker(scope.route.chatId, scope.route.threadId, scope.route.sessionId);
+      let transfer: Awaited<ReturnType<typeof downloadRemoteWorkerFile>> | null = null;
+      let sendPath = filePath;
+      let size = 0;
+      let modified = 0;
+      try {
+        if (worker) {
+          transfer = await downloadRemoteWorkerFile(worker, filePath);
+          sendPath = transfer.path;
+          size = transfer.size;
+          modified = transfer.mtimeMs;
+        } else {
+          const stat = await fs.stat(filePath).catch(() => null);
+          if (!stat?.isFile()) {
+            logger.warn(`[Artifact] Skipping unavailable file: ${filePath}`);
+            return;
+          }
+          size = stat.size;
+          modified = stat.mtimeMs;
+        }
+        if (size > MAX_FILE_SIZE_BYTES || size === 0) {
+          logger.warn(`[Artifact] Skipping empty/oversized file: ${filePath}`);
+          return;
+        }
+        if (!this.isCurrent(scope)) return;
+        const signature = `${size}:${modified}`;
+        const previous = this.lastDelivered.get(key);
+        const now = Date.now();
+        if (previous && (previous.signature === signature || now - previous.at < DELIVERY_COOLDOWN_MS)) return;
+        if (!this.api) throw new Error("Bot API is unavailable for artifact delivery");
+        const telegramApi = createCoreSessionApi(this.api, scope.route.sessionId);
+        const extension = path.extname(filePath).toLowerCase();
+        // Generated images should render inline in Telegram, not arrive as opaque
+        // document attachments. Keep formats/sizes outside Bot API photo limits as documents.
+        const inlinePhoto = [".jpg", ".jpeg", ".png"].includes(extension) && size <= 10 * 1024 * 1024;
+        if (inlinePhoto) {
+          await telegramApi.sendPhoto(targetChatId, new InputFile(sendPath), {
+            caption: captionFor(filePath, size),
+            disable_notification: true,
+          });
+        } else {
+          await telegramApi.sendDocument(targetChatId, new InputFile(sendPath), {
+            caption: captionFor(filePath, size),
+            disable_notification: true,
+          });
+        }
+        if (this.isCurrent(scope)) this.lastDelivered.set(key, { signature, at: now, sessionId: scope.route.sessionId });
+        logger.info(`[Artifact] Delivered generated ${inlinePhoto ? "image" : "file"} to Telegram chat ${targetChatId}: ${filePath} (${size} bytes, source=${worker ? "topic-worker" : "control-plane"})`);
+      } finally {
+        await transfer?.cleanup().catch(() => undefined);
       }
-
-      if (!this.isCurrent(scope)) return;
-      const signature = `${stat.size}:${stat.mtimeMs}`;
-      const previous = this.lastDelivered.get(key);
-      const now = Date.now();
-      if (previous && (previous.signature === signature || now - previous.at < DELIVERY_COOLDOWN_MS)) return;
-
-      if (!this.api) throw new Error("Bot API is unavailable for artifact delivery");
-      await createCoreSessionApi(this.api, scope.route.sessionId).sendDocument(targetChatId, new InputFile(filePath), {
-        caption: captionFor(filePath, stat.size),
-        disable_notification: true,
-      });
-
-      if (this.isCurrent(scope)) this.lastDelivered.set(key, { signature, at: now, sessionId: scope.route.sessionId });
-      logger.info(`[Artifact] Delivered generated file to Telegram chat ${targetChatId}: ${filePath} (${stat.size} bytes)`);
     } catch (error) {
       logger.error(`[Artifact] Failed to deliver generated file: ${filePath}`, error);
     }

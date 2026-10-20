@@ -435,7 +435,7 @@ export interface RemoteFileEntry {
   type: "directory" | "file";
   name?: string;
   path?: string;
-  size?: number;
+  size?: number | null;
 }
 
 function remoteEntryPath(entry: RemoteFileEntry): string {
@@ -445,41 +445,63 @@ function remoteEntryPath(entry: RemoteFileEntry): string {
 export function buildRemoteLsBrowseView(
   entries: RemoteFileEntry[],
   currentPath = ".",
-): { text: string; keyboard: InlineKeyboard } {
+  page = 0,
+): { text: string; keyboard: InlineKeyboard; hasActions: boolean } {
+  const safePath = currentPath.replaceAll("\\", "/").replace(/^\.\//u, "") || ".";
+  const sorted = [...entries].sort((a, b) => (a.type !== b.type ? (a.type === "directory" ? -1 : 1) : (a.name ?? "").localeCompare(b.name ?? "")));
+  const totalPages = Math.max(1, Math.ceil(sorted.length / MAX_ENTRIES_PER_PAGE));
+  const safePage = Math.max(0, Math.min(Math.trunc(page), totalPages - 1));
+  const visible = sorted.slice(safePage * MAX_ENTRIES_PER_PAGE, (safePage + 1) * MAX_ENTRIES_PER_PAGE);
   const keyboard = new InlineKeyboard();
-  for (const entry of entries.slice(0, 60)) {
+  for (const entry of visible) {
     const target = remoteEntryPath(entry);
-    if (!target) continue;
-    keyboard
-      .text(
-        truncateLabel(`${entry.type === "directory" ? "📁" : "📄"} ${entry.name ?? target.split("/").at(-1) ?? target}`),
-        `${entry.type === "directory" ? LS_CALLBACK_NAV_PREFIX : LS_CALLBACK_FILE_PREFIX}${target}`,
-      )
-      .row();
+    if (!target || target.startsWith("/") || target.split("/").includes("..")) continue;
+    const callbackData = entry.type === "directory"
+      ? encodeLsPathForCallback(LS_CALLBACK_NAV_PREFIX, target)
+      : encodeLsFileCallback(target, safePage);
+    keyboard.text(truncateLabel(`${entry.type === "directory" ? "📁" : "📄"} ${entry.name ?? target.split("/").at(-1) ?? target}`), callbackData).row();
   }
-  keyboard.text("← Session", "session:back");
-  const display = currentPath === "." ? "." : currentPath;
+  if (safePath !== ".") {
+    const parent = path.posix.dirname(safePath) || ".";
+    keyboard.text(t("open.back"), encodeLsPathForCallback(LS_CALLBACK_NAV_PREFIX, parent)).row();
+  }
+  if (totalPages > 1) {
+    if (safePage > 0) keyboard.text(t("open.prev_page"), encodeLsPathWithPageCallback(LS_CALLBACK_PAGE_PREFIX, safePath, safePage - 1));
+    if (safePage < totalPages - 1) keyboard.text(t("open.next_page"), encodeLsPathWithPageCallback(LS_CALLBACK_PAGE_PREFIX, safePath, safePage + 1));
+    keyboard.row();
+  }
+  appendInlineMenuCancelButton(keyboard, "ls");
   return {
-    text: `📁 ${t("ls.header")}\n<code>${escapeHtml(display)}</code>\n${t("ls.total", { count: entries.length })}`,
+    text: buildLsHeader(safePath, sorted.length, safePage, totalPages),
     keyboard,
+    hasActions: visible.length > 0 || safePath !== "." || totalPages > 1,
   };
 }
 
 export function buildRemoteLsFileView(
   filePath: string,
   size?: number,
+  modifiedAt?: number,
+  page = 0,
   downloadable = true,
 ): { text: string; keyboard: InlineKeyboard } {
   const name = filePath.split("/").at(-1) ?? filePath;
   const keyboard = new InlineKeyboard();
-  if (downloadable) keyboard.text(t("ls.file.download"), `${LS_CALLBACK_DOWNLOAD_PREFIX}${filePath}`).row();
-  keyboard.text(t("ls.file.back"), `${LS_CALLBACK_BACK_PREFIX}${getParentPath(filePath)}`).row();
-  keyboard.text("← Session", "session:back");
+  if (isTextFileName(name) && isFileSizeAllowed(size, config.files.maxFileSizeKb)) {
+    keyboard.text(t("ls.file.attach"), encodeLsPathForCallback(LS_CALLBACK_ATTACH_PREFIX, filePath)).row();
+  }
+  if (downloadable) keyboard.text(t("ls.file.download"), encodeLsPathForCallback(LS_CALLBACK_DOWNLOAD_PREFIX, filePath)).row();
+  const parent = path.posix.dirname(filePath) || ".";
+  keyboard.text(t("ls.file.back"), encodeLsBackCallback(parent, page)).row();
+  appendInlineMenuCancelButton(keyboard, "ls");
   const sizeLine = typeof size === "number" && Number.isFinite(size)
     ? `\n${t("commands.download.size")}: ${formatFileSize(Math.max(0, size))}`
     : "";
+  const modifiedLine = typeof modifiedAt === "number" && Number.isFinite(modifiedAt)
+    ? `\n${t("commands.download.modified")}: ${new Date(modifiedAt).toLocaleDateString()}`
+    : "";
   return {
-    text: `📄 ${t("ls.file.header")}\n<code>${escapeHtml(name)}</code>${sizeLine}`,
+    text: `📄 ${t("ls.file.header")}\n<code>${escapeHtml(name)}</code>${sizeLine}${modifiedLine}`,
     keyboard,
   };
 }

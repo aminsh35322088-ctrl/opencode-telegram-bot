@@ -1,4 +1,4 @@
-import { InlineKeyboard, type Context } from "grammy";
+import { InlineKeyboard, InputFile, type Context } from "grammy";
 import {
   getProjectRoot,
   isPathWithinDirectory,
@@ -8,6 +8,10 @@ import {
 } from "../../app/services/file-browser-service.js";
 import { isForegroundBusy } from "../../app/services/run-control-service.js";
 import { t } from "../../i18n/index.js";
+import { config } from "../../config.js";
+import { findTelegramTopicBindingByThread } from "../../app/services/telegram-topic-store.js";
+import { createCoreSessionApi } from "../services/core-session-api.js";
+import { downloadRemoteWorkerFile, listRemoteWorkerFiles, normalizeRemoteRelativePath, readRemoteWorkerText, resolveReadyTopicWorker, statRemoteWorkerFile } from "../../app/services/remote-worker-file-service.js";
 import { alert, failure } from "./feedback.js";
 import { getProjectByWorktree } from "../../app/services/project-service.js";
 import { upsertSessionDirectory } from "../../app/services/session-cache-service.js";
@@ -41,6 +45,8 @@ import {
   OPEN_CALLBACK_SELECT_PREFIX,
   renderLsBrowseView,
   renderLsFileDetailsView,
+  buildRemoteLsBrowseView,
+  buildRemoteLsFileView,
   renderOpenBrowseView,
 } from "../menus/file-browser-menu.js";
 
@@ -186,6 +192,18 @@ async function selectDirectory(
   }
 }
 
+function callbackThreadId(ctx: Context): number | undefined {
+  const message = ctx.callbackQuery?.message as unknown as { message_thread_id?: unknown } | undefined;
+  return typeof message?.message_thread_id === "number" ? message.message_thread_id : undefined;
+}
+
+async function remoteWorkerForCallback(ctx: Context) {
+  const chatId = ctx.chat?.id;
+  const threadId = callbackThreadId(ctx);
+  if (typeof chatId !== "number" || typeof threadId !== "number" || threadId <= 1) return null;
+  return resolveReadyTopicWorker(chatId, threadId);
+}
+
 export async function handleLsCallback(ctx: Context): Promise<boolean> {
   const data = ctx.callbackQuery?.data;
   if (!data || !data.startsWith(LS_CALLBACK_PREFIX)) {
@@ -203,63 +221,64 @@ export async function handleLsCallback(ctx: Context): Promise<boolean> {
   }
 
   try {
+    const worker = await remoteWorkerForCallback(ctx);
     const navPath = decodeLsPathFromCallback(LS_CALLBACK_NAV_PREFIX, data);
     if (navPath !== null) {
-      if (!isWithinProjectRoot(navPath)) {
-        await alert(ctx, "ls.access_denied");
-        return true;
+      if (worker) await navigateRemoteLsTo(ctx, worker, normalizeRemoteRelativePath(navPath));
+      else {
+        if (!isWithinProjectRoot(navPath)) { await alert(ctx, "ls.access_denied"); return true; }
+        await navigateLsTo(ctx, navPath);
       }
-      await navigateLsTo(ctx, navPath);
       return true;
     }
 
     const pageInfo = decodeLsPaginationCallback(data);
     if (pageInfo !== null) {
-      if (!isWithinProjectRoot(pageInfo.path)) {
-        await alert(ctx, "ls.access_denied");
-        return true;
+      if (worker) await navigateRemoteLsTo(ctx, worker, normalizeRemoteRelativePath(pageInfo.path), pageInfo.page);
+      else {
+        if (!isWithinProjectRoot(pageInfo.path)) { await alert(ctx, "ls.access_denied"); return true; }
+        await navigateLsTo(ctx, pageInfo.path, pageInfo.page);
       }
-      await navigateLsTo(ctx, pageInfo.path, pageInfo.page);
       return true;
     }
 
     const fileInfo = decodeLsFileCallback(data);
     if (fileInfo !== null) {
-      if (!isWithinProjectRoot(fileInfo.path)) {
-        await alert(ctx, "ls.access_denied");
-        return true;
+      if (worker) await showRemoteLsFileDetails(ctx, worker, normalizeRemoteRelativePath(fileInfo.path), fileInfo.page);
+      else {
+        if (!isWithinProjectRoot(fileInfo.path)) { await alert(ctx, "ls.access_denied"); return true; }
+        await showLsFileDetails(ctx, fileInfo.path, fileInfo.page);
       }
-      await showLsFileDetails(ctx, fileInfo.path, fileInfo.page);
       return true;
     }
 
     const attachPath = decodeLsAttachCallback(data);
     if (attachPath !== null) {
-      if (!isWithinProjectRoot(attachPath)) {
-        await alert(ctx, "ls.access_denied");
-        return true;
+      if (worker) await attachRemoteFileAndClose(ctx, worker, normalizeRemoteRelativePath(attachPath));
+      else {
+        if (!isWithinProjectRoot(attachPath)) { await alert(ctx, "ls.access_denied"); return true; }
+        await attachFileAndClose(ctx, attachPath);
       }
-      await attachFileAndClose(ctx, attachPath);
       return true;
     }
 
     const downloadPath = decodeLsPathFromCallback(LS_CALLBACK_DOWNLOAD_PREFIX, data);
     if (downloadPath !== null) {
-      if (!isWithinProjectRoot(downloadPath)) {
-        await alert(ctx, "ls.access_denied");
-        return true;
+      if (worker) await downloadRemoteFileAndClose(ctx, worker, normalizeRemoteRelativePath(downloadPath));
+      else {
+        if (!isWithinProjectRoot(downloadPath)) { await alert(ctx, "ls.access_denied"); return true; }
+        await downloadFileAndClose(ctx, downloadPath);
       }
-      await downloadFileAndClose(ctx, downloadPath);
       return true;
     }
 
     const backInfo = decodeLsBackCallback(data);
     if (backInfo !== null) {
-      if (!isWithinProjectRoot(backInfo.path)) {
-        await alert(ctx, "ls.access_denied");
-        return true;
+      if (worker) await navigateRemoteLsTo(ctx, worker, normalizeRemoteRelativePath(backInfo.path), backInfo.page);
+      else {
+        if (!isWithinProjectRoot(backInfo.path)) { await alert(ctx, "ls.access_denied"); return true; }
+        await navigateLsTo(ctx, backInfo.path, backInfo.page);
       }
-      await navigateLsTo(ctx, backInfo.path, backInfo.page);
       return true;
     }
 
@@ -268,6 +287,55 @@ export async function handleLsCallback(ctx: Context): Promise<boolean> {
     logger.error("[Ls] Error handling callback:", error);
     await ctx.answerCallbackQuery({ text: t("callback.processing_error") });
     return true;
+  }
+}
+
+async function navigateRemoteLsTo(ctx: Context, worker: NonNullable<Awaited<ReturnType<typeof resolveReadyTopicWorker>>>, dirPath: string, page = 0): Promise<void> {
+  const entries = await listRemoteWorkerFiles(worker, dirPath);
+  const view = buildRemoteLsBrowseView(entries, dirPath, page);
+  await ctx.answerCallbackQuery();
+  await ctx.editMessageText(view.text, { parse_mode: "HTML", reply_markup: view.keyboard });
+}
+
+async function showRemoteLsFileDetails(ctx: Context, worker: NonNullable<Awaited<ReturnType<typeof resolveReadyTopicWorker>>>, filePath: string, page: number): Promise<void> {
+  const info = await statRemoteWorkerFile(worker, filePath);
+  const view = buildRemoteLsFileView(info.path, info.size, info.mtimeMs, page, true);
+  await ctx.answerCallbackQuery();
+  await ctx.editMessageText(view.text, { parse_mode: "HTML", reply_markup: view.keyboard });
+}
+
+async function attachRemoteFileAndClose(ctx: Context, worker: NonNullable<Awaited<ReturnType<typeof resolveReadyTopicWorker>>>, filePath: string): Promise<void> {
+  const topic = await findTelegramTopicBindingByThread(worker.chatId, worker.threadId);
+  if (!topic || topic.sessionId !== worker.sessionId) throw new Error("Remote attachment Topic binding changed.");
+  const attachment = await readRemoteWorkerText(worker, filePath, config.files.maxFileSizeKb * 1024);
+  promptAttachment.setInline(attachment.dataUri, topic.directory, attachment.name, topic.sessionId, attachment.mimeType);
+  await ctx.answerCallbackQuery();
+  clearActiveInlineMenu("ls_attached");
+  clearLsPathIndex();
+  await ctx.deleteMessage().catch(() => {});
+  const confirmation = await ctx.reply(t("attachment.added", { path: attachment.name }), {
+    reply_markup: new InlineKeyboard().text(t("attachment.cancel"), ATTACHMENT_CANCEL_CALLBACK),
+  });
+  promptAttachment.setConfirmationMessageId(confirmation.message_id, topic.sessionId);
+  interactionManager.start({ kind: "custom", expectedInput: "mixed", metadata: { flow: "attachment", sessionId: topic.sessionId } });
+  logger.info(`[PromptAttachment] Attached remote Worker file: session=${topic.sessionId}, name=${attachment.name}`);
+}
+
+async function downloadRemoteFileAndClose(ctx: Context, worker: NonNullable<Awaited<ReturnType<typeof resolveReadyTopicWorker>>>, filePath: string): Promise<void> {
+  await ctx.answerCallbackQuery({ text: t("commands.download.downloading") });
+  const transfer = await downloadRemoteWorkerFile(worker, filePath);
+  try {
+    if (!ctx.chat) throw new Error("Telegram chat context unavailable.");
+    await createCoreSessionApi(ctx.api, worker.sessionId!).sendDocument(ctx.chat.id, new InputFile(transfer.path), {
+      message_thread_id: worker.threadId,
+      caption: `${transfer.name} · ${transfer.size} bytes`,
+      disable_notification: true,
+    });
+    clearActiveInlineMenu("ls_downloaded");
+    clearLsPathIndex();
+    await ctx.deleteMessage().catch(() => {});
+  } finally {
+    await transfer.cleanup();
   }
 }
 

@@ -23,9 +23,14 @@ export async function requestRailwayAgentTool(payload:Record<string,unknown>):Pr
  return await callInfrastructure("railway-agent-tool",{payload},30_000);
 }
 
-export async function requestNodeLifecycle(binding:Readonly<NodeBinding>,operation:"health"|"status"|"sync-global"|"session.create"|"session.get",payload:unknown={}):Promise<{ok:boolean;result:unknown}>{
+export async function requestTelegramAgentTool(payload:Record<string,unknown>,owner:{nodeId:string;generation:number;chatId:number;threadId:number;sessionId:string}):Promise<unknown>{
  if(!callInfrastructure)throw new Error("Infrastructure channel unavailable");
- if(!["health","status","sync-global","session.create","session.get"].includes(operation))throw new Error("Lifecycle operation denied");
+ return await callInfrastructure("telegram-agent-tool",{payload,owner},30_000);
+}
+
+export async function requestNodeLifecycle(binding:Readonly<NodeBinding>,operation:"health"|"status"|"sync-global"|"session.create"|"session.get"|"file.list"|"file.read"|"file.stat"|"file.download",payload:unknown={}):Promise<{ok:boolean;result:unknown}>{
+ if(!callInfrastructure)throw new Error("Infrastructure channel unavailable");
+ if(!["health","status","sync-global","session.create","session.get","file.list","file.read","file.stat","file.download"].includes(operation))throw new Error("Lifecycle operation denied");
  const envelope:NodeEnvelope={version:1,nodeId:binding.nodeId,generation:binding.generation,chatId:binding.chatId,threadId:binding.threadId,sessionId:binding.sessionId,operation,payload,timestamp:Date.now(),nonce:randomUUID()};
  return await callInfrastructure("worker-request",{envelope},50_000) as {ok:boolean;result:unknown};
 }
@@ -37,12 +42,13 @@ export function installInfrastructureTransport():void{
   if(!message||typeof message!=="object")return;
   const response=message as {channel?:string;requestId?:string;ok?:boolean;result?:unknown;event?:NodeEnvelope;errorCode?:string;httpStatus?:number;errorReason?:string};
   if(!response.requestId)return;
-  if(response.channel==="worker-response" || response.channel==="infrastructure-response" || response.channel==="infrastructure-configure-response" || response.channel==="railway-agent-tool-response"){
+  if(response.channel==="worker-response" || response.channel==="infrastructure-response" || response.channel==="infrastructure-configure-response" || response.channel==="railway-agent-tool-response" || response.channel==="telegram-agent-tool-response"){
    const wait=waits.get(response.requestId);if(!wait)return;waits.delete(response.requestId);
    if(response.ok)wait.resolve(response.result);
    else if(response.channel==="infrastructure-response"&&["capacity_exhausted","project_unavailable","provisioning_pending","image_unavailable","reconciliation_required","image_mismatch"].includes(response.errorCode??""))wait.reject(new WorkerProvisioningError(response.errorCode as ConstructorParameters<typeof WorkerProvisioningError>[0]));
    else if(response.channel==="infrastructure-configure-response")wait.reject(new Error("Infrastructure setup failed"));
    else if(response.channel==="railway-agent-tool-response")wait.reject(new Error("Railway capability rejected"));
+   else if(response.channel==="telegram-agent-tool-response")wait.reject(new Error("Telegram capability rejected"));
    else wait.reject(new Error(response.channel==="infrastructure-response" && ["schema","resource_limit","rate_limit","transport","rejected","verification","capacity_exhausted","project_unavailable","provisioning_pending","image_unavailable","reconciliation_required"].includes(response.errorCode??"")?`Infrastructure operation failed (${response.errorCode}, HTTP ${Number.isSafeInteger(response.httpStatus)?response.httpStatus:0})${typeof response.errorReason==="string"&&/^boundary_(?:replay|foreign-topic|stale-generation)_http_\d{3}$/.test(response.errorReason)?`: ${response.errorReason}`:""}`:"Node transport failed"));
   }else if(response.channel==="worker-stream-ready"){
    streams.get(response.requestId)?.onReady?.();

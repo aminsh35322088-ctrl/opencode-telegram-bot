@@ -7,6 +7,9 @@ vi.mock("../../../src/bot/handlers/message-merger.js", () => ({
   flushPendingPrompt: flushPendingPromptMock,
   __resetMessageMergerForTests: vi.fn(),
 }));
+vi.mock("../../../src/app/services/model-capability-routing-service.js", () => ({
+  resolveCapabilityRoute: async () => ({ model: { providerID: "test-provider", modelID: "test-model" }, routeSource: "primary-native" }),
+}));
 
 import {
   handleDocumentMessage,
@@ -299,6 +302,7 @@ describe("bot/handlers/document", () => {
             url: expect.stringMatching(/^data:image\/png;base64,/),
           }),
         ]),
+        { providerID: "test-provider", modelID: "test-model" },
       );
     });
 
