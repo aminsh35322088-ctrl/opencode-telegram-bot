@@ -27,7 +27,7 @@ vi.mock("../../src/opencode/ready-lifecycle.js", () => ({
   opencodeReadyLifecycle: { notifyReady: vi.fn(), notifyUnavailable: vi.fn() },
 }));
 vi.mock("../../src/utils/logger.js", () => ({
-  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 import { OpencodeAutoRestartService } from "../../src/opencode/auto-restart.js";
 function child(pid = 123) {

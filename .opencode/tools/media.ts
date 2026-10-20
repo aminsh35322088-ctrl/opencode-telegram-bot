@@ -16,6 +16,7 @@ const MEDIA_ACTIONS = [
 
 const DIST_ROOT = process.env.AGENT_BOT_DIST_ROOT?.trim() || "/app/dist";
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
+const TELEGRAM_ARTIFACT_MARKER = "__TELEGRAM_ARTIFACT__";
 
 type MediaAction = (typeof MEDIA_ACTIONS)[number];
 
@@ -189,12 +190,16 @@ export default tool({
       await fs.writeFile(outputPath, result.buffer);
 
       const resolver = await load<ImageResolutionModule>("app/services/image-model-resolution-service.js");
-      return JSON.stringify({
+      const report = JSON.stringify({
         ok: true,
         path: outputPath,
         mimeType: result.mimeType,
         selection: await resolver.resolvePersistedImageModel(base) ?? null,
       }, null, 2);
+      // The worker-side artifact delivery service recognizes this explicit marker
+      // and sends the generated image to this Topic instead of relying only on
+      // filesystem watcher timing.
+      return `${report}\n${TELEGRAM_ARTIFACT_MARKER} ${outputPath}`;
     } finally {
       clearTimeout(timer);
     }

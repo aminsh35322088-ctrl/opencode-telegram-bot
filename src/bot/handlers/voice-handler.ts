@@ -45,7 +45,14 @@ export async function handleVoiceMessage(ctx: Context, deps: VoiceMessageDeps): 
   try {
     const topicWorktree = getTopicRuntimeContext()?.directory;
     let route = await resolveCapabilityRoute("voiceInput", topicWorktree);
-    const legacyStt = route.routeSource === "unavailable" && await sttConfigured();
+    const configuredStt = await sttConfigured();
+    // Preserve the recognizable Voice → Text UX when an STT endpoint is configured.
+    // Native audio is a useful fallback only when transcription is not configured;
+    // otherwise the user expects a transcript to appear before the Coding AI reply.
+    if (route.routeSource === "primary-native" && configuredStt) {
+      route = await resolveCapabilityRoute("voiceInput", topicWorktree, { allowPrimaryNative: false });
+    }
+    const legacyStt = route.routeSource === "unavailable" && configuredStt;
     if (route.routeSource === "unavailable" && !legacyStt) {
       await ctx.reply(route.reason ?? t("stt.not_configured"));
       return;

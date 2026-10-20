@@ -23,9 +23,13 @@ export async function requestRailwayAgentTool(payload:Record<string,unknown>):Pr
  return await callInfrastructure("railway-agent-tool",{payload},30_000);
 }
 
+const TELEGRAM_LONG_RUNNING_ACTIONS = new Set(["image.generate", "image.edit", "stt.transcribe", "video.prepare"]);
+export function telegramAgentToolTimeoutMs(payload:Record<string,unknown>):number{
+ return TELEGRAM_LONG_RUNNING_ACTIONS.has(String(payload.action)) ? 185_000 : 30_000;
+}
 export async function requestTelegramAgentTool(payload:Record<string,unknown>,owner:{nodeId:string;generation:number;chatId:number;threadId:number;sessionId:string}):Promise<unknown>{
  if(!callInfrastructure)throw new Error("Infrastructure channel unavailable");
- return await callInfrastructure("telegram-agent-tool",{payload,owner},30_000);
+ return await callInfrastructure("telegram-agent-tool",{payload,owner},telegramAgentToolTimeoutMs(payload));
 }
 
 export async function requestNodeLifecycle(binding:Readonly<NodeBinding>,operation:"health"|"status"|"sync-global"|"session.create"|"session.get"|"file.list"|"file.read"|"file.stat"|"file.download",payload:unknown={}):Promise<{ok:boolean;result:unknown}>{
