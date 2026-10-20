@@ -121,7 +121,7 @@ export class NodeBindingStore {
         return existing;
       }
       const binding=state.bindings.find(item=>item.nodeId===expected.nodeId);
-      if(!binding||binding.generation!==expected.generation||binding.status!=="available"||binding.chatId!==0||binding.threadId!==0||!binding.serviceId||!binding.volumeId||!binding.endpoint||binding.serviceId!==expected.serviceId||binding.volumeId!==expected.volumeId||binding.projectId!==expected.projectId||binding.endpoint!==expected.endpoint)throw new Error("Prepared Worker is no longer available");
+      if(!binding||binding.generation!==expected.generation||binding.status!=="available"||binding.chatId!==0||binding.threadId!==0||binding.slot===undefined||binding.slot>4||!binding.serviceId||!binding.volumeId||!binding.endpoint||binding.serviceId!==expected.serviceId||binding.volumeId!==expected.volumeId||binding.projectId!==expected.projectId||binding.endpoint!==expected.endpoint)throw new Error("Prepared Worker is no longer available");
       binding.generation++;binding.chatId=chatId;binding.threadId=threadId;binding.status="reserved";binding.updatedAt=new Date().toISOString();
       return binding;
     });
