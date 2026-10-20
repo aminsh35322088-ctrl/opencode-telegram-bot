@@ -100,8 +100,9 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
             record.deploymentId=instance.latestDeployment.id;
             await this.save(journal);
           }else{
-            // The old deployment still serves traffic; do not report it as proof.
-            deploymentStatus="DEPLOYING";
+            // The old deployment still serves traffic; do not report it as proof
+            // or return a stale deployment ID to a readiness waiter.
+            throw new WorkerProvisioningError("provisioning_pending");
           }
         }else if(instance.latestDeployment.id!==record.sleepPolicyDeploymentId){
           throw new WorkerProvisioningError("reconciliation_required");
@@ -382,7 +383,8 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
         if(!record.sleepPolicyDeploymentId&&latest.id!==record.deploymentId){
           record.sleepPolicyDeploymentId=latest.id;record.deploymentId=latest.id;await this.save(journal);
         }
-        if(record.sleepPolicyDeploymentId&&latest.id!==record.sleepPolicyDeploymentId)throw new WorkerProvisioningError("reconciliation_required");
+        if(!record.sleepPolicyDeploymentId)throw new WorkerProvisioningError("provisioning_pending");
+        if(latest.id!==record.sleepPolicyDeploymentId)throw new WorkerProvisioningError("reconciliation_required");
         const status=latest.status?.toUpperCase();
         if(["FAILED","CRASHED","REMOVED"].includes(status??""))throw new WorkerProvisioningError("provisioning_pending");
         if(record.sleepPolicyDeploymentId===latest.id&&["SUCCESS","ACTIVE"].includes(status??"")){
