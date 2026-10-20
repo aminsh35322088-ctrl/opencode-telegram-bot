@@ -236,6 +236,22 @@ async function verifyWorkerImage(sourceCommit) {
   return REGISTRY + "/" + WORKER_IMAGE_REPOSITORY + "@" + root.digest;
 }
 
+export function assertPublishedReleaseAsset(name, actual, expected) {
+  if (
+    !expected ||
+    typeof expected.digest !== "string" ||
+    !/^sha256:[a-f0-9]{64}$/.test(expected.digest) ||
+    !Number.isSafeInteger(expected.size) ||
+    expected.size <= 0
+  ) {
+    throw new Error(`Core release API has no trustworthy SHA-256/size metadata for ${name}`);
+  }
+  if (actual.sha256 !== expected.digest.slice("sha256:".length) || actual.size !== expected.size) {
+    throw new Error(`Core release asset does not match GitHub's published digest and size: ${name}`);
+  }
+  return true;
+}
+
 export function selectLatestRelease(releases) {
   return releases
     .filter((release) => release && release.draft === false && release.prerelease === true && parseCoreReleaseVersion(release.tag_name))
@@ -286,19 +302,8 @@ async function syncRelease() {
   const assets = {};
   for (const [key, name] of Object.entries(ASSET_NAMES)) {
     const expected = releaseAssets.get(name);
-    if (
-      !expected ||
-      typeof expected.digest !== "string" ||
-      !/^sha256:[a-f0-9]{64}$/.test(expected.digest) ||
-      !Number.isSafeInteger(expected.size) ||
-      expected.size <= 0
-    ) {
-      throw new Error(`Core release API has no trustworthy SHA-256/size metadata for ${name}`);
-    }
     const actual = await fetchReleaseAsset(latest.tag_name, name, MAX_ASSET_BYTES[key]);
-    if (actual.sha256 !== expected.digest.slice("sha256:".length) || actual.size !== expected.size) {
-      throw new Error(`Core release asset does not match GitHub's published digest and size: ${name}`);
-    }
+    assertPublishedReleaseAsset(name, actual, expected);
     assets[key] = actual;
   }
 
