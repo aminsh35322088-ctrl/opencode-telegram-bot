@@ -11,7 +11,7 @@ async function fixture(mode='normal') {
   let time=0;let provisionCalls=0;let healthCalls=0;const calls:string[]=[];
   const lifecycle=new TopicNodeLifecycle({bindings,now:()=>time,wait:async delay=>{time+=delay;},snapshot:async()=>({revision:7,hash:'hash7'}),
     infrastructure:async(operation,nodeId,generation)=>{
-      calls.push(operation);if(mode==='recycle-failure'&&operation==='recycle')throw new Error('recycle failure');if(operation==='provision'){provisionCalls++;if(mode==='capacity')throw new Error('NO WORKER AVAILABLE / CAPACITY EXHAUSTED');}
+      calls.push(operation);if(mode==='recycle-failure'&&operation==='recycle')throw new Error('recycle failure');if(operation==='provision'){provisionCalls++;if(mode==='capacity')throw new Error('NO WORKER AVAILABLE / CAPACITY EXHAUSTED');if(mode==='overflow-capacity'&&(await bindings.list()).find(item=>item.nodeId===nodeId)?.slot===2)throw new Error('NO WORKER AVAILABLE / CAPACITY EXHAUSTED');}
       const result:ProvisionedNode={nodeId,generation,projectId:'workers',environmentId:'production',serviceId:'service-'+nodeId,volumeId:'volume-'+nodeId,endpoint:'https://worker.up.railway.app',phase:operation==='retire'?'retired':operation==='recycle'||operation==='rebind'?'recycled':'deploying'};
       if(mode==='image-mismatch')Object.assign(result,{runtimeCommit:'a'.repeat(40),runtimeVersion:'1.18.33-bot.13-pre.17',image:'ghcr.io/example/core@sha256:'+'b'.repeat(64)});
       if(operation==='reconcile'){const all=await bindings.list();assert.equal(all.some(item=>item.status==='ready'||item.status==='available'),true);}
@@ -85,6 +85,16 @@ test('New Chat preflight verifies the selected live Worker before returning it',
  assert.equal(worker.status,'available');assert.equal(f.calls[0],'reconcile');
  assert.ok(f.calls.indexOf('reconcile')<f.calls.indexOf('inspect'));
  assert.equal(f.calls.includes('health'),true);assert.equal(f.calls.includes('session.create'),false);
+});
+
+test('New Chat recovers an existing Worker even when another warm slot cannot be provisioned',async()=>{
+ const f=await fixture('overflow-capacity');await f.lifecycle.bootstrapPool(1);
+ const [first]=await f.bindings.list();
+ await f.bindings.ensurePoolSlots(2);
+ await f.bindings.update(first!.nodeId,first!.generation,{status:'pool-provisioning'});
+ const worker=await f.lifecycle.verifyAvailableWorker();
+ assert.equal(worker.nodeId,first!.nodeId);assert.equal(worker.status,'available');
+ assert.equal((await f.bindings.list()).filter(item=>item.status==='available'&&item.chatId===0&&item.threadId===0).length,1);
 });
 test('failed recycle quarantines the Worker and never deletes its service or volume',async()=>{
  const f=await fixture('recycle-failure');await f.lifecycle.ensureReady(-100,2,'/topic');
