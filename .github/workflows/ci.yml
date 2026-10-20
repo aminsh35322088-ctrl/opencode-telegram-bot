@@ -4,12 +4,15 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: '17 */6 * * *'
 
 permissions:
   contents: read
 
 jobs:
   validate:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -60,3 +63,95 @@ jobs:
       - name: Cleanup CI-only files
         if: always()
         run: rm -rf tests node_modules/vitest node_modules/@vitest
+
+  core-release-sync:
+    if: github.event_name == 'schedule' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    permissions:
+      contents: write
+    concurrency:
+      group: core-release-sync-main
+      cancel-in-progress: false
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.14.0
+
+      - name: Discover and verify the newest Core prerelease
+        id: sync
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/sync-core-release.mjs
+
+      - name: Install dependencies for the candidate pin
+        if: steps.sync.outputs.changed == 'true'
+        run: npm ci
+
+      - name: Verify pinned Core packages
+        if: steps.sync.outputs.changed == 'true'
+        run: node scripts/verify-core-install.mjs
+
+      - name: Install CI test runner
+        if: steps.sync.outputs.changed == 'true'
+        run: npm install --no-save --package-lock=false vitest@3.2.4
+
+      - name: Run Telegram lifecycle regression gate
+        if: steps.sync.outputs.changed == 'true'
+        run: >-
+          node --import tsx --test
+          tests/main-reply-keyboard.test.ts
+
+      - name: Run Core routing and release-sync tests
+        if: steps.sync.outputs.changed == 'true'
+        run: node --import tsx --test tests/*.test.ts
+
+      - name: Materialize CI-only tests
+        if: steps.sync.outputs.changed == 'true'
+        run: |
+          rm -rf tests
+          mkdir -p tests
+          cp -R .github/ci-tests/tests/. tests/
+
+      - name: Lint
+        if: steps.sync.outputs.changed == 'true'
+        run: npm run lint
+
+      - name: Typecheck
+        if: steps.sync.outputs.changed == 'true'
+        run: npm run typecheck
+
+      - name: Build
+        if: steps.sync.outputs.changed == 'true'
+        run: npm run build
+
+      - name: Run test suite
+        if: steps.sync.outputs.changed == 'true'
+        run: ./node_modules/.bin/vitest run --config .github/ci-tests/vitest.config.ts
+
+      - name: Cleanup CI-only files
+        if: always() && steps.sync.outputs.changed == 'true'
+        run: rm -rf tests node_modules/vitest node_modules/@vitest
+
+      - name: Commit and deploy the tested Core pin
+        if: success() && steps.sync.outputs.changed == 'true'
+        env:
+          CORE_VERSION: ${{ steps.sync.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add core-release.lock.json package.json package-lock.json src/infrastructure/worker-core-release.ts
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo "Verified pin matched main; nothing to commit."
+            exit 0
+          fi
+          git commit -m "release: pin worker runtime to Core ${CORE_VERSION}"
+          git push origin HEAD:main
