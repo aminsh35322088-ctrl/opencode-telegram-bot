@@ -185,6 +185,7 @@ export class InfrastructureController {
     await this.options.registry.persist(path.join(this.options.stateDirectory,'nodes.json'));
     if(imageUpdateStarted){
      this.verifiedUnbound.delete(nodeId);
+     this.clusterVerified=false;
      process.stdout.write(`[InfrastructureBoundary] worker_image_update_started node=${nodeId} generation=${generation} version=${reconciled.runtimeVersion??"unknown"}\n`);
      return {...reconciled,imageUpdated:true};
     }
@@ -206,12 +207,21 @@ export class InfrastructureController {
     // Keep a newly verified Worker fenced until the cluster-level runtime
     // canary and startup cleanup also pass. Lifecycle marks it available only
     // after this request returns successfully.
-    if(!this.clusterVerified&&this.verifiedUnbound.size>0&&this.options.registry.metadata().filter(b=>b.chatId===0&&b.threadId===0&&b.status!=='retired').every(b=>this.verifiedUnbound.get(b.nodeId)===b.generation)){
-     const current=await Promise.all([...this.verifiedUnbound].map(async([id,verifiedGeneration])=>{
-      const canonical=await this.lookup(id);const registered=await this.options.registry.resolve(id);
-      return canonical?.generation===verifiedGeneration&&["available","pool-provisioning"].includes(canonical.status)&&canonical.chatId===0&&canonical.threadId===0&&registered?.binding.generation===verifiedGeneration&&["available","pool-provisioning"].includes(registered.binding.status);
+    const unbound=this.options.registry.metadata().filter(b=>b.chatId===0&&b.threadId===0&&b.status!=='retired');
+    if(!this.clusterVerified&&unbound.length>0&&unbound.every(b=>this.verifiedUnbound.get(b.nodeId)===b.generation)){
+     const current=await Promise.all(unbound.map(async entry=>{
+      const canonical=await this.lookup(entry.nodeId);const registered=await this.options.registry.resolve(entry.nodeId);
+      const valid=canonical?.generation===entry.generation&&["available","pool-provisioning"].includes(canonical.status)&&canonical.chatId===0&&canonical.threadId===0&&registered?.binding.generation===entry.generation&&["available","pool-provisioning"].includes(registered.binding.status);
+      return {valid,slotOne:valid&&canonical?.slot===1};
      }));
-     if(current.every(Boolean)){await this.options.onClusterVerified?.();this.clusterVerified=true;}
+     // The legacy extended runtime canary also performs a narrowly-scoped cleanup
+     // that is permitted only on slot 1. If slot 1 is bound to a live Topic, do
+     // not fail or block other free Workers; defer the cluster canary until slot 1
+     // has been recycled and independently boundary-verified again.
+     if(current.every(item=>item.valid)&&current.some(item=>item.slotOne)){
+      await this.options.onClusterVerified?.();
+      this.clusterVerified=true;
+     }
     }
     // Root's authenticated identity may be marked available after its canaries
     // pass. Canonical Topic allocation remains fenced as pool-provisioning until
