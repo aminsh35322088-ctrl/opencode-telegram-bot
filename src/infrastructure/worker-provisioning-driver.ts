@@ -1,4 +1,26 @@
 export interface WorkerPool { projectId: string; environmentId: string; capacity?: number; region: string }
+
+/**
+ * Last-resort single-project fallback used only after Railway rejects creating
+ * another managed Worker project because of a resource quota. The live service
+ * and journal counts remain the baseline; Railway still validates every mutation.
+ */
+export function nextCapacityAfterProjectQuota(
+  configuredCapacity: number | undefined,
+  journalWorkers: number,
+  liveServices: number,
+): number | undefined {
+  for (const [name, value] of [["journalWorkers", journalWorkers], ["liveServices", liveServices]] as const) {
+    if (!Number.isSafeInteger(value) || value < 0) throw new Error(`Invalid Worker pool inventory: ${name}`);
+  }
+  if (configuredCapacity !== undefined && (!Number.isSafeInteger(configuredCapacity) || configuredCapacity < 0)) {
+    throw new Error("Invalid configured Worker pool capacity");
+  }
+  if (configuredCapacity === undefined) return undefined;
+  const baseline = Math.max(journalWorkers, liveServices);
+  if (baseline < configuredCapacity) return undefined;
+  return baseline + 1;
+}
 export interface ProvisionedNode {
   slot?:number;clusterId?:string;unbound?:boolean;
   image?: string; runtimeCommit?:string; runtimeVersion?:string; imageUpdated?:boolean; volumeCreatePending?: boolean; everDeployed?:boolean;
