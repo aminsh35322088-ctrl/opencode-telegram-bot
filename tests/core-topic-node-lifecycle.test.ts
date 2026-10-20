@@ -23,6 +23,12 @@ async function fixture(mode='normal') {
       if(mode==='rolling-image-upgrade'&&operation==='inspect'){
         Object.assign(result,{image:'ghcr.io/example/worker@sha256:'+'e'.repeat(64),runtimeCommit:'d'.repeat(40),runtimeVersion:'1.18.33-bot.13-pre.39'});
       }
+      if(mode==='sleep-rollout'&&operation==='reconcile'&&currentBinding?.status==='available'){
+        Object.assign(result,{sleepPolicyUpdated:true,deploymentId:'sleep-deploy'});
+      }
+      if(mode==='sleep-rollout'&&operation==='inspect'){
+        Object.assign(result,{deploymentId:'sleep-deploy',deploymentStatus:'SUCCESS'});
+      }
       return result;
     },
     node:async(binding,operation)=>{
@@ -53,6 +59,20 @@ test('Delete Chat recycles the same Worker into ready-unbound without deleting i
   assert.equal(await f.lifecycle.retire(-100,2),true);const recycled=(await f.bindings.list())[0]!;
   assert.equal(recycled.nodeId,ready.binding.nodeId);assert.equal(recycled.generation,ready.binding.generation+1);assert.equal(recycled.chatId,0);assert.equal(recycled.threadId,0);assert.equal(recycled.sessionId,undefined);assert.equal(recycled.status,'available');
   assert.equal(f.calls.includes('recycle'),true);assert.equal(f.calls.includes('retire'),false);assert.equal(await f.lifecycle.retire(-100,2),false);
+});
+
+test('Delete Chat waits for the idle Worker Serverless sleep deployment to succeed',async()=>{
+  const f=await fixture('sleep-rollout');
+  await f.lifecycle.ensureReady(-100,2,'/logical/topic');
+  const before=f.calls.length;
+  assert.equal(await f.lifecycle.retire(-100,2),true);
+  const retirementCalls=f.calls.slice(before);
+  assert.equal(retirementCalls.at(-3),'reconcile','apply sleep policy before confirming recycle completion');
+  assert.equal(retirementCalls.at(-2),'health','wait for the Worker runtime while the sleep deployment rolls out');
+  assert.equal(retirementCalls.at(-1),'inspect','verify the exact Railway sleep deployment reached SUCCESS');
+  const recycled=(await f.bindings.list())[0]!;
+  assert.equal(recycled.status,'available');
+  assert.equal(recycled.chatId,0);assert.equal(recycled.threadId,0);
 });
 
 test('Core readiness uses a fast adaptive first retry rather than a one-second polling floor',async()=>{
