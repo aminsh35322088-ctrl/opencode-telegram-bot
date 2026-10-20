@@ -44,15 +44,16 @@ export async function buildRailwaySettingsView(settings?: RailwayWorkerSettings)
       "🚂 <b>Railway</b>", "",
       `Workspace · <b>${workspace}</b>`,
       `Worker creation · <b>${current.workerCreationEnabled ? "ON" : "OFF"}</b>`,
-      `Warm Workers · <b>${current.warmCapacity}</b>`,
-      `Workers / project · <b>${current.workersPerProject}</b>`, "",
-      "Each Worker owns one Topic at a time. Delete Chat sanitizes it and returns it to the reusable unbound pool.",
-      "Worker policy is stored by the Control Plane and no longer comes from Railway environment variables.",
+      "Worker fleet · <b>4 maximum</b> (+ this Control Plane)",
+      "Sleep policy · <b>Unassigned Workers only</b>",
+      `Worker creation · <b>${current.workerCreationEnabled ? "ON" : "OFF"}</b>`, "",
+      "A Worker assigned to a Topic stays awake even when its model is idle.",
+      "Only a Worker with no Topic assignment may sleep. Its Railway Service and /data Volume are retained for reuse.",
+      "The four-Worker fleet limit is fixed; capacity controls are managed by the Control Plane and cannot exceed this limit.",
     ].join("\n"),
     keyboard: new InlineKeyboard()
       .text(`Worker creation · ${current.workerCreationEnabled ? "ON" : "OFF"}`, SETTINGS_RAILWAY_CREATION_CALLBACK).row()
-      .text("− Warm", SETTINGS_RAILWAY_WARM_DEC_CALLBACK).text(`Warm ${current.warmCapacity}`, SETTINGS_RAILWAY_CALLBACK).text("+ Warm", SETTINGS_RAILWAY_WARM_INC_CALLBACK).row()
-      .text("− / project", SETTINGS_RAILWAY_CAPACITY_DEC_CALLBACK).text(`${current.workersPerProject} / project`, SETTINGS_RAILWAY_CALLBACK).text("+ / project", SETTINGS_RAILWAY_CAPACITY_INC_CALLBACK).row()
+      .text("Fleet cap · 4 Workers", SETTINGS_RAILWAY_CALLBACK).row()
       .text("← Settings", SETTINGS_BACK_CALLBACK),
   };
 }
