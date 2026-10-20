@@ -188,10 +188,10 @@ export class InfrastructureController {
     if(!registered||registered.binding.generation!==generation||registered.binding.chatId!==0||registered.binding.threadId!==0||registered.endpoint!==binding.endpoint)throw Error('Worker registry changed during runtime reconciliation');
     this.options.registry.install({...registered,binding:{...registered.binding,status:binding.status}});
     await this.options.registry.persist(path.join(this.options.stateDirectory,'nodes.json'));
-    if(imageUpdateStarted){
+    if(imageUpdateStarted||reconciled.sleepPolicyUpdated){
      this.verifiedUnbound.delete(nodeId);
      this.clusterVerified=false;
-     process.stdout.write(`[InfrastructureBoundary] worker_image_update_started node=${nodeId} generation=${generation} version=${reconciled.runtimeVersion??"unknown"}\n`);
+     process.stdout.write(`[InfrastructureBoundary] worker_runtime_update_started node=${nodeId} generation=${generation} version=${reconciled.runtimeVersion??"unknown"} sleepPolicyUpdated=${reconciled.sleepPolicyUpdated===true}\n`);
      return {...reconciled,imageUpdated:true};
     }
    }
