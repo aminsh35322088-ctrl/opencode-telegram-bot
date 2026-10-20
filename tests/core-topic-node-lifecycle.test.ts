@@ -102,6 +102,23 @@ test('New Chat reconciles an existing slot when no Worker is currently marked av
  assert.equal(worker.nodeId,first!.nodeId);assert.equal(worker.status,'available');
  assert.equal((await f.bindings.list()).filter(item=>item.status==='available'&&item.chatId===0&&item.threadId===0).length,1);
 });
+test('New Chat completes an existing unbound reservation when no Worker is available',async()=>{
+ const f=await fixture();
+ const [reserved]=await f.bindings.ensurePoolSlots(1);
+ assert.equal(reserved?.status,'pool-reserved');
+ const before=await f.bindings.list();
+ assert.equal(before.length,1);
+ const worker=await f.lifecycle.verifyAvailableWorker();
+ assert.equal(worker.nodeId,reserved!.nodeId,'recovery must reuse the durable reservation');
+ assert.equal(worker.status,'available');
+ assert.equal(worker.chatId,0);assert.equal(worker.threadId,0);assert.equal(worker.sessionId,undefined);
+ assert.equal(f.getProvisionCalls(),1,'the existing reservation is provisioned exactly once');
+ assert.equal((await f.bindings.list()).length,1,'New Chat must not create another Worker slot');
+ assert.ok(f.calls.includes('provision'));
+ assert.ok(f.calls.includes('inspect'));
+ assert.ok(f.calls.includes('sync-global'));
+});
+
 test('failed recycle quarantines the Worker and never deletes its service or volume',async()=>{
  const f=await fixture('recycle-failure');await f.lifecycle.ensureReady(-100,2,'/topic');
  await assert.rejects(f.lifecycle.retire(-100,2),/recycle failure/);
