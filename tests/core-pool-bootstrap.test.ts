@@ -45,7 +45,10 @@ test('bootstrap prepares the configured unbound Workers and preserves identity o
   const slots=await first;assert.deepEqual(f.provisioned,[1,2,3,4]);assert.deepEqual(f.reconciled,[1,2,3,4]);
   assert.equal(f.reconciled.length,4,"each new Worker completes root verification before becoming available");
   assert.equal(slots.length,4);assert.ok(slots.every(item=>item.status==='available'&&item.chatId===0&&item.threadId===0&&item.generation===1&&item.currentRevision===7&&!item.sessionId));
-  const again=await f.lifecycle.bootstrapPool();assert.deepEqual(again,slots);assert.deepEqual(f.provisioned,[1,2,3,4]);
+  const again=await f.lifecycle.bootstrapPool();
+  const identity=(items:typeof slots)=>items.map(item=>[item.nodeId,item.clusterId,item.slot,item.generation,item.status,item.currentRevision,item.projectId,item.serviceId,item.volumeId,item.endpoint]);
+  assert.deepEqual(identity(again),identity(slots),"reconciliation may advance updatedAt but must preserve Worker identity and resources");
+  assert.deepEqual(f.provisioned,[1,2,3,4]);
   assert.deepEqual(new Set(f.operations),new Set(['health','sync-global']));
 });
 
