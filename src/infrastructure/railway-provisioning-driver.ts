@@ -401,7 +401,7 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
           record.sleepPolicyDeploymentPending=false;record.sleepPolicyDeploymentVerified=true;await this.save(journal);
           // Do not let a completed sleep rollout mask a newer requested image.
           sleepPolicyChanged=record.sleepApplication!==desiredSleep;
-          if(!managedImageDrift)return {...structuredClone(record),deploymentId:latest.id,deploymentStatus:latest.status,sleepPolicyUpdated:true};
+          if(!managedImageDrift&&!sleepPolicyChanged)return {...structuredClone(record),deploymentId:latest.id,deploymentStatus:latest.status,sleepPolicyUpdated:true};
         }
         return {...structuredClone(record),deploymentId:latest.id,deploymentStatus:status,sleepPolicyUpdated:true};
       }
