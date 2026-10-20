@@ -60,12 +60,10 @@ export class RailwayWorkerSettingsStore {
       // Runtime settings updates still reject values above the hard four-Worker cap.
       if(persisted&&typeof persisted==="object"&&!Array.isArray(persisted)){
         const legacy=persisted as Record<string,unknown>;
-        this.current=normalizeRailwayWorkerSettings({
-          ...legacy,
-          warmCapacity:typeof legacy.warmCapacity==="number"?Math.min(legacy.warmCapacity,4):legacy.warmCapacity,
-          workersPerProject:typeof legacy.workersPerProject==="number"?Math.min(legacy.workersPerProject,4):legacy.workersPerProject,
-        });
-        if(legacy.warmCapacity!==this.current.warmCapacity||legacy.workersPerProject!==this.current.workersPerProject)await this.save(this.current);
+        // The four-Worker policy is a hard operational cap and also the
+        // required warm target, so migrate older lower or higher values to 4.
+        this.current=normalizeRailwayWorkerSettings({...legacy,warmCapacity:4,workersPerProject:4});
+        if(legacy.warmCapacity!==4||legacy.workersPerProject!==4)await this.save(this.current);
       }else this.current=normalizeRailwayWorkerSettings(persisted);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;

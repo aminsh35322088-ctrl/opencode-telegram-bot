@@ -17,13 +17,15 @@ test("onboarding progress cannot advertise more than four Workers", async () => 
   assert.equal(summarizeRailwayBootstrap([],0,99).workersTarget,4);
 });
 
-test("legacy Worker settings migrate down to four and updates cannot exceed the hard cap", async () => {
+test("legacy Worker settings migrate to hardcoded four and updates cannot exceed the cap", async () => {
   const directory=await mkdtemp(path.join(tmpdir(),"railway-worker-settings-"));
-  const filename=path.join(directory,"settings.json");
-  await writeFile(filename,JSON.stringify({workerCreationEnabled:true,warmCapacity:5,workersPerProject:5}),{mode:0o600});
-  const store=new RailwayWorkerSettingsStore(filename);
-  assert.deepEqual(await store.load(),{workerCreationEnabled:true,warmCapacity:4,workersPerProject:4});
-  assert.deepEqual(JSON.parse(await readFile(filename,"utf8")),{workerCreationEnabled:true,warmCapacity:4,workersPerProject:4});
+  for(const [name,legacy] of [["higher",{workerCreationEnabled:true,warmCapacity:5,workersPerProject:5}],["lower",{workerCreationEnabled:true,warmCapacity:2,workersPerProject:3}]] as const){
+    const filename=path.join(directory,`${name}-settings.json`);
+    await writeFile(filename,JSON.stringify(legacy),{mode:0o600});
+    const store=new RailwayWorkerSettingsStore(filename);
+    assert.deepEqual(await store.load(),{workerCreationEnabled:true,warmCapacity:4,workersPerProject:4});
+    assert.deepEqual(JSON.parse(await readFile(filename,"utf8")),{workerCreationEnabled:true,warmCapacity:4,workersPerProject:4});
+  }
   assert.throws(()=>normalizeRailwayWorkerSettings({workerCreationEnabled:true,warmCapacity:5,workersPerProject:4}),/warmCapacity/);
   assert.throws(()=>normalizeRailwayWorkerSettings({workerCreationEnabled:true,warmCapacity:4,workersPerProject:5}),/workersPerProject/);
 });
