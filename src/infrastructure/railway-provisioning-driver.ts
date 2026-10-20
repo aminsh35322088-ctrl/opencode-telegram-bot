@@ -14,7 +14,7 @@ interface Edge<T> { edges: Array<{ node: T }>; pageInfo: { hasNextPage: boolean 
 interface VolumeInstance { environmentId: string; serviceId: string | null; volumeId: string; sizeMB: number; mountPath: string; isPendingDeletion: boolean }
 interface Inventory {
   project: { id: string; services: Edge<{ id: string; name: string; deletedAt?:string|null }>; volumes: Edge<{ id: string; volumeInstances: Edge<VolumeInstance> }> };
-  environment: { id: string; projectId: string; serviceInstances: Edge<{serviceId: string; domains: {serviceDomains: Array<{id: string; domain: string}>}; latestDeployment: {id: string} | null}> };
+  environment: { id: string; projectId: string; serviceInstances: Edge<{serviceId: string; domains: {serviceDomains: Array<{id: string; domain: string}>}; latestDeployment: {id: string;status?:string} | null}> };
 }
 export interface NodeProvisionerOptions {
   request<T>(document: string, variables: Record<string, unknown>): Promise<T>;
@@ -33,7 +33,7 @@ export interface NodeProvisionerOptions {
   /** Install the root-private transport identity before the Worker can call back during startup. */
   configured?(binding: Readonly<NodeBinding>, node: Readonly<ProvisionedNode>): Promise<void>;
 }
-const INVENTORY = `query WorkerInventory($projectId:String!,$environmentId:String!){ project(id:$projectId){id services(first:100){pageInfo{hasNextPage} edges{node{id name deletedAt}}} volumes(first:100){pageInfo{hasNextPage} edges{node{id volumeInstances(first:100){pageInfo{hasNextPage} edges{node{environmentId serviceId volumeId sizeMB mountPath isPendingDeletion}}}}}}} environment(id:$environmentId){id projectId serviceInstances(first:100){pageInfo{hasNextPage} edges{node{serviceId domains{serviceDomains{id domain}} latestDeployment{id}}}}}}`;
+const INVENTORY = `query WorkerInventory($projectId:String!,$environmentId:String!){ project(id:$projectId){id services(first:100){pageInfo{hasNextPage} edges{node{id name deletedAt}}} volumes(first:100){pageInfo{hasNextPage} edges{node{id volumeInstances(first:100){pageInfo{hasNextPage} edges{node{environmentId serviceId volumeId sizeMB mountPath isPendingDeletion}}}}}}} environment(id:$environmentId){id projectId serviceInstances(first:100){pageInfo{hasNextPage} edges{node{serviceId domains{serviceDomains{id domain}} latestDeployment{id status}}}}}}`;
 
 /** Root-owned request-driven controller: no background loop and no arbitrary GraphQL interface. */
 export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
@@ -95,7 +95,7 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
         record.sleepApplication=shouldSleep;
         await this.save(journal);
       }
-      return {...structuredClone(record),deploymentId:inventory.environment.serviceInstances.edges.find(e=>e.node.serviceId===record.serviceId)?.node.latestDeployment?.id};
+      return {...structuredClone(record),deploymentId:instance.latestDeployment.id,deploymentStatus:instance.latestDeployment.status};
     });
   }
   async inspectCapacity():Promise<Array<{pool:WorkerPool;used:number;available:number|null}>>{
@@ -385,7 +385,7 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
         const knownDomains = inventory.environment.serviceInstances.edges.find(entry => entry.node.serviceId === record!.serviceId)?.node.domains.serviceDomains ?? [];
         if (knownDomains.length !== 1 || `https://${knownDomains[0]?.domain}` !== record.endpoint || knownDomains[0]?.id !== record.domainId) throw new Error("Worker domain ownership mismatch");
         record.deploymentId = inventory.environment.serviceInstances.edges.find(entry => entry.node.serviceId === record!.serviceId)?.node.latestDeployment?.id;
-        await this.save(journal); await this.binding(nodeId,generation); return structuredClone(record);
+        await this.save(journal); await this.binding(nodeId,generation); return {...structuredClone(record),deploymentStatus:inventory.environment.serviceInstances.edges.find(entry=>entry.node.serviceId===record!.serviceId)?.node.latestDeployment?.status};
       }
       await this.binding(nodeId,generation);
       const secret = await this.options.ensureIdentity(binding, () => randomBytes(48).toString("base64url"));
@@ -415,10 +415,11 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       if(record.image&&desiredImage){record.image=desiredImage;record.runtimeCommit=desiredCommit;record.runtimeVersion=desiredVersion;}
       record.phase = "deploying"; await this.save(journal);
       inventory = await this.inventory(pool);
-      record.deploymentId = inventory.environment.serviceInstances.edges.find(entry => entry.node.serviceId === record!.serviceId)?.node.latestDeployment?.id;
+      const latestDeployment=inventory.environment.serviceInstances.edges.find(entry => entry.node.serviceId === record!.serviceId)?.node.latestDeployment;
+      record.deploymentId = latestDeployment?.id;
       await this.save(journal);
       await this.binding(nodeId,generation);
-      return structuredClone(record);
+      return {...structuredClone(record),deploymentStatus:latestDeployment?.status,sleepPolicyUpdated:sleepPolicyChanged};
   }
   retire(nodeId: string, generation: number): Promise<ProvisionedNode> {
     return this.singleFlight(async () => {
