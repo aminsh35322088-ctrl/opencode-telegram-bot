@@ -46,6 +46,15 @@ test("Railway bootstrap only exposes Continue after all four Workers are healthy
   assert.match(loaded.renderRailwayBootstrapProgress(progress), /🚂 <b>Railway Ready<\/b>/);
 });
 
+test("idle Workers sleep in Railway and active Topic bindings wake them", async () => {
+  const driver=await readFile(new URL("../src/infrastructure/railway-provisioning-driver.ts",import.meta.url),"utf8");
+  const lifecycle=await readFile(new URL("../src/control-plane/topic-node-lifecycle.ts",import.meta.url),"utf8");
+  assert.match(driver,/sleepApplication:binding\.chatId===0&&binding\.threadId===0/);
+  assert.match(driver,/WorkerSleepPolicy/);
+  assert.match(lifecycle,/item\.slot!==undefined&&item\.slot<=4/);
+  assert.match(lifecycle,/binding\.slot!>4/);
+});
+
 test("Telegram onboarding gates Main panel behind bootstrap Continue and supports a blocked Railway secret", async () => {
   const onboarding = await readFile(new URL("../src/bot/commands/railway-onboarding-command.ts", import.meta.url), "utf8");
   const launcher = await readFile(new URL("../src/infrastructure/launcher.ts", import.meta.url), "utf8");
