@@ -45,7 +45,7 @@ test("Telegram onboarding gates Main panel behind bootstrap Continue and support
   assert.match(launcher, /secret-invalid/);
   assert.match(launcher, /validateRailwayInfrastructureCredential/);
   assert.match(startup, /workerPoolReleaseReconcile/);
-  assert.match(startup, /bootstrapPool\(undefined,\s*false(?:,\s*true)?\)/, "startup may finish existing reservations best-effort, while lifecycle skips Topic-bound slots");
+  assert.match(startup, /bootstrapPool\(undefined,\s*true,\s*true\)/, "startup repairs only complete persistent Worker resources and never tries to create missing capacity");
   assert.doesNotMatch(startup, /bootstrapPool\(INITIAL_BOOTSTRAP_WORKERS/, "new fleet capacity remains onboarding-owned");
 });
 
