@@ -73,7 +73,9 @@ export class InfrastructureController {
   const inventory=await this.provisioner.bootstrapInventory();
   const workers=await Promise.all(inventory.workers.map(async worker=>{
    const identity=await this.options.registry.resolve(worker.nodeId);
-   return {...worker,verified:this.verifiedUnbound.get(worker.nodeId)===worker.generation&&identity?.binding.generation===worker.generation&&identity.binding.status==='available'};
+   const canonical=await this.lookup(worker.nodeId);
+   const canonicalAvailable=canonical?.nodeId===worker.nodeId&&canonical.generation===worker.generation&&canonical.status==='available'&&canonical.chatId===0&&canonical.threadId===0&&canonical.projectId===worker.projectId&&canonical.serviceId===worker.serviceId&&canonical.volumeId===worker.volumeId&&canonical.endpoint===worker.endpoint;
+   return {...worker,verified:this.verifiedUnbound.get(worker.nodeId)===worker.generation&&identity?.binding.generation===worker.generation&&identity.binding.status==='available'&&canonicalAvailable};
   }));
   return {...inventory,workers};
  }
