@@ -102,6 +102,9 @@ export class TopicNodeLifecycle {
           // runtime boundary while still fenced, then expose the slot as available.
           if(reconciled.imageUpdated)await this.dependencies.infrastructure('reconcile',binding.nodeId,binding.generation);
           binding=await this.dependencies.bindings.update(binding.nodeId,binding.generation,{status:'available'});
+          await this.dependencies.infrastructure('reconcile',binding.nodeId,binding.generation).catch(error=>{
+            logger.warn("[WorkerCluster] post-availability cluster readiness check deferred: node="+binding.nodeId+" generation="+binding.generation,error);
+          });
           logger.info("[WorkerCluster] idle Worker reconciled and verified: node="+binding.nodeId+" generation="+binding.generation);
         }catch(error){
           logger.warn("[WorkerCluster] idle Worker reconciliation failed; slot remains fenced: node="+binding.nodeId+" generation="+binding.generation,error);
@@ -131,6 +134,9 @@ export class TopicNodeLifecycle {
         // root-only replay/foreign-topic/stale-generation canary can be complete.
         if(!hasResources||reconciled.imageUpdated)await this.dependencies.infrastructure('reconcile',binding.nodeId,generation);
         binding=await this.dependencies.bindings.update(binding.nodeId,generation,{status:'available'});
+        await this.dependencies.infrastructure('reconcile',binding.nodeId,generation).catch(error=>{
+          logger.warn("[WorkerCluster] post-bootstrap cluster readiness check deferred: node="+binding.nodeId+" generation="+generation,error);
+        });
       }catch(error){
         logger.warn("[WorkerCluster] Worker bootstrap failed; slot remains fenced: node="+binding.nodeId+" generation="+generation,error);
         if(!repairOnly)throw error;
@@ -159,6 +165,9 @@ export class TopicNodeLifecycle {
         const synced=await this.syncGlobal(binding);
         if(reconciled.imageUpdated)await this.dependencies.infrastructure('reconcile',synced.nodeId,synced.generation);
         const ready=await this.dependencies.bindings.update(synced.nodeId,synced.generation,{status:'available'});
+        await this.dependencies.infrastructure('reconcile',ready.nodeId,ready.generation).catch(error=>{
+          logger.warn("[WorkerCluster] post-preflight cluster readiness check deferred: node="+ready.nodeId+" generation="+ready.generation,error);
+        });
         return ready;
       }catch(error){
         lastError=error;
