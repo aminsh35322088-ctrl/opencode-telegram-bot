@@ -143,7 +143,8 @@ export class InfrastructureController {
   // but they must not hold the global infrastructure mutation queue while doing
   // bounded network selftests. Canonical pool-provisioning status fences capacity.
   let verification:Promise<void>|undefined;
-  const task=this.queue.then(async()=>{
+  let task!:Promise<ProvisionedNode>;
+  task=this.queue.then(async()=>{
    if(!['provision','rebind','recycle','retire','reconcile','inspect'].includes(operation)||typeof nodeId!=='string'||nodeId.length>128||!Number.isSafeInteger(generation)||generation<1)throw Error('Infrastructure operation denied');
    const binding=await this.lookup(nodeId);if(!binding||binding.generation!==generation)throw Error('Infrastructure binding denied');
    if(operation==='inspect'){if(this.poolConfiguration)await this.poolConfiguration;if(!this.provisioner)throw Error('Worker pools not configured');return this.provisioner.inspectWorker(nodeId,generation);}
@@ -224,7 +225,7 @@ export class InfrastructureController {
      // not fail or block other free Workers; defer the cluster canary until slot 1
      // has been recycled and independently boundary-verified again.
      if(current.every(item=>item.valid)&&current.some(item=>item.slotOne)&&!this.clusterCanaryFlight){
-      const flight=Promise.resolve().then(()=>this.options.onClusterVerified?.()).then(()=>{
+      const flight=task.then(()=>this.options.onClusterVerified?.()).then(()=>{
        this.clusterVerified=true;
       }).finally(()=>{
        if(this.clusterCanaryFlight===flight)this.clusterCanaryFlight=undefined;
