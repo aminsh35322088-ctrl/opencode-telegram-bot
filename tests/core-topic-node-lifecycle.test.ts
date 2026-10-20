@@ -11,7 +11,8 @@ async function fixture(mode='normal') {
   let time=0;let provisionCalls=0;let healthCalls=0;const calls:string[]=[];
   const lifecycle=new TopicNodeLifecycle({bindings,now:()=>time,wait:async delay=>{time+=delay;},snapshot:async()=>({revision:7,hash:'hash7'}),
     infrastructure:async(operation,nodeId,generation)=>{
-      calls.push(operation);if(mode==='recycle-failure'&&operation==='recycle')throw new Error('recycle failure');if(operation==='provision'){provisionCalls++;if(mode==='capacity')throw new Error('NO WORKER AVAILABLE / CAPACITY EXHAUSTED');}
+      const currentBinding=(await bindings.list()).find(item=>item.nodeId===nodeId);
+      calls.push(operation);if(mode==='recycle-failure'&&operation==='recycle')throw new Error('recycle failure');if(operation==='provision'){provisionCalls++;if(mode==='capacity')throw new Error('NO WORKER AVAILABLE / CAPACITY EXHAUSTED');if(mode==='reservation-first-fails'&&currentBinding?.slot===1)throw new Error('first reservation provisioning failed');}
       const result:ProvisionedNode={nodeId,generation,projectId:'workers',environmentId:'production',serviceId:'service-'+nodeId,volumeId:'volume-'+nodeId,endpoint:'https://worker.up.railway.app',phase:operation==='retire'?'retired':operation==='recycle'||operation==='rebind'?'recycled':'deploying'};
       if(mode==='image-mismatch')Object.assign(result,{runtimeCommit:'a'.repeat(40),runtimeVersion:'1.18.33-bot.13-pre.17',image:'ghcr.io/example/core@sha256:'+'b'.repeat(64)});
       if(operation==='reconcile'){const all=await bindings.list();assert.equal(all.some(item=>item.status==='ready'||item.status==='available'||item.status==='pool-provisioning'),true);}
@@ -117,6 +118,20 @@ test('New Chat completes an existing unbound reservation when no Worker is avail
  assert.ok(f.calls.includes('provision'));
  assert.ok(f.calls.includes('inspect'));
  assert.ok(f.calls.includes('sync-global'));
+});
+
+test('New Chat uses another existing Worker when one reserved slot cannot provision',async()=>{
+ const f=await fixture('reservation-first-fails');
+ const slots=await f.bindings.ensurePoolSlots(2);
+ assert.equal(slots.length,2);
+ const worker=await f.lifecycle.verifyAvailableWorker();
+ assert.equal(worker.nodeId,slots[1]!.nodeId,'New Chat should continue to the next durable reservation');
+ assert.equal(worker.status,'available');
+ const after=await f.bindings.list();
+ assert.equal(after.length,2,'the failed reservation must not lead to extra slot creation');
+ assert.equal(after[0]!.status,'pool-provisioning','the failed Worker remains fenced');
+ assert.equal(after[1]!.status,'available');
+ assert.equal(f.getProvisionCalls(),2,'the failed reservation and the next existing reservation were both attempted');
 });
 
 test('failed recycle quarantines the Worker and never deletes its service or volume',async()=>{
