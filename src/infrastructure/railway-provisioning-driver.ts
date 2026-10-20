@@ -42,7 +42,7 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
     if (!/^[a-f0-9]{40}$/.test(options.coreCommit ?? WORKER_CORE_COMMIT)) throw new Error("Worker Core source must be an exact commit");
     const control = new URL(options.controlUrl);
     if (control.protocol !== "https:" || !control.hostname.endsWith(".up.railway.app") || control.username || control.password || control.search || control.hash || control.pathname !== "/") throw new Error("Control URL must be a Railway HTTPS domain");
-    if ((!options.pools.length && !options.createPool) || new Set(options.pools.map(p=>p.projectId)).size!==options.pools.length || options.pools.some(p=>!p.projectId||!p.environmentId||(p.capacity!==undefined&&(!Number.isSafeInteger(p.capacity)||p.capacity<0)))) throw new Error("Invalid Worker pool policy");
+    if ((!options.pools.length && !options.createPool) || new Set(options.pools.map(p=>p.projectId)).size!==options.pools.length || options.pools.some(p=>!p.projectId||!p.environmentId||(p.capacity!==undefined&&(!Number.isSafeInteger(p.capacity)||p.capacity<0||p.capacity>4)))) throw new Error("Invalid Worker pool policy");
     if(options.workerImage&&!/^[a-z0-9][a-z0-9./_-]*@sha256:[a-f0-9]{64}$/.test(options.workerImage))throw new Error("Worker image must be an immutable digest");
   }
   /** Only explicit Railway deletedAt evidence authorizes forgetting an unbound pool. */
@@ -75,7 +75,7 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
   }
   listPools():readonly WorkerPool[]{return structuredClone(this.options.pools);}
   setPoolCapacity(capacity:number):void{
-    if(!Number.isSafeInteger(capacity)||capacity<1||capacity>100)throw new Error("Invalid Worker pool capacity");
+    if(!Number.isSafeInteger(capacity)||capacity<1||capacity>4)throw new Error("Worker pool capacity is capped at four");
     for(const pool of this.options.pools)pool.capacity=capacity;
   }
   listWorkers():Promise<ProvisionedNode[]>{return this.singleFlight(async()=>structuredClone((await this.read()).nodes));}
