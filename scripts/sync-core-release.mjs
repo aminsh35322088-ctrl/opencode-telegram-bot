@@ -173,7 +173,7 @@ async function getRegistryToken() {
 
 async function fetchWorkerManifest(reference, token) {
   const response = await fetch(
-    `${REGISTRY}/v2/${WORKER_IMAGE_REPOSITORY}/manifests/${encodeURIComponent(reference)}`,
+    `${REGISTRY}/v2/${WORKER_IMAGE_REPOSITORY}/manifests/${/^sha256:[a-f0-9]{64}$/.test(reference) ? reference : encodeURIComponent(reference)}`,
     {
       headers: { Authorization: `Bearer ${token}`, Accept: MANIFEST_ACCEPT },
       redirect: "error",
