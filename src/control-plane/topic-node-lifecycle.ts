@@ -80,7 +80,7 @@ export class TopicNodeLifecycle {
       if(binding.chatId!==0||binding.threadId!==0)continue;
       // Recovery is deliberately limited to already-existing complete resources.
       if(repairOnly&&['pool-reserved','pool-provisioning'].includes(binding.status)&&(!binding.serviceId||!binding.volumeId||!binding.endpoint))continue;
-      if(warmCapacity!==undefined&&binding.slot!>warmCapacity&&['pool-reserved','pool-provisioning','retiring'].includes(binding.status)){
+      if(warmCapacity!==undefined&&binding.slot!>warmCapacity&&['pool-reserved','pool-provisioning','available','retiring'].includes(binding.status)){
         if(binding.status!=='retiring')binding=await this.dependencies.bindings.fence(binding.nodeId,binding.generation);
         const retired=await this.dependencies.infrastructure('retire',binding.nodeId,binding.generation);
         if(retired.nodeId!==binding.nodeId||retired.phase!=='retired')throw new Error("Warm Worker retirement not confirmed");
@@ -157,7 +157,7 @@ export class TopicNodeLifecycle {
   }
   async verifyAvailableWorker():Promise<NodeBinding>{
     let lastError:unknown;
-    const listAvailable=async()=> (await this.dependencies.bindings.list()).filter(item=>item.status==='available'&&item.chatId===0&&item.threadId===0);
+    const listAvailable=async()=> (await this.dependencies.bindings.list()).filter(item=>item.status==='available'&&item.chatId===0&&item.threadId===0&&item.slot!==undefined&&item.slot<=4);
     let available=await listAvailable();
     if(!available.length){
       // First repair complete persistent resources without creating infrastructure.
@@ -246,7 +246,14 @@ export class TopicNodeLifecycle {
       await this.waitReady(binding,'retiring',recycled);
       binding=await this.syncGlobal(binding);
       binding=await this.dependencies.bindings.completeRecycle(binding.nodeId,binding.generation);
-      await this.dependencies.infrastructure('reconcile',binding.nodeId,binding.generation);
+      if(binding.slot!==undefined&&binding.slot>4){
+        binding=await this.dependencies.bindings.fence(binding.nodeId,binding.generation);
+        const retired=await this.dependencies.infrastructure('retire',binding.nodeId,binding.generation);
+        if(retired.nodeId!==binding.nodeId||retired.phase!=='retired')throw new Error("Overflow Worker retirement not confirmed");
+        await this.dependencies.bindings.update(binding.nodeId,binding.generation,{status:'retired'});
+      }else{
+        await this.dependencies.infrastructure('reconcile',binding.nodeId,binding.generation);
+      }
       return true;
     }catch(error){
       logger.warn(`[WorkerCluster] in-place recycle failed; Worker remains fenced node=${binding.nodeId} generation=${binding.generation}`,error);
