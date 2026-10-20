@@ -15,13 +15,13 @@ test("Railway setup progress derives services, volumes, health and project count
     { projectId:"p1", serviceId:"s1", volumeId:"v1", status:"available" },
     { projectId:"p1", serviceId:"s2", volumeId:"v2", status:"pool-provisioning" },
     { projectId:"p1", status:"pool-reserved" },
-  ], 1, 5);
+  ], 1, 4);
   assert.deepEqual(progress, { projects:1, projectsTarget:1, workers:2, workersTarget:4, volumes:2, volumesTarget:4, healthy:1, healthyTarget:4, complete:false });
   const text = loaded.renderRailwayBootstrapProgress(progress);
   assert.match(text, /🚂 <b>Setting up Railway<\/b>/);
   assert.match(text, /✅ Projects created 1\/1/);
-  assert.match(text, /⏳ Workers created 2\/5/);
-  assert.match(text, /⏳ Deploy &amp; health checks 1\/5/);
+  assert.match(text, /⏳ Workers created 2\/4/);
+  assert.match(text, /⏳ Deploy &amp; health checks 1\/4/);
 });
 
 test("Railway bootstrap only exposes Continue after all four Workers are healthy", async () => {
@@ -73,8 +73,8 @@ test("Railway bootstrap retry classification only loops recoverable failures", a
 
 test("limited onboarding requires an actual Railway quota rejection and verified capacity", async () => {
   const {canContinueRailwayBootstrapWithLimitedResources,renderRailwayBootstrapLimit,summarizeRailwayBootstrap}=await import("../src/bot/services/railway-bootstrap-progress.js");
-  const bindings=Array.from({length:4},(_,index)=>({projectId:"p",serviceId:`s${index}`,volumeId:`v${index}`,status:"available"}));
-  const progress=summarizeRailwayBootstrap(bindings,1,5);
+  const bindings=Array.from({length:3},(_,index)=>({projectId:"p",serviceId:`s${index}`,volumeId:`v${index}`,status:"available"}));
+  const progress=summarizeRailwayBootstrap(bindings,1,4);
   const quota=new Error("Infrastructure operation failed (resource_limit, HTTP 200)");
   assert.equal(canContinueRailwayBootstrapWithLimitedResources(progress,quota),true);
   for(const error of [new Error("Infrastructure operation failed (verification, HTTP 200): boundary_replay_http_200"),new Error("Node transport failed"),new Error("NO WORKER AVAILABLE / CAPACITY EXHAUSTED"),new Error("Infrastructure operation failed (schema, HTTP 200)")]){
