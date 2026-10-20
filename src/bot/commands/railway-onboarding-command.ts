@@ -72,8 +72,8 @@ async function sendSetupPrompt(ctx:Context):Promise<void>{
  await ctx.reply("🚂 Railway setup\n\nSend a Railway Account or Workspace token. The bot needs this access to create and manage isolated Topic Workers.\n\nA Project token is not enough for dynamic Worker projects. Your token message will be deleted immediately after it is received.",{reply_markup:keyboard});
 }
 async function normalizeInitialSettings(settings:RailwayWorkerSettings):Promise<RailwayWorkerSettings>{
- if(settings.warmCapacity===INITIAL_BOOTSTRAP_WORKERS&&settings.workerCreationEnabled)return settings;
- return normalizeRailwayWorkerSettings(await requestInfrastructureSetup("settings.update",{patch:{workerCreationEnabled:true,warmCapacity:INITIAL_BOOTSTRAP_WORKERS}}));
+ if(settings.warmCapacity===INITIAL_BOOTSTRAP_WORKERS&&settings.workersPerProject===INITIAL_BOOTSTRAP_WORKERS&&settings.workerCreationEnabled)return settings;
+ return normalizeRailwayWorkerSettings(await requestInfrastructureSetup("settings.update",{patch:{workerCreationEnabled:true,warmCapacity:INITIAL_BOOTSTRAP_WORKERS,workersPerProject:INITIAL_BOOTSTRAP_WORKERS}}));
 }
 async function bootstrapProgress():Promise<RailwayBootstrapProgress>{
  const current=status(await requestInfrastructureSetup("status"));
