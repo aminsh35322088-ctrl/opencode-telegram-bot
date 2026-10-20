@@ -87,7 +87,10 @@ export class TopicNodeLifecycle {
         try{
           await this.waitReady(binding,'available');
           binding=await this.syncGlobal(binding);
-          await this.dependencies.infrastructure('reconcile',binding.nodeId,binding.generation);
+          const reconciled=await this.dependencies.infrastructure('reconcile',binding.nodeId,binding.generation);
+          // A reconciliation can trigger an immutable image deployment. Keep the slot
+          // unavailable to new Topics until its live runtime reports the pinned release.
+          await this.waitReady(binding,'available',reconciled);
         }catch(error){
           const current=(await this.dependencies.bindings.list()).find(item=>item.nodeId===binding.nodeId);
           if(current?.generation===binding.generation&&current.chatId===0&&current.threadId===0&&current.status==='available')await this.dependencies.bindings.update(binding.nodeId,binding.generation,{status:'pool-provisioning'});
