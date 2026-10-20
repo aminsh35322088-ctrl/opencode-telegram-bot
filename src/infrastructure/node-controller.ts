@@ -29,6 +29,7 @@ export class InfrastructureController {
  private queue:Promise<unknown>=Promise.resolve();
  private verifiedUnbound=new Map<string,number>();
  private clusterVerified=false;
+ private clusterCanaryFlight?:Promise<void>;
  constructor(private readonly options:Options){
   if(options.pools && options.controlUrl)this.configurePools(options.pools,options.controlUrl);
  }
@@ -138,6 +139,10 @@ export class InfrastructureController {
   const task=this.queue.then(run);this.queue=task.catch(()=>undefined);return task;
  }
  request(operation:string,nodeId:string,generation:number):Promise<ProvisionedNode>{
+  // Long-running cluster canaries are awaited by the initiating lifecycle call,
+  // but they must not hold the global infrastructure mutation queue while doing
+  // bounded network selftests. Canonical pool-provisioning status fences capacity.
+  let verification:Promise<void>|undefined;
   const task=this.queue.then(async()=>{
    if(!['provision','rebind','recycle','retire','reconcile','inspect'].includes(operation)||typeof nodeId!=='string'||nodeId.length>128||!Number.isSafeInteger(generation)||generation<1)throw Error('Infrastructure operation denied');
    const binding=await this.lookup(nodeId);if(!binding||binding.generation!==generation)throw Error('Infrastructure binding denied');
@@ -218,9 +223,14 @@ export class InfrastructureController {
      // that is permitted only on slot 1. If slot 1 is bound to a live Topic, do
      // not fail or block other free Workers; defer the cluster canary until slot 1
      // has been recycled and independently boundary-verified again.
-     if(current.every(item=>item.valid)&&current.some(item=>item.slotOne)){
-      await this.options.onClusterVerified?.();
-      this.clusterVerified=true;
+     if(current.every(item=>item.valid)&&current.some(item=>item.slotOne)&&!this.clusterCanaryFlight){
+      const flight=Promise.resolve().then(()=>this.options.onClusterVerified?.()).then(()=>{
+       this.clusterVerified=true;
+      }).finally(()=>{
+       if(this.clusterCanaryFlight===flight)this.clusterCanaryFlight=undefined;
+      });
+      this.clusterCanaryFlight=flight;
+      verification=flight;
      }
     }
     // Root's authenticated identity may be marked available after its canaries
@@ -234,7 +244,13 @@ export class InfrastructureController {
      await this.options.registry.persist(path.join(this.options.stateDirectory,'nodes.json'));
     }
    }
+   if(operation==='reconcile'&&this.clusterCanaryFlight)verification??=this.clusterCanaryFlight;
    return {nodeId,generation,projectId:binding.projectId??'',environmentId:'',endpoint:identity.endpoint,serviceId:binding.serviceId,volumeId:binding.volumeId,phase:'deploying' as const};
-  });this.queue=task.catch(()=>undefined);return task;
+  });this.queue=task.catch(()=>undefined);
+  return task.then(async result=>{
+   if(operation==='reconcile'&&this.clusterCanaryFlight)verification??=this.clusterCanaryFlight;
+   if(verification)await verification;
+   return result;
+  });
  }
 }
