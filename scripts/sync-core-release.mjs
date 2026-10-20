@@ -119,6 +119,7 @@ async function fetchReleaseAsset(tag, name, maxBytes) {
   const bytes = await readBoundedBytes(response, maxBytes, name);
   return {
     name,
+    size: bytes.length,
     sha256: digest(bytes, "sha256"),
     integrity: `sha512-${digest(bytes, "sha512", "base64")}`,
   };
@@ -279,9 +280,26 @@ async function syncRelease() {
   if (upstream.telegramCoreVersion !== latestVersion.version) throw new Error("Core source metadata/version mismatch");
 
   const image = await verifyWorkerImage(sourceCommit);
+  const releaseAssets = new Map(
+    (Array.isArray(latest.assets) ? latest.assets : []).map((asset) => [asset.name, asset]),
+  );
   const assets = {};
   for (const [key, name] of Object.entries(ASSET_NAMES)) {
-    assets[key] = await fetchReleaseAsset(latest.tag_name, name, MAX_ASSET_BYTES[key]);
+    const expected = releaseAssets.get(name);
+    if (
+      !expected ||
+      typeof expected.digest !== "string" ||
+      !/^sha256:[a-f0-9]{64}$/.test(expected.digest) ||
+      !Number.isSafeInteger(expected.size) ||
+      expected.size <= 0
+    ) {
+      throw new Error(`Core release API has no trustworthy SHA-256/size metadata for ${name}`);
+    }
+    const actual = await fetchReleaseAsset(latest.tag_name, name, MAX_ASSET_BYTES[key]);
+    if (actual.sha256 !== expected.digest.slice("sha256:".length) || actual.size !== expected.size) {
+      throw new Error(`Core release asset does not match GitHub's published digest and size: ${name}`);
+    }
+    assets[key] = actual;
   }
 
   const nextLock = {
@@ -351,7 +369,7 @@ async function syncRelease() {
     `- Verified release: ${latestVersion.tag}`,
     `- Core source: ${sourceCommit}`,
     `- Worker image: ${image}`,
-    "- Runtime, SDK, native runtime, and immutable Worker digest verified.",
+    "- Runtime, SDK, and native-runtime bytes match GitHub's published SHA-256 and size; npm SHA-512 integrity and immutable Worker digest verified.",
     "- Proceeding to the complete Bot test gate before updating main.",
   ]);
 }
