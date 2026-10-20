@@ -136,7 +136,7 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
         if (!stat.isFile() || stat.isSymbolicLink() || !isOwnUser(stat.uid) || !isRestrictiveMode(stat.mode) || stat.size > 1024 * 1024) throw new Error("Invalid journal");
         const journal = await this.read();
         const record = journal.nodes.find(node => node.nodeId === nodeId && node.generation === generation);
-        if (!record || !record.unbound || record.slot !== 1 || record.phase !== "deploying" || !record.serviceId || !record.volumeId) throw new Error("Invalid Worker ownership");
+        if (!record || !record.unbound || record.slot !== 1 || !["deploying","recycled"].includes(record.phase) || !record.serviceId || !record.volumeId) throw new Error("Invalid Worker ownership");
         const pool = this.options.pools.find(item => item.projectId === record.projectId && item.environmentId === record.environmentId)!;
         const fence = async () => {
           const binding = await this.binding(nodeId, generation);
