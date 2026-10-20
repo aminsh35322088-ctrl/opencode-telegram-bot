@@ -118,6 +118,13 @@ const ACTION_OVERRIDES: Record<string, FriendlyActionDisplay> = {
   "git.fetch": { icon: "📥", label: "Fetch Git Updates" },
   "git.reset": { icon: "⏪", label: "Reset Git State" },
 
+  "railway.workspace": { icon: "🚂", label: "Check Railway Workspace" },
+  "railway.projects": { icon: "📂", label: "List Railway Projects" },
+  "railway.project": { icon: "🔎", label: "Inspect Railway Project" },
+  "railway.service-instance": { icon: "🧩", label: "Inspect Railway Service" },
+  "railway.deployments": { icon: "🚀", label: "List Railway Deployments" },
+  "railway.logs": { icon: "📜", label: "Read Railway Deployment Logs" },
+
   "monitoring.tail": { icon: "📡", label: "Watch Live Logs" },
   "monitoring.grep": { icon: "🔎", label: "Search Monitoring Logs" },
   "monitoring.health": { icon: "💚", label: "Check Service Health" },
