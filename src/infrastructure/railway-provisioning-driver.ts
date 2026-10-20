@@ -387,9 +387,9 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
         if(["FAILED","CRASHED","REMOVED"].includes(status??""))throw new WorkerProvisioningError("provisioning_pending");
         if(record.sleepPolicyDeploymentId===latest.id&&["SUCCESS","ACTIVE"].includes(status??"")){
           record.sleepPolicyDeploymentPending=false;record.sleepPolicyDeploymentVerified=true;await this.save(journal);
-        }else{
-          return {...structuredClone(record),deploymentId:latest.id,deploymentStatus:status,sleepPolicyUpdated:true};
+          return {...structuredClone(record),deploymentId:latest.id,deploymentStatus:latest.status,sleepPolicyUpdated:true};
         }
+        return {...structuredClone(record),deploymentId:latest.id,deploymentStatus:status,sleepPolicyUpdated:true};
       }
       await this.mutate(`mutation WorkerConfig($environmentId:String!,$serviceId:String!,$input:ServiceInstanceUpdateInput!){serviceInstanceUpdate(environmentId:$environmentId,serviceId:$serviceId,input:$input)}`, {environmentId:pool.environmentId,serviceId:record.serviceId,input:{numReplicas:1,sleepApplication:desiredSleep,healthcheckPath:"/health",healthcheckTimeout:30,...(instances.length===0?{multiRegionConfig:{[pool.region]:{numReplicas:1}}}:{}),tracingEnabled:false,autoInstrumentationEnabled:false,restartPolicyType:"ON_FAILURE",restartPolicyMaxRetries:3}});
       record.sleepApplication=desiredSleep;
@@ -469,13 +469,25 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       record.phase = "deploying"; await this.save(journal);
       inventory = await this.inventory(pool);
       const previousDeploymentId=record.deploymentId;
-      const latestDeployment=inventory.environment.serviceInstances.edges.find(entry => entry.node.serviceId === record!.serviceId)?.node.latestDeployment;
-      if(latestDeployment?.id)record.deploymentId=latestDeployment.id;
+      let latestDeployment=inventory.environment.serviceInstances.edges.find(entry => entry.node.serviceId === record!.serviceId)?.node.latestDeployment;
       if(sleepPolicyChanged){
         record.sleepPolicyDeploymentVerified=false;
         record.sleepPolicyDeploymentPending=true;
         record.sleepPolicyDeploymentId=latestDeployment?.id&&latestDeployment.id!==previousDeploymentId?latestDeployment.id:undefined;
+        // A successful settings mutation may precede creation of the deployment
+        // that applies Serverless. Never accept the previous deployment as proof.
+        for(let attempt=0;attempt<5&&(!latestDeployment?.id||latestDeployment.id===previousDeploymentId);attempt++){
+          await (this.options.wait??(milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds))))(Math.min(500*2**attempt,8_000));
+          inventory=await this.inventory(pool);
+          latestDeployment=inventory.environment.serviceInstances.edges.find(entry=>entry.node.serviceId===record!.serviceId)?.node.latestDeployment;
+        }
+        if(!latestDeployment?.id||latestDeployment.id===previousDeploymentId){
+          await this.save(journal);
+          throw new WorkerProvisioningError("provisioning_pending");
+        }
+        record.sleepPolicyDeploymentId=latestDeployment.id;
       }
+      if(latestDeployment?.id)record.deploymentId=latestDeployment.id;
       await this.save(journal);
       await this.binding(nodeId,generation);
       return {...structuredClone(record),deploymentStatus:latestDeployment?.status,sleepPolicyUpdated:sleepPolicyChanged};
