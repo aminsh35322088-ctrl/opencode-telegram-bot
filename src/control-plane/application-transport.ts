@@ -12,10 +12,15 @@ export async function requestInfrastructure(operation:"provision"|"rebind"|"recy
  return await callInfrastructure("infrastructure-request",{operation,nodeId,generation},timeout) as ProvisionedNode;
 }
 
-export type InfrastructureSetupOperation="status"|"credential.begin"|"workspace.select"|"settings.get"|"settings.update"|"railway.tool";
+export type InfrastructureSetupOperation="status"|"credential.begin"|"workspace.select"|"settings.get"|"settings.update";
 export async function requestInfrastructureSetup(operation:InfrastructureSetupOperation,payload:Record<string,unknown>={}):Promise<unknown>{
  if(!callInfrastructure)throw new Error("Infrastructure channel unavailable");
  return await callInfrastructure("infrastructure-configure",{operation,payload},30_000);
+}
+
+export async function requestRailwayAgentTool(payload:Record<string,unknown>):Promise<unknown>{
+ if(!callInfrastructure)throw new Error("Infrastructure channel unavailable");
+ return await callInfrastructure("railway-agent-tool",{payload},30_000);
 }
 
 export async function requestNodeLifecycle(binding:Readonly<NodeBinding>,operation:"health"|"status"|"sync-global"|"session.create"|"session.get",payload:unknown={}):Promise<{ok:boolean;result:unknown}>{
