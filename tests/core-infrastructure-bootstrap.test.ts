@@ -37,6 +37,19 @@ test("safe infrastructure failure categories never reflect server details", asyn
  }
 });
 
+test("workspace project quota and service count rejections are classified without exposing provider text",async()=>{
+ for(const message of [
+  "Workspace reached the maximum number of projects allowed by the current plan. secret-value",
+  "Too many services in this project; project creation limit reached. secret-value",
+  "Resource provision limit exceeded. secret-value",
+ ]){
+  const client=createInfrastructureClient({RAILWAY_API_TOKEN:"synthetic-account"},async()=>new Response(JSON.stringify({errors:[{message}]}),{status:200}));
+  await assert.rejects(client.request("mutation WorkerPoolCreate($input:ProjectCreateInput!){projectCreate(input:$input){id name}}"),error=>
+   error instanceof InfrastructureRequestError&&error.category==="resource_limit"&&error.status===200&&error.message==="Railway infrastructure request failed"&&!JSON.stringify(error).includes("secret-value"));
+  client.dispose();
+ }
+});
+
 test("infrastructure credential can be installed after startup without exposing it", async () => {
   let authorization = "";
   const client = createInfrastructureClient({ KEEP: "yes" }, async (_url, init) => {
