@@ -37,7 +37,8 @@ export async function resolveWorkerPools(options:Options):Promise<WorkerPool[]>{
 interface CreateWorkerPoolOptions{request<T>(document:string,variables:Record<string,unknown>):Promise<T>;workspaceId:string;region:string;excludedProjectIds?:ReadonlySet<string>}
 /** Create exactly one deterministic overflow project after existing pools are exhausted. */
 export async function createWorkerPool(options:CreateWorkerPoolOptions):Promise<WorkerPool>{
- const inventory=await options.request<{projects:Connection<{id:string;name:string;deletedAt?:string|null}>}>('query WorkerPoolExpansionInventory($workspaceId:String!){projects(workspaceId:$workspaceId,first:100){pageInfo{hasNextPage} edges{node{id name deletedAt}}}}',{workspaceId:options.workspaceId});
+ const loadProjectInventory=async()=>options.request<{projects:Connection<{id:string;name:string;deletedAt?:string|null}>}>('query WorkerPoolExpansionInventory($workspaceId:String!){projects(workspaceId:$workspaceId,first:100){pageInfo{hasNextPage} edges{node{id name deletedAt}}}}',{workspaceId:options.workspaceId});
+ const inventory=await loadProjectInventory();
  if(inventory.projects.pageInfo.hasNextPage)throw Error('Incomplete Worker project inventory');
  inventory.projects.edges=inventory.projects.edges.filter(edge=>!edge.node.deletedAt);
  const names=new Set(inventory.projects.edges.map(edge=>edge.node.name));
@@ -49,9 +50,21 @@ export async function createWorkerPool(options:CreateWorkerPoolOptions):Promise<
   let index=1;name='';
   do{name=`opencode-topic-${String(index++).padStart(2,'0')}`;}while(names.has(name)&&index<=1000);
   if(!name||names.has(name))throw Error('Worker project namespace exhausted');
-  const created=(await options.request<{projectCreate:{id:string;name:string}}>('mutation WorkerPoolCreate($input:ProjectCreateInput!){projectCreate(input:$input){id name}}',{input:{name,workspaceId:options.workspaceId}})).projectCreate;
-  if(!created?.id||created.name!==name)throw Error('Worker project creation mismatch');
-  projectId=created.id;
+  try{
+   const created=(await options.request<{projectCreate:{id:string;name:string}}>('mutation WorkerPoolCreate($input:ProjectCreateInput!){projectCreate(input:$input){id name}}',{input:{name,workspaceId:options.workspaceId}})).projectCreate;
+   if(!created?.id||created.name!==name)throw Error('Worker project creation mismatch');
+   projectId=created.id;
+  }catch(error){
+   // Railway can commit projectCreate but lose/reject its response. Re-read the
+   // workspace before another create so a retry can adopt exactly one project
+   // with the deterministic managed name, without ever adopting the Control project.
+   let after:Awaited<ReturnType<typeof loadProjectInventory>>;
+   try{after=await loadProjectInventory();}catch{throw error;}
+   if(after.projects.pageInfo.hasNextPage)throw error;
+   const matches=after.projects.edges.map(edge=>edge.node).filter(project=>!project.deletedAt&&project.name===name&&!excluded.has(project.id));
+   if(matches.length!==1)throw error;
+   projectId=matches[0]!.id;
+  }
  }
  const project=(await options.request<{project:{id:string;name:string;environments:Connection<{id:string;name:string}>}}>('query WorkerPoolCreated($projectId:String!){project(id:$projectId){id name environments(first:100){pageInfo{hasNextPage} edges{node{id name}}}}}',{projectId})).project;
  if(project.id!==projectId||project.name!==name||project.environments.pageInfo.hasNextPage)throw Error('Worker project verification failed');

@@ -6,7 +6,7 @@ import { syncDirectory } from "../utils/sync-directory.js";
 import { isOwnUser, isRestrictiveMode } from "../utils/file-ownership.js";
 import type { NodeBinding } from "../control-plane/node-bindings.js";
 
-import {WorkerProvisioningError,type WorkerProvisioningDriver,type WorkerPool,type ProvisionedNode} from "./worker-provisioning-driver.js";
+import {nextCapacityAfterProjectQuota,WorkerProvisioningError,type WorkerProvisioningDriver,type WorkerPool,type ProvisionedNode} from "./worker-provisioning-driver.js";
 import {InfrastructureRequestError} from "./railway-client.js";
 export type {WorkerPool,ProvisionedNode} from "./worker-provisioning-driver.js";
 interface Journal { version: 1; nodes: ProvisionedNode[] }
@@ -210,7 +210,43 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
         expanded=true;
         const known=new Set(this.options.pools.map(candidate=>candidate.projectId));
         for(const projectId of excluded)known.add(projectId);
-        const pool=await this.options.createPool(known);
+        let pool:WorkerPool;
+        try{
+          pool=await this.options.createPool(known);
+        }catch(error){
+          if(!(error instanceof InfrastructureRequestError)||error.category!=="resource_limit")throw error;
+          // Some Railway plans cannot create another project in the selected
+          // workspace. Only on an explicit quota response, temporarily raise an
+          // already-existing managed Worker project's *software* capacity by one.
+          // Railway remains the final resource/quota authority; any real service or
+          // volume limit still fails closed and the slot remains fenced.
+          lastQuotaError=error;
+          const journal=await this.read();
+          const candidates:Array<{pool:WorkerPool;used:number;actual:number;baseline:number;effective:number}>=[];
+          try{
+            for(const candidate of this.options.pools){
+              if(excluded.has(candidate.projectId)||candidate.capacity===undefined)continue;
+              const inventory=await this.inventory(candidate);
+              const actual=inventory.project.services.edges.filter(entry=>entry.node.name.startsWith("topic-node-")).length;
+              const used=journal.nodes.filter(item=>item.projectId===candidate.projectId&&item.phase!=="retired").length;
+              const baseline=Math.max(used,actual);
+              const effective=nextCapacityAfterProjectQuota(candidate.capacity,used,actual);
+              if(effective!==undefined)candidates.push({pool:candidate,used,actual,baseline,effective});
+            }
+          }catch{
+            // If ownership/inventory cannot be verified, never widen an existing pool.
+            throw error;
+          }
+          candidates.sort((left,right)=>left.baseline-right.baseline||left.actual-right.actual||left.pool.projectId.localeCompare(right.pool.projectId));
+          const fallback=candidates[0];
+          if(!fallback)throw error;
+          const configured=fallback.pool.capacity!;
+          fallback.pool.capacity=fallback.effective;
+          process.stdout.write(
+            `[InfrastructureBoundary] worker_pool_capacity_fallback project=${fallback.pool.projectId} configured=${configured} effective=${fallback.effective} liveServices=${fallback.actual} ownedRecords=${fallback.used} reason=project_expansion_resource_limit\n`,
+          );
+          return;
+        }
         if(!pool?.projectId||!pool.environmentId||!pool.region||excluded.has(pool.projectId)||this.options.pools.some(candidate=>candidate.projectId===pool.projectId))throw new WorkerProvisioningError("reconciliation_required");
         this.options.pools.push(structuredClone(pool));
       };

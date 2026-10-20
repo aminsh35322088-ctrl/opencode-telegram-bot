@@ -10,7 +10,9 @@ export class InfrastructureRequestError extends Error {
 function rejectionCategory(errors: unknown[] | undefined): "schema" | "resource_limit" | "project_unavailable" | "rejected" {
   const messages = (errors ?? []).flatMap(error => typeof error === "object" && error !== null && "message" in error && typeof error.message === "string" ? [error.message] : []);
   if (messages.some(message => /Cannot query field|Unknown argument|Unknown type|is not defined by type|must have a selection|Variable .* got invalid value|does not exist in .*enum/i.test(message))) return "schema";
-  if (messages.some(message => /resource provision limit|limit exceeded|upgrade to provision/i.test(message))) return "resource_limit";
+  if (messages.some(message =>
+    /resource provision limit|limit exceeded|upgrade to provision|maximum number of (?:projects|services|resources)|too many (?:projects|services|resources)|(?:project|service|resource) (?:creation )?(?:limit|quota)|(?:project|service|resource).{0,80}(?:limit reached|quota exceeded|not allowed on (?:the )?(?:current )?plan)|(?:limit|quota).{0,80}(?:projects|services|resources)/i.test(message)
+  )) return "resource_limit";
   if (messages.some(message => /project (?:not found|does not exist|is unavailable)|(?:not authorized|no access|access denied).*project/i.test(message))) return "project_unavailable";
   return "rejected";
 }

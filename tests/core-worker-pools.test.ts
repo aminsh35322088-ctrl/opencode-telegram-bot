@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {createWorkerPool,resolveWorkerPools} from '../src/infrastructure/worker-pools.js';
+import {nextCapacityAfterProjectQuota} from '../src/infrastructure/worker-provisioning-driver.js';
 const project=(id:string,environment:string)=>({id,name:id,environments:{edges:[{node:{id:environment,name:environment}}],pageInfo:{hasNextPage:false}}});
 const options={workspaceId:'workspace',controlProjectId:'control',controlEnvironmentId:'production',workerProjectId:'existing',workerEnvironmentId:'validation',region:'eu'};
 test('root setup verifies existing Worker pool without ever using the Control project as a pool',async()=>{
@@ -72,3 +73,51 @@ test('pool expansion adopts an untracked managed project after an ambiguous crea
  const pool=await createWorkerPool({workspaceId:'workspace',region:'eu',excludedProjectIds:new Set(['control']),request});
  assert.deepEqual(pool,{projectId:'recovered',environmentId:'production-recovered',region:'eu'});assert.equal(creates,0);
 });
+
+test('project-creation quota fallback raises only an exhausted existing pool by one slot',()=>{
+ assert.equal(nextCapacityAfterProjectQuota(3,4,4),5);
+ assert.equal(nextCapacityAfterProjectQuota(5,5,4),6);
+ assert.equal(nextCapacityAfterProjectQuota(5,4,4),undefined,'an unused configured slot must not be widened');
+ assert.equal(nextCapacityAfterProjectQuota(undefined,4,4),undefined,'unlimited pools need no override');
+ assert.throws(()=>nextCapacityAfterProjectQuota(3,-1,4),/Invalid Worker pool inventory/);
+ assert.throws(()=>nextCapacityAfterProjectQuota(Number.NaN,4,4),/Invalid configured Worker pool capacity/);
+});
+
+test('ambiguous projectCreate response re-reads inventory and adopts exactly one new managed project',async()=>{
+ let inventoryCalls=0,createCalls=0;
+ const request=async<T>(document:string,variables:Record<string,unknown>)=>{
+  if(document.startsWith('query WorkerPoolExpansionInventory')){
+   inventoryCalls++;
+   const edges=inventoryCalls===1
+    ? [{node:{id:'control',name:'opencode-telegram-bot'}}]
+    : [{node:{id:'control',name:'opencode-telegram-bot'}},{node:{id:'recovered',name:'opencode-topic-01'}}];
+   return {projects:{pageInfo:{hasNextPage:false},edges}} as T;
+  }
+  if(document.startsWith('mutation WorkerPoolCreate')){
+   createCalls++;assert.deepEqual(variables,{input:{name:'opencode-topic-01',workspaceId:'workspace'}});
+   throw new Error('ambiguous response after project creation');
+  }
+  assert.ok(document.startsWith('query WorkerPoolCreated'));
+  assert.deepEqual(variables,{projectId:'recovered'});
+  return {project:{id:'recovered',name:'opencode-topic-01',environments:{pageInfo:{hasNextPage:false},edges:[{node:{id:'production',name:'production'}}]}}} as T;
+ };
+ const pool=await createWorkerPool({workspaceId:'workspace',region:'eu',request});
+ assert.deepEqual(pool,{projectId:'recovered',environmentId:'production',region:'eu'});
+ assert.equal(createCalls,1);
+ assert.equal(inventoryCalls,2);
+});
+
+test('project-create quota rejection is preserved when re-check finds no created project',async()=>{
+ let inventoryCalls=0;
+ const failure=new Error('project creation denied');
+ const request=async<T>(document:string)=>{
+  if(document.startsWith('query WorkerPoolExpansionInventory')){
+   inventoryCalls++;
+   return {projects:{pageInfo:{hasNextPage:false},edges:[{node:{id:'control',name:'opencode-telegram-bot'}}]}} as T;
+  }
+  throw failure;
+ };
+ await assert.rejects(createWorkerPool({workspaceId:'workspace',region:'eu',request}),error=>error===failure);
+ assert.equal(inventoryCalls,2,'ambiguous mutation failure must be reconciled before any retry');
+});
+
