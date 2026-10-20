@@ -194,9 +194,9 @@ test('New Chat waits for the verified image while the previous healthy Worker re
 
 test('startup release reconciliation rolls a bound Worker only after exact session reports idle',async()=>{
   const f=await fixture('idle-bound-rollout');
-  const [slot]=await f.bindings.ensurePoolSlots(1);
-  await f.bindings.update(slot!.nodeId,slot!.generation,{status:'ready',chatId:-100,threadId:2,sessionId:'session',projectId:'workers',serviceId:'service-'+slot!.nodeId,volumeId:'volume-'+slot!.nodeId,endpoint:'https://worker.up.railway.app',currentRevision:7});
-  await f.lifecycle.bootstrapPool(undefined,false,true);
+  const ready=await f.lifecycle.ensureReady(-100,2,'/logical/topic');
+  const slot=ready.binding;
+  await f.lifecycle.bootstrapPool(undefined,false,true,true);
   const binding=(await f.bindings.list())[0]!;
   assert.ok(f.calls.includes('status'));
   assert.ok(f.calls.filter(call=>call==='reconcile').length>=2);
@@ -209,9 +209,9 @@ test('startup release reconciliation rolls a bound Worker only after exact sessi
 });
 test('startup release reconciliation leaves a busy bound Worker untouched',async()=>{
   const f=await fixture('busy-bound-rollout');
-  const [slot]=await f.bindings.ensurePoolSlots(1);
-  await f.bindings.update(slot!.nodeId,slot!.generation,{status:'ready',chatId:-100,threadId:2,sessionId:'session',projectId:'workers',serviceId:'service-'+slot!.nodeId,volumeId:'volume-'+slot!.nodeId,endpoint:'https://worker.up.railway.app',currentRevision:7});
-  await f.lifecycle.bootstrapPool(undefined,false,true);
+  const ready=await f.lifecycle.ensureReady(-100,2,'/logical/topic');
+  const slot=ready.binding;
+  await f.lifecycle.bootstrapPool(undefined,false,true,true);
   const binding=(await f.bindings.list())[0]!;
   assert.ok(f.calls.includes('status'));
   assert.equal(f.calls.includes('reconcile'),false);
