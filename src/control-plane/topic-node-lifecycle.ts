@@ -96,7 +96,7 @@ export class TopicNodeLifecycle {
       // Recovery is deliberately limited to already-existing complete resources.
       // Never provision legacy overflow slots. Keep their persistent volumes intact;
       // an existing idle overflow Worker may still be reconciled into sleep mode below.
-      if(binding.slot!>4&&['pool-reserved','pool-provisioning'].includes(binding.status)&&(!binding.serviceId||!binding.volumeId||!binding.endpoint))continue;
+      if(binding.slot!>4&&['pool-reserved','pool-provisioning'].includes(binding.status))continue;
       if(repairOnly&&['pool-reserved','pool-provisioning'].includes(binding.status)&&(!binding.serviceId||!binding.volumeId||!binding.endpoint))continue;
       if((warmCapacity!==undefined&&binding.slot!<=4&&binding.slot!>warmCapacity&&['pool-reserved','pool-provisioning','retiring'].includes(binding.status))||(binding.slot!>4&&binding.status==='retiring')){
         if(binding.status!=='retiring')binding=await this.dependencies.bindings.fence(binding.nodeId,binding.generation);
