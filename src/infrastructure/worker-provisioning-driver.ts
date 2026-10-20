@@ -23,7 +23,7 @@ export function nextCapacityAfterProjectQuota(
 }
 export interface ProvisionedNode {
   slot?:number;clusterId?:string;unbound?:boolean;
-  image?: string; runtimeCommit?:string; runtimeVersion?:string; imageUpdated?:boolean; volumeCreatePending?: boolean; everDeployed?:boolean;
+  image?: string; configuredImage?:string; runtimeCommit?:string; runtimeVersion?:string; imageUpdated?:boolean; volumeCreatePending?: boolean; everDeployed?:boolean;
   workerVariablesContract?: "identity-v1";
   nodeId: string; generation: number; projectId: string; environmentId: string;
   serviceId?: string; volumeId?: string; domainId?: string; endpoint?: string; deploymentId?: string;
