@@ -20,7 +20,7 @@ export function nextCapacityAfterProjectQuota(
   const baseline = Math.max(journalWorkers, liveServices);
   // Railway's free-plan Worker fleet is an absolute four-service ceiling.
   // Project-quota recovery may widen a smaller pool, but can never allocate slot 5.
-  if (baseline >= 4 || configuredCapacity >= 4) return undefined;
+  if (baseline >= 4) return undefined;
   if (baseline < configuredCapacity) return undefined;
   return Math.min(4, baseline + 1);
 }
