@@ -177,20 +177,26 @@ export class InfrastructureController {
    if(binding.status==='ready' && (!binding.sessionId||binding.sessionId!==identity.binding.sessionId))throw Error('Infrastructure session mismatch');
    this.options.registry.install({...identity,binding:{...identity.binding,status:binding.status}});await this.options.registry.persist(path.join(this.options.stateDirectory,'nodes.json'));
    if(['available','pool-provisioning'].includes(binding.status)&&binding.chatId===0&&binding.threadId===0&&this.options.probeUnbound){
-    try{await this.options.probeUnbound(nodeId,generation);}catch(error){
-     this.verifiedUnbound.delete(nodeId);
-     this.options.registry.install({...identity,binding:{...identity.binding,status:'provisioning'}});
-     await this.options.registry.persist(path.join(this.options.stateDirectory,'nodes.json'));
-     throw error;
+    if(this.verifiedUnbound.get(nodeId)!==generation){
+     try{await this.options.probeUnbound(nodeId,generation);}catch(error){
+      this.verifiedUnbound.delete(nodeId);
+      this.options.registry.install({...identity,binding:{...identity.binding,status:'provisioning'}});
+      await this.options.registry.persist(path.join(this.options.stateDirectory,'nodes.json'));
+      throw error;
+     }
+     process.stdout.write("[InfrastructureBoundary] worker_boundary_verified node="+nodeId+" generation="+generation+" health=true replayRejected=true foreignTopicRejected=true staleGenerationRejected=true\n");
+     this.verifiedUnbound.set(nodeId,generation);
     }
-    process.stdout.write(`[InfrastructureBoundary] worker_boundary_verified node=${nodeId} generation=${generation} health=true replayRejected=true foreignTopicRejected=true staleGenerationRejected=true\n`);
-    this.verifiedUnbound.set(nodeId,generation);
-    if(!this.clusterVerified&&this.verifiedUnbound.size>0&&this.options.registry.metadata().filter(b=>b.chatId===0&&b.threadId===0&&b.status!=='retired').every(b=>this.verifiedUnbound.get(b.nodeId)===b.generation)&&this.options.onClusterVerified){
+    // A newly verified runtime remains fenced through its lifecycle proof.
+    // The next reconcile after the canonical slot becomes available will revisit
+    // this gate without re-running the network canary and can activate the
+    // cluster-level runtime selftest only after every free slot is available.
+    if(!this.clusterVerified&&this.verifiedUnbound.size>0&&this.options.registry.metadata().filter(b=>b.chatId===0&&b.threadId===0&&b.status!=='retired').every(b=>this.verifiedUnbound.get(b.nodeId)===b.generation)){
      const current=await Promise.all([...this.verifiedUnbound].map(async([id,verifiedGeneration])=>{
       const canonical=await this.lookup(id);const registered=await this.options.registry.resolve(id);
       return canonical?.generation===verifiedGeneration&&canonical.status==='available'&&canonical.chatId===0&&canonical.threadId===0&&registered?.binding.generation===verifiedGeneration&&registered.binding.status==='available';
      }));
-     if(current.every(Boolean)){await this.options.onClusterVerified();this.clusterVerified=true;}
+     if(current.every(Boolean)){await this.options.onClusterVerified?.();this.clusterVerified=true;}
     }
    }
    return {nodeId,generation,projectId:binding.projectId??'',environmentId:'',endpoint:identity.endpoint,serviceId:binding.serviceId,volumeId:binding.volumeId,phase:'deploying' as const};
