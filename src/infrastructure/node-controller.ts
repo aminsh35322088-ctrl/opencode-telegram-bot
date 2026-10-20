@@ -230,6 +230,10 @@ export class InfrastructureController {
        if(this.clusterCanaryFlight===flight)this.clusterCanaryFlight=undefined;
       });
       this.clusterCanaryFlight=flight;
+      // A later failure in the enclosing infrastructure reconciliation is already
+      // returned to its caller; also mark the shared flight as observed so a
+      // failed queue task cannot leave an unhandled rejection behind.
+      void flight.catch(()=>undefined);
       verification=flight;
      }
     }
