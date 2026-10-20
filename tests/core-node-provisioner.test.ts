@@ -8,7 +8,7 @@ import type { NodeBinding } from "../src/control-plane/node-bindings.js";
 const edges = <T>(nodes:T[]) => ({edges:nodes.map(node=>({node})),pageInfo:{hasNextPage:false}});
 async function fixture() {
   const bindings = new Map<string,NodeBinding>();
-  const services: Array<{id:string;name:string;projectId:string}> = [];
+  const services: Array<{id:string;name:string;projectId:string;sourceImage?:string}> = [];
   const volumes: Array<{id:string;projectId:string;serviceId:string;environmentId:string}> = [];
   const domains = new Map<string,{id:string;domain:string}>();
   const calls: Array<{document:string;variables:Record<string,unknown>}> = [];
@@ -20,7 +20,7 @@ async function fixture() {
       calls.push({document,variables}); const input=variables.input as Record<string,unknown>;
       let result: unknown;
       if(document.includes('query WorkerInventory')) {
-        result={project:{id:variables.projectId,services:edges(services.filter(s=>s.projectId===variables.projectId)),volumes:edges(volumes.filter(v=>v.projectId===variables.projectId).map(v=>({id:v.id,volumeInstances:edges(pendingReads-->0?[]:[{volumeId:v.id,environmentId:v.environmentId,serviceId:v.serviceId,sizeMB:500,mountPath:'/data',isPendingDeletion:false}])})))},environment:{id:variables.environmentId,projectId:variables.projectId,serviceInstances:edges(services.filter(s=>s.projectId===variables.projectId).map(s=>({serviceId:s.id,domains:{serviceDomains:domains.has(s.id)?[domains.get(s.id)]:[]},latestDeployment:{id:'deployment-'+s.id}})))}};
+        result={project:{id:variables.projectId,services:edges(services.filter(s=>s.projectId===variables.projectId)),volumes:edges(volumes.filter(v=>v.projectId===variables.projectId).map(v=>({id:v.id,volumeInstances:edges(pendingReads-->0?[]:[{volumeId:v.id,environmentId:v.environmentId,serviceId:v.serviceId,sizeMB:500,mountPath:'/data',isPendingDeletion:false}])})))},environment:{id:variables.environmentId,projectId:variables.projectId,serviceInstances:edges(services.filter(s=>s.projectId===variables.projectId).map(s=>({serviceId:s.id,source:{image:s.sourceImage??null,repo:null,branch:null},domains:{serviceDomains:domains.has(s.id)?[domains.get(s.id)]:[]},latestDeployment:{id:'deployment-'+s.id}})))}};
       } else if(document.includes('mutation WorkerService')) {
         const service={id:'s'+services.length,name:input.name as string,projectId:input.projectId as string}; services.push(service);
         if(ambiguous){ambiguous=false;throw new Error('ambiguous network result');} result={serviceCreate:{id:service.id}};
@@ -42,13 +42,14 @@ async function fixture() {
       } else if(document.includes('mutation WorkerDomain')) {
         const domain={id:'d'+domains.size,domain:'worker'+domains.size+'.up.railway.app'};domains.set(input.serviceId as string,domain);result={serviceDomainCreate:domain};
       } else if(document.includes('mutation WorkerLimits')) result={serviceInstanceLimitsUpdate:!rejected};
+      else if(document.includes('mutation WorkerSource')) {const patch=variables.patch as {services:Record<string,{source:{image?:string}}>};const serviceId=Object.keys(patch.services)[0]!;const service=services.find(s=>s.id===serviceId);if(!service)throw new Error('Worker source owner missing');service.sourceImage=patch.services[serviceId]!.source.image;result={environmentPatchCommit:'workflow'};}
       else if((document.includes('mutation RetireService')||document.includes('mutation WorkerRolloverService'))) {services.splice(services.findIndex(s=>s.id===variables.id),1);result={serviceDelete:true};}
       else if((document.includes('mutation RetireVolume')||document.includes('mutation WorkerRolloverVolume'))) {volumes.splice(volumes.findIndex(v=>v.id===variables.volumeId),1);result={volumeDelete:true};}
       else result={mutation:true};
       return result as T;
     }};
   const add=(id:string)=>bindings.set(id,{nodeId:id,generation:1,chatId:-100,threadId:bindings.size+2,currentRevision:0,status:'reserved',createdAt:'now',updatedAt:'now'});
-  return {options,controller:new NodeProvisioner(options),add,bindings,services,volumes,calls,filename,setAmbiguous:()=>{ambiguous=true;},setRejected:()=>{rejected=true;},setAttachPending:(reads:number)=>{attachPending=reads;},waits};
+  return {options,controller:new NodeProvisioner(options),add,bindings,services,volumes,calls,filename,setAmbiguous:()=>{ambiguous=true;},setRejected:()=>{rejected=true;},setAttachPending:(reads:number)=>{attachPending=reads;},setSourceImage:(serviceId:string,image:string)=>{const service=services.find(s=>s.id===serviceId);if(!service)throw new Error('Worker source owner missing');service.sourceImage=image;},waits};
 }
 test('configured project limits roll over and never return/persist secrets',async()=>{
   const f=await fixture();for(const id of ['one','two','three','four','five']) f.add(id);
@@ -172,6 +173,27 @@ test('unbound managed Worker image drift redeploys in place without replacing se
  const persisted=JSON.parse(await readFile(f.filename,'utf8')).nodes[0];assert.equal(persisted.image,nextImage);assert.equal(persisted.runtimeVersion,f.options.workerVersion);
 });
 
+test('authoritative live Railway image drift is repaired even when the journal pin already matches',async()=>{
+ const f=await fixture();f.add('upgrade-live-source');
+ const binding=f.bindings.get('upgrade-live-source')!;
+ Object.assign(binding,{chatId:0,threadId:0,slot:1,status:'pool-provisioning'});
+ const initial=await f.controller.provision('upgrade-live-source',1);
+ assert.equal(initial.image,f.options.workerImage);
+ const originalSourceCount=f.calls.filter(call=>call.document.includes('mutation WorkerSource')).length;
+ const staleImage='ghcr.io/aminsh35322088-ctrl/opencode-telegram-worker@sha256:'+'c'.repeat(64);
+ f.setSourceImage(initial.serviceId!,staleImage);
+ const restartedDriver=new NodeProvisioner(f.options);
+ const reconciled=await restartedDriver.provision('upgrade-live-source',1);
+ assert.equal(reconciled.image,f.options.workerImage,'journal pin remains the desired image');
+ assert.equal(f.services.length,1,'do not replace the persistent Worker service');
+ assert.equal(f.volumes.length,1,'do not replace the persistent /data volume');
+ assert.equal(f.calls.filter(call=>call.document.includes('mutation WorkerSource')).length,originalSourceCount+1,
+   'Railway source must be patched despite a journal pin that already claims the desired image');
+ assert.equal(f.services[0]!.sourceImage,f.options.workerImage);
+ const inspected=await restartedDriver.inspectWorker('upgrade-live-source',1);
+ assert.equal(inspected.configuredImage,f.options.workerImage);
+});
+
 test('concurrent duplicate provisioning and restart create only one owned service and volume',async()=>{
  const f=await fixture();f.add('duplicate');
  const results=await Promise.all(Array.from({length:6},()=>f.controller.provision('duplicate',1)));
@@ -267,7 +289,7 @@ test('legacy image-less free Worker handoff preserves its source and storage wit
 test('driver inventory and inspection expose owned workers and actual deployment receipts without secrets',async()=>{
  const f=await fixture();f.add('inspect');const node=await f.controller.provision('inspect',1);
  assert.deepEqual((await f.controller.listWorkers()).map(n=>n.nodeId),['inspect']);
- const inspected=await f.controller.inspectWorker('inspect',1);assert.equal(inspected.serviceId,node.serviceId);assert.equal(inspected.deploymentId,'deployment-'+node.serviceId);
+ const inspected=await f.controller.inspectWorker('inspect',1);assert.equal(inspected.serviceId,node.serviceId);assert.equal(inspected.deploymentId,'deployment-'+node.serviceId);assert.equal(inspected.configuredImage,f.options.workerImage);
  assert.equal(JSON.stringify(inspected).includes('NODE_SHARED_SECRET'),false);
  await assert.rejects(f.controller.inspectWorker('inspect',2),/authorization/);
  const capacities=await f.controller.inspectCapacity();assert.deepEqual(capacities.map(p=>p.available),[1,2]);
