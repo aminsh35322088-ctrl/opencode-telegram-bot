@@ -5,12 +5,13 @@ import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {captureNodeRegistry} from '../src/infrastructure/node-registry.js';
 import {NodeProtocol,type NodeEnvelope} from '../src/control-plane/node-protocol.js';
+import type {NodeBinding} from '../src/control-plane/node-bindings.js';
 import {InfrastructureNodeTransport,WorkerBoundaryVerificationError} from '../src/infrastructure/node-transport.js';
 
-async function fixture(acceptReplay=false, interruption?:{call:number;status:number}){
+async function fixture(acceptReplay=false, interruption?:{call:number;status:number}, binding:NodeBinding={nodeId:'slot',generation:1,chatId:0,threadId:0,status:'available'}, payload:Record<string,unknown>={ok:true,result:{ready:true}}){
  const dir=await mkdtemp(path.join(tmpdir(),'node-proof-'));
  const registry=captureNodeRegistry({});
- const identity={binding:{nodeId:'slot',generation:1,chatId:0,threadId:0,status:'available'},endpoint:'https://owned.up.railway.app',secret:'s'.repeat(64)};
+ const identity={binding,endpoint:'https://owned.up.railway.app',secret:'s'.repeat(64)};
  registry.install(identity);
  const server=new NodeProtocol(path.join(dir,'server.json'));
  let calls=0;
@@ -20,9 +21,9 @@ async function fixture(acceptReplay=false, interruption?:{call:number;status:num
   const body=String(options.body);
   const signature=(options.headers as Record<string,string>)['x-node-signature'];
   let request:NodeEnvelope;
-  try{request=await server.verify(body,signature,{nodeId:'slot',generation:1,chatId:0,threadId:0},identity.secret);}
+  try{request=await server.verify(body,signature,{nodeId:binding.nodeId,generation:binding.generation,chatId:binding.chatId,threadId:binding.threadId},identity.secret);}
   catch(error){if(!acceptReplay||!(error instanceof Error)||!error.message.includes('replay'))return new Response('{}',{status:401});request=JSON.parse(body);}
-  const signed=server.sign({...request,nonce:'response_nonce_'+String(calls).padStart(20,'0'),payload:{ok:true,result:{ready:true}}},identity.secret);
+  const signed=server.sign({...request,nonce:'response_nonce_'+String(calls).padStart(20,'0'),payload},identity.secret);
   return new Response(signed.body,{headers:{'x-node-signature':signed.signature}});
  }) as typeof fetch;
  const transport=new InfrastructureNodeTransport(registry,new NodeProtocol(path.join(dir,'client.json')),async()=>{},fetcher);
@@ -54,4 +55,16 @@ test('startup proxy and network failures retry without accepting incomplete boun
   await assert.rejects(f.transport.probeUnboundBoundary('slot',1),error=>error instanceof WorkerProvisioningError&&error.category==='provisioning_pending');
   assert.deepEqual(await f.transport.probeUnboundBoundary('slot',1),{health:true,replayRejected:true,foreignTopicRejected:true,staleGenerationRejected:true});
  }
+});
+
+test('bound image rollout idle probe is exact-session scoped and fails closed on active runs',async()=>{
+ const binding:NodeBinding={nodeId:'slot',generation:1,chatId:-100,threadId:2,status:'ready',sessionId:'private-session'};
+ const idle=await fixture(false,undefined,binding,{ok:true,result:{continuation:'idle',externalRunId:null}});
+ assert.equal(await idle.transport.probeIdle(binding),true);
+ const busy=await fixture(false,undefined,binding,{ok:true,result:{continuation:'pending',externalRunId:'active-run'}});
+ assert.equal(await busy.transport.probeIdle(binding),false);
+ const unbound:NodeBinding={nodeId:'slot',generation:1,chatId:0,threadId:0,status:'available'};
+ const rejected=await fixture(false,undefined,unbound,{ok:true,result:{continuation:'idle',externalRunId:null}});
+ assert.equal(await rejected.transport.probeIdle(unbound),false);
+ assert.equal(rejected.calls(),0);
 });

@@ -22,6 +22,8 @@ export interface NodeProvisionerOptions {
   createPool?(excluded: ReadonlySet<string>): Promise<WorkerPool>;
   /** Canonical persisted binding resolver; caller supplied objects alone cannot authorize infrastructure. */
   lookup(nodeId: string): Promise<NodeBinding | undefined>;
+  /** Exact-session status probe; bound image updates fail closed unless the Worker is idle. */
+  probeIdle?(binding:Readonly<NodeBinding>):Promise<boolean>;
   /** Root-private durable identity store. The returned key must never be sent to the Bot/model process. */
   ensureIdentity(binding: Readonly<NodeBinding>, createSecret: () => string): Promise<string>;
   retireIdentity(nodeId: string, generation: number): Promise<void>;
@@ -444,7 +446,7 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
         await this.binding(nodeId,generation);
       }
       if(!verifiedVolume)throw new Error("Worker volume activation pending; retry reconciliation");
-      if(managedImageDrift&&(binding.chatId!==0||binding.threadId!==0))throw new WorkerProvisioningError("image_mismatch");
+      if(managedImageDrift&&(binding.chatId!==0||binding.threadId!==0)&&!(await this.options.probeIdle?.(binding)))throw new WorkerProvisioningError("image_mismatch");
       if (record.phase === "deploying" && record.endpoint && !managedImageDrift && !sleepPolicyChanged) {
         const knownDomains = inventory.environment.serviceInstances.edges.find(entry => entry.node.serviceId === record!.serviceId)?.node.domains.serviceDomains ?? [];
         if (knownDomains.length !== 1 || `https://${knownDomains[0]?.domain}` !== record.endpoint || knownDomains[0]?.id !== record.domainId) throw new Error("Worker domain ownership mismatch");

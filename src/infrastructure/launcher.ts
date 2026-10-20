@@ -70,7 +70,7 @@ async function main(): Promise<void> {
       retireNode:(identity,sanitize=false)=>retirementTransport.retireFenced(identity,sanitize),
       issueBootstrap:(binding,endpoint,secret)=>{if(!binding.serviceId||!binding.projectId)throw new Error("Worker bootstrap resource identity missing");return bootstrapGrants.issue({identity:{nodeId:binding.nodeId,generation:binding.generation,chatId:binding.chatId,threadId:binding.threadId},endpoint,secret,serviceId:binding.serviceId,projectId:binding.projectId});},
       rotateNode:(identity,bootstrapToken,target)=>retirementTransport.rotateFenced(identity,bootstrapToken,{nodeId:target.nodeId,generation:target.generation,chatId:target.chatId,threadId:target.threadId}),
-      probeUnbound:(nodeId,generation)=>retirementTransport.probeUnboundBoundary(nodeId,generation),onClusterVerified:async()=>{
+      probeUnbound:(nodeId,generation)=>retirementTransport.probeUnboundBoundary(nodeId,generation),probeIdle:(binding)=>retirementTransport.probeIdle(binding),onClusterVerified:async()=>{
       if(!infrastructure.configured)return;
       try{
         const {verifyWorkerRuntimeCanary}=await import("./worker-runtime-canary.js");
