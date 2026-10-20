@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { DEFAULT_RAILWAY_WORKER_SETTINGS } from "../src/infrastructure/railway-worker-settings.js";
 
-test("initial Railway fleet defaults to one project with five warm single-slot Workers", () => {
-  assert.equal(DEFAULT_RAILWAY_WORKER_SETTINGS.workersPerProject, 5);
-  assert.equal(DEFAULT_RAILWAY_WORKER_SETTINGS.warmCapacity, 5);
+test("initial Railway fleet is hard-capped at four Workers", () => {
+  assert.equal(DEFAULT_RAILWAY_WORKER_SETTINGS.workersPerProject, 4);
+  assert.equal(DEFAULT_RAILWAY_WORKER_SETTINGS.warmCapacity, 4);
 });
 
 test("Railway setup progress derives services, volumes, health and project counts from durable bindings", async () => {
@@ -16,7 +16,7 @@ test("Railway setup progress derives services, volumes, health and project count
     { projectId:"p1", serviceId:"s2", volumeId:"v2", status:"pool-provisioning" },
     { projectId:"p1", status:"pool-reserved" },
   ], 1, 5);
-  assert.deepEqual(progress, { projects:1, projectsTarget:1, workers:2, workersTarget:5, volumes:2, volumesTarget:5, healthy:1, healthyTarget:5, complete:false });
+  assert.deepEqual(progress, { projects:1, projectsTarget:1, workers:2, workersTarget:4, volumes:2, volumesTarget:4, healthy:1, healthyTarget:4, complete:false });
   const text = loaded.renderRailwayBootstrapProgress(progress);
   assert.match(text, /🚂 <b>Setting up Railway<\/b>/);
   assert.match(text, /✅ Projects created 1\/1/);
@@ -24,11 +24,11 @@ test("Railway setup progress derives services, volumes, health and project count
   assert.match(text, /⏳ Deploy &amp; health checks 1\/5/);
 });
 
-test("Railway bootstrap only exposes Continue after all five Workers are healthy", async () => {
+test("Railway bootstrap only exposes Continue after all four Workers are healthy", async () => {
   const loaded = await import("../src/bot/services/railway-bootstrap-progress.js").catch(() => null);
   assert.ok(loaded, "Railway bootstrap progress module must exist");
-  const bindings = Array.from({length:5},(_,index)=>({projectId:"p1",serviceId:`s${index}`,volumeId:`v${index}`,status:"available"}));
-  const progress = loaded.summarizeRailwayBootstrap(bindings, 1, 5);
+  const bindings = Array.from({length:4},(_,index)=>({projectId:"p1",serviceId:`s${index}`,volumeId:`v${index}`,status:"available"}));
+  const progress = loaded.summarizeRailwayBootstrap(bindings, 1, 4);
   assert.equal(progress.complete,true);
   assert.match(loaded.renderRailwayBootstrapProgress(progress), /🚂 <b>Railway Ready<\/b>/);
 });
@@ -83,22 +83,22 @@ test("limited onboarding requires an actual Railway quota rejection and verified
   assert.equal(canContinueRailwayBootstrapWithLimitedResources({...progress,healthy:0},quota),false);
   const text=renderRailwayBootstrapLimit(progress);
   assert.match(text,/Free plan limit/);
-  assert.match(text,/4\/5/);
-  assert.match(text,/4 verified Workers/);
+  assert.match(text,/3\/4/);
+  assert.match(text,/3 verified Workers/);
   assert.doesNotMatch(text,/\\n/);
   assert.equal(progress.complete,false);
-  assert.equal(progress.workersTarget,5);
+  assert.equal(progress.workersTarget,4);
 });
 
 test('live empty inventory overrides four persisted services after reset',async()=>{
  const {summarizeObservedRailwayBootstrap}=await import('../src/bot/services/railway-bootstrap-progress.js');
  const stale=Array.from({length:4},(_,i)=>({nodeId:`n${i}`,generation:1,slot:i+1,projectId:'deleted',serviceId:`s${i}`,volumeId:`v${i}`,status:'available'}));
- const progress=summarizeObservedRailwayBootstrap(stale,[],0,5);
+ const progress=summarizeObservedRailwayBootstrap(stale,[],0,4);
  assert.equal(progress.workers,0);assert.equal(progress.volumes,0);assert.equal(progress.healthy,0);assert.equal(progress.projects,0);assert.equal(progress.complete,false);
 });
 test('live inventory cannot count another generation as ready',async()=>{
  const {summarizeObservedRailwayBootstrap}=await import('../src/bot/services/railway-bootstrap-progress.js');
- const progress=summarizeObservedRailwayBootstrap([{nodeId:'n',generation:2,status:'available'}],[{nodeId:'n',generation:1,projectId:'p',serviceId:'s',volumeId:'v'}],1,5);
+ const progress=summarizeObservedRailwayBootstrap([{nodeId:'n',generation:2,status:'available'}],[{nodeId:'n',generation:1,projectId:'p',serviceId:'s',volumeId:'v'}],1,4);
  assert.equal(progress.workers,0);assert.equal(progress.healthy,0);
 });
 
@@ -112,8 +112,8 @@ test('an available binding cannot announce healthy before Root boundary verifica
 
 test('unverified inventory hides cached counts and cannot unlock limited Continue',async()=>{
  const {summarizeRailwayBootstrap,renderRailwayBootstrapProgress,canContinueRailwayBootstrapWithLimitedResources}=await import('../src/bot/services/railway-bootstrap-progress.js');
- const progress={...summarizeRailwayBootstrap([{serviceId:'s',volumeId:'v',status:'available'}],1,5),complete:false,verified:false};
+ const progress={...summarizeRailwayBootstrap([{serviceId:'s',volumeId:'v',status:'available'}],1,4),complete:false,verified:false};
  const text=renderRailwayBootstrapProgress(progress);
- assert.match(text,/Workers created —\/5/);assert.doesNotMatch(text,/Workers created 1\/5/);
+ assert.match(text,/Workers created —\/4/);assert.doesNotMatch(text,/Workers created 1\/4/);
  assert.equal(canContinueRailwayBootstrapWithLimitedResources(progress,new Error('Infrastructure operation failed (resource_limit, HTTP 200)')),false);
 });
