@@ -19,6 +19,7 @@ interface Options {
  issueBootstrap?(binding:Readonly<NodeBinding>,endpoint:string,secret:string):Promise<string>;
  rotateNode?(identity:Readonly<InfrastructureNodeIdentity>,bootstrapToken:string,target:Readonly<NodeBinding>):Promise<void>;
  probeUnbound?(nodeId:string,generation:number):Promise<unknown>;
+ probeIdle?(binding:Readonly<NodeBinding>):Promise<boolean>;
  onClusterVerified?():Promise<void>;
 }
 interface Seed {nodeId:string;generation:number;chatId:number;threadId:number;secret:string}
@@ -42,7 +43,7 @@ export class InfrastructureController {
  configurePools(pools:WorkerPool[],controlUrl:string,createPool?:(excluded:ReadonlySet<string>)=>Promise<WorkerPool>):void{
   if(this.provisioner)throw Error('Worker pools already configured');
   const options=this.options;
-  this.provisioner=new RailwayProvisioningDriver({request:options.request,pools,controlUrl,createPool,coreCommit:options.coreCommit,workerImage:options.workerImage,journalPath:path.join(options.stateDirectory,'provisioning.json'),onStage:stage=>{process.stdout.write(`[InfrastructureBoundary] worker_provision_stage=${stage}\n`);},onInventory:inventory=>{
+  this.provisioner=new RailwayProvisioningDriver({request:options.request,pools,controlUrl,createPool,coreCommit:options.coreCommit,workerImage:options.workerImage,probeIdle:options.probeIdle,journalPath:path.join(options.stateDirectory,'provisioning.json'),onStage:stage=>{process.stdout.write(`[InfrastructureBoundary] worker_provision_stage=${stage}\n`);},onInventory:inventory=>{
    const volumes=inventory.project.volumes.edges.map(entry=>({volumeId:entry.node.id,instances:entry.node.volumeInstances.edges.map(item=>({environmentId:item.node.environmentId,serviceId:item.node.serviceId,sizeMB:item.node.sizeMB,mountPath:item.node.mountPath,pendingDeletion:item.node.isPendingDeletion}))}));
    process.stdout.write(`[InfrastructureBoundary] worker_volume_inventory project=${inventory.project.id} volumes=${JSON.stringify(volumes)}\n`);
   },lookup:id=>this.lookup(id),ensureIdentity:(binding,create)=>this.ensureIdentity(binding,create),retireIdentity:async(id,generation)=>{
