@@ -177,7 +177,9 @@ export class InfrastructureController {
     // retired. Inspect it without deployment churn when its immutable release is
     // already current; only image drift or an incomplete provisioning phase calls
     // provision(), which may apply a new source and initiate a Railway deployment.
-    const needsProvision=!before||imageDrift||before.sleepApplication!==true||!["deploying","recycled"].includes(before.phase);
+    const sleepPolicyDrift=Boolean(before&&(before.sleepApplication!==true||before.sleepPolicyDeploymentVerified!==true));
+    const sleepDeploymentInFlight=before?.sleepPolicyDeploymentPending===true;
+    const needsProvision=!before||imageDrift||(sleepPolicyDrift&&!sleepDeploymentInFlight)||!["deploying","recycled"].includes(before.phase);
     const reconciled=needsProvision
       ? await provisioner.provision(nodeId,generation)
       : await provisioner.inspectWorker(nodeId,generation);
