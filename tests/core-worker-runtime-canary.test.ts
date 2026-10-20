@@ -50,3 +50,14 @@ test("Root maintenance runs only after every joined profile and propagates failu
   assert.deepEqual(calls,[]);
  }finally{await rm(directory,{recursive:true,force:true});}
 });
+
+test("Root runtime canary accepts a current recycled slot that was inspected without redeploy",async()=>{
+ const directory=await mkdtemp(path.join(os.tmpdir(),"runtime-canary-recycled-"));
+ try{
+  const filename=path.join(directory,"journal.json");
+  await writeFile(filename,JSON.stringify({version:1,nodes:[{...slot,phase:"recycled"}]}),{mode:0o600});
+  const calls:string[]=[];
+  await verifyWorkerRuntimeCanary({journalPath:filename,selftest:async(id,generation,profile)=>{assert.equal(id,"canary");assert.equal(generation,1);calls.push(profile);},log:()=>{}});
+  assert.deepEqual(calls,["baseline","browser","network"]);
+ }finally{await rm(directory,{recursive:true,force:true});}
+});
