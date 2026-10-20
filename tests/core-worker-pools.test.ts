@@ -74,9 +74,10 @@ test('pool expansion adopts an untracked managed project after an ambiguous crea
  assert.deepEqual(pool,{projectId:'recovered',environmentId:'production-recovered',region:'eu'});assert.equal(creates,0);
 });
 
-test('project-creation quota fallback raises only an exhausted existing pool by one slot',()=>{
- assert.equal(nextCapacityAfterProjectQuota(3,4,4),5);
- assert.equal(nextCapacityAfterProjectQuota(5,5,4),6);
+test('project-creation quota fallback can recover capacity only up to the four-Worker ceiling',()=>{
+ assert.equal(nextCapacityAfterProjectQuota(3,3,3),4,'a pool may grow to the global four-Worker ceiling');
+ assert.equal(nextCapacityAfterProjectQuota(3,4,4),undefined,'the four-service ceiling cannot be widened to a fifth Worker');
+ assert.equal(nextCapacityAfterProjectQuota(5,5,4),undefined,'an over-configured pool still cannot exceed four actual Workers');
  assert.equal(nextCapacityAfterProjectQuota(5,4,4),undefined,'an unused configured slot must not be widened');
  assert.equal(nextCapacityAfterProjectQuota(undefined,4,4),undefined,'unlimited pools need no override');
  assert.throws(()=>nextCapacityAfterProjectQuota(3,-1,4),/Invalid Worker pool inventory/);

@@ -81,7 +81,7 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
   listWorkers():Promise<ProvisionedNode[]>{return this.singleFlight(async()=>structuredClone((await this.read()).nodes));}
   inspectWorker(nodeId:string,generation:number):Promise<ProvisionedNode>{
     return this.singleFlight(async()=>{
-      const binding=await this.binding(nodeId,generation);
+      await this.binding(nodeId,generation);
       const journal=await this.read();const record=journal.nodes.find(n=>n.nodeId===nodeId&&n.generation===generation);
       if(!record)throw new WorkerProvisioningError("reconciliation_required");
       const pool=this.options.pools.find(p=>p.projectId===record.projectId)!;const inventory=await this.inventory(pool);
@@ -89,13 +89,36 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       const instance=inventory.environment.serviceInstances.edges.find(e=>e.node.serviceId===record.serviceId)?.node;
       const attached=inventory.project.volumes.edges.flatMap(e=>e.node.volumeInstances.edges.map(v=>v.node)).filter(v=>v.environmentId===pool.environmentId&&v.serviceId===record.serviceId);
       if(!instance?.latestDeployment?.id||!instance.domains.serviceDomains.some(domain=>new URL(record.endpoint!).hostname===domain.domain)||attached.length!==1||attached[0]!.volumeId!==record.volumeId||attached[0]!.mountPath!=="/data"||attached[0]!.isPendingDeletion)throw new WorkerProvisioningError("reconciliation_required");
-      const shouldSleep=binding.chatId===0&&binding.threadId===0;
-      if(record.sleepApplication!==shouldSleep){
-        await this.mutate(`mutation WorkerSleepPolicy($environmentId:String!,$serviceId:String!,$input:ServiceInstanceUpdateInput!){serviceInstanceUpdate(environmentId:$environmentId,serviceId:$serviceId,input:$input)}`,{environmentId:pool.environmentId,serviceId:record.serviceId,input:{numReplicas:1,sleepApplication:shouldSleep}});
-        record.sleepApplication=shouldSleep;
-        await this.save(journal);
+      // A setting read-back is not proof that the running container was created
+      // with Serverless enabled. Railway applies sleepApplication only on deployment.
+      // Keep inspection observational; the fenced reconcile/provision path owns rollout.
+      const deploymentStatus=instance.latestDeployment.status;
+      if(record.sleepPolicyDeploymentPending===true){
+        if(!record.sleepPolicyDeploymentId){
+          if(instance.latestDeployment.id!==record.deploymentId){
+            record.sleepPolicyDeploymentId=instance.latestDeployment.id;
+            record.deploymentId=instance.latestDeployment.id;
+            await this.save(journal);
+          }else{
+            // The old deployment still serves traffic; do not report it as proof
+            // or return a stale deployment ID to a readiness waiter.
+            throw new WorkerProvisioningError("provisioning_pending");
+          }
+        }else if(instance.latestDeployment.id!==record.sleepPolicyDeploymentId){
+          throw new WorkerProvisioningError("reconciliation_required");
+        }
+        const status=deploymentStatus?.toUpperCase();
+        if(["FAILED","CRASHED","REMOVED"].includes(status??"")){
+          record.sleepPolicyDeploymentPending=false;record.sleepPolicyDeploymentVerified=false;record.sleepPolicyDeploymentId=undefined;await this.save(journal);
+          throw new WorkerProvisioningError("provisioning_pending");
+        }
+        if(record.sleepPolicyDeploymentId===instance.latestDeployment.id&&["SUCCESS","ACTIVE"].includes(status??"")){
+          record.sleepPolicyDeploymentPending=false;
+          record.sleepPolicyDeploymentVerified=true;
+          await this.save(journal);
+        }
       }
-      return {...structuredClone(record),deploymentId:instance.latestDeployment.id,deploymentStatus:instance.latestDeployment.status};
+      return {...structuredClone(record),deploymentId:instance.latestDeployment.id,deploymentStatus,sleepPolicyUpdated:record.sleepPolicyDeploymentPending===true};
     });
   }
   async inspectCapacity():Promise<Array<{pool:WorkerPool;used:number;available:number|null}>>{
@@ -351,8 +374,38 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       // Serverless sleep mode stops idle Worker compute while preserving its volume;
       // an inbound Worker request wakes it before lifecycle readiness is confirmed.
       // Existing attached volumes retain their region; discovery defaults must never move their service.
+      const desiredImage=this.options.workerImage;
+      const desiredCommit=this.options.coreCommit??WORKER_CORE_COMMIT;
+      const desiredVersion=this.options.workerVersion??WORKER_CORE_VERSION;
+      const managedImageDrift=Boolean(record.image&&desiredImage&&(record.image!==desiredImage||record.runtimeCommit!==desiredCommit||record.runtimeVersion!==desiredVersion));
       const desiredSleep=binding.chatId===0&&binding.threadId===0;
-      const sleepPolicyChanged=desiredSleep?record.sleepApplication!==true:record.sleepApplication===true;
+      let sleepPolicyChanged=desiredSleep
+        ? record.sleepApplication!==true||record.sleepPolicyDeploymentVerified!==true
+        : record.sleepApplication===true;
+      // If the source rollout already started, never start a second deployment.
+      // Wait for that exact deployment and mark the policy applied only on success.
+      if(record.phase==="deploying"&&record.sleepPolicyDeploymentPending===true){
+        const latest=inventory.environment.serviceInstances.edges.find(entry=>entry.node.serviceId===record!.serviceId)?.node.latestDeployment;
+        if(!latest?.id)throw new WorkerProvisioningError("provisioning_pending");
+        if(!record.sleepPolicyDeploymentId&&latest.id!==record.deploymentId){
+          record.sleepPolicyDeploymentId=latest.id;record.deploymentId=latest.id;await this.save(journal);
+        }
+        if(!record.sleepPolicyDeploymentId)throw new WorkerProvisioningError("provisioning_pending");
+        if(latest.id!==record.sleepPolicyDeploymentId)throw new WorkerProvisioningError("reconciliation_required");
+        const status=latest.status?.toUpperCase();
+        if(["FAILED","CRASHED","REMOVED"].includes(status??"")){
+          record.sleepPolicyDeploymentPending=false;record.sleepPolicyDeploymentVerified=false;record.sleepPolicyDeploymentId=undefined;await this.save(journal);
+          throw new WorkerProvisioningError("provisioning_pending");
+        }
+        if(record.sleepPolicyDeploymentId===latest.id&&["SUCCESS","ACTIVE"].includes(status??"")){
+          record.sleepPolicyDeploymentPending=false;record.sleepPolicyDeploymentVerified=true;await this.save(journal);
+          // Do not let a completed sleep rollout mask a newer requested image.
+          sleepPolicyChanged=record.sleepApplication!==desiredSleep;
+          if(!managedImageDrift&&!sleepPolicyChanged)return {...structuredClone(record),deploymentId:latest.id,deploymentStatus:latest.status,sleepPolicyUpdated:true};
+        }else{
+          return {...structuredClone(record),deploymentId:latest.id,deploymentStatus:status,sleepPolicyUpdated:true};
+        }
+      }
       await this.mutate(`mutation WorkerConfig($environmentId:String!,$serviceId:String!,$input:ServiceInstanceUpdateInput!){serviceInstanceUpdate(environmentId:$environmentId,serviceId:$serviceId,input:$input)}`, {environmentId:pool.environmentId,serviceId:record.serviceId,input:{numReplicas:1,sleepApplication:desiredSleep,healthcheckPath:"/health",healthcheckTimeout:30,...(instances.length===0?{multiRegionConfig:{[pool.region]:{numReplicas:1}}}:{}),tracingEnabled:false,autoInstrumentationEnabled:false,restartPolicyType:"ON_FAILURE",restartPolicyMaxRetries:3}});
       record.sleepApplication=desiredSleep;
       await this.save(journal);
@@ -391,10 +444,6 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
         await this.binding(nodeId,generation);
       }
       if(!verifiedVolume)throw new Error("Worker volume activation pending; retry reconciliation");
-      const desiredImage=this.options.workerImage;
-      const desiredCommit=this.options.coreCommit??WORKER_CORE_COMMIT;
-      const desiredVersion=this.options.workerVersion??WORKER_CORE_VERSION;
-      const managedImageDrift=Boolean(record.image&&desiredImage&&(record.image!==desiredImage||record.runtimeCommit!==desiredCommit||record.runtimeVersion!==desiredVersion));
       if(managedImageDrift&&(binding.chatId!==0||binding.threadId!==0))throw new WorkerProvisioningError("image_mismatch");
       if (record.phase === "deploying" && record.endpoint && !managedImageDrift && !sleepPolicyChanged) {
         const knownDomains = inventory.environment.serviceInstances.edges.find(entry => entry.node.serviceId === record!.serviceId)?.node.domains.serviceDomains ?? [];
@@ -421,8 +470,17 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       // Existing image-less Workers retain their legacy source during authenticated
       // identity handoff. Only new allocations require the immutable image contract.
       const source=record.image&&desiredImage?{image:desiredImage}:record.image?{image:record.image}:{repo:"aminsh35322088-ctrl/opencode-telegram-core",branch:"main",commitSha:"9a188586a660967227a044a3224280e6923e3067"};
+      const previousDeploymentId=serviceInstance?.latestDeployment?.id??record.deploymentId;
+      const wasEverDeployed=record.everDeployed===true;
+      const redeployForSleepOnly=sleepPolicyChanged&&!managedImageDrift&&wasEverDeployed&&record.image!==undefined;
       record.everDeployed=true;await this.save(journal);
-      await this.mutate(`mutation WorkerSource($environmentId:String!,$patch:EnvironmentConfig!){environmentPatchCommit(environmentId:$environmentId,patch:$patch,commitMessage:"Deploy fenced Worker runtime")}`, {environmentId:pool.environmentId,patch:{services:{[record.serviceId!]:{source}}}});
+      if(redeployForSleepOnly){
+        // Railway documents a dedicated redeploy mutation. Reapplying an identical
+        // source patch is not a reliable way to activate a changed Serverless flag.
+        await this.mutate(`mutation WorkerRedeploy($serviceId:String!,$environmentId:String!){serviceInstanceRedeploy(serviceId:$serviceId,environmentId:$environmentId)}`,{serviceId:record.serviceId,environmentId:pool.environmentId});
+      }else{
+        await this.mutate(`mutation WorkerSource($environmentId:String!,$patch:EnvironmentConfig!){environmentPatchCommit(environmentId:$environmentId,patch:$patch,commitMessage:"Deploy fenced Worker runtime")}`, {environmentId:pool.environmentId,patch:{services:{[record.serviceId!]:{source}}}});
+      }
       // Record the new immutable identity only after Railway accepts the source
       // change. If the mutation response is lost, retrying retains the old pin
       // and re-applies the identical, idempotent source patch instead of
@@ -430,8 +488,36 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       if(record.image&&desiredImage){record.image=desiredImage;record.runtimeCommit=desiredCommit;record.runtimeVersion=desiredVersion;}
       record.phase = "deploying"; await this.save(journal);
       inventory = await this.inventory(pool);
-      const latestDeployment=inventory.environment.serviceInstances.edges.find(entry => entry.node.serviceId === record!.serviceId)?.node.latestDeployment;
-      record.deploymentId = latestDeployment?.id;
+      let latestDeployment=inventory.environment.serviceInstances.edges.find(entry => entry.node.serviceId === record!.serviceId)?.node.latestDeployment;
+      if(sleepPolicyChanged){
+        record.sleepPolicyDeploymentVerified=false;
+        record.sleepPolicyDeploymentPending=true;
+        record.sleepPolicyDeploymentId=latestDeployment?.id&&latestDeployment.id!==previousDeploymentId?latestDeployment.id:undefined;
+        // A successful settings mutation may precede creation of the deployment
+        // that applies Serverless. Never accept the previous deployment as proof.
+        for(let attempt=0;attempt<5&&(!latestDeployment?.id||latestDeployment.id===previousDeploymentId);attempt++){
+          await (this.options.wait??(milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds))))(Math.min(500*2**attempt,8_000));
+          inventory=await this.inventory(pool);
+          latestDeployment=inventory.environment.serviceInstances.edges.find(entry=>entry.node.serviceId===record!.serviceId)?.node.latestDeployment;
+        }
+        if((!latestDeployment?.id||latestDeployment.id===previousDeploymentId)&&sleepPolicyChanged&&!managedImageDrift&&wasEverDeployed&&!redeployForSleepOnly){
+          // A legacy source patch can be a no-op if it already points at the same
+          // commit. Explicitly redeploy as a bounded fallback so the sleep flag
+          // still reaches a newly created container.
+          await this.mutate(`mutation WorkerRedeploy($serviceId:String!,$environmentId:String!){serviceInstanceRedeploy(serviceId:$serviceId,environmentId:$environmentId)}`,{serviceId:record.serviceId,environmentId:pool.environmentId});
+          for(let attempt=0;attempt<5&&(!latestDeployment?.id||latestDeployment.id===previousDeploymentId);attempt++){
+            await (this.options.wait??(milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds))))(Math.min(500*2**attempt,8_000));
+            inventory=await this.inventory(pool);
+            latestDeployment=inventory.environment.serviceInstances.edges.find(entry=>entry.node.serviceId===record!.serviceId)?.node.latestDeployment;
+          }
+        }
+        if(!latestDeployment?.id||latestDeployment.id===previousDeploymentId){
+          await this.save(journal);
+          throw new WorkerProvisioningError("provisioning_pending");
+        }
+        record.sleepPolicyDeploymentId=latestDeployment.id;
+      }
+      if(latestDeployment?.id)record.deploymentId=latestDeployment.id;
       await this.save(journal);
       await this.binding(nodeId,generation);
       return {...structuredClone(record),deploymentStatus:latestDeployment?.status,sleepPolicyUpdated:sleepPolicyChanged};

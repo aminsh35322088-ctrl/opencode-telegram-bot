@@ -49,11 +49,11 @@ test('Root handoff fences old identity and confirms retirement before rotating W
  const home=await mkdtemp(path.join(tmpdir(),'root-handoff-'));const filename=path.join(home,'bindings.json');
  const store=new NodeBindingStore(filename);let binding=(await store.ensurePoolSlots(4))[0]!;
  binding=await store.update(binding.nodeId,1,{status:'pool-provisioning'});
- const registry=captureNodeRegistry({});const events:string[]=[];let retirementFails=true;let oldSecret='';
+ const registry=captureNodeRegistry({});const events:string[]=[];let retirementFails=true;let oldSecret='';let deploymentVersion=0;
  const edge=<T>(nodes:T[])=>({edges:nodes.map(node=>({node})),pageInfo:{hasNextPage:false}});
  const controller=new InfrastructureController({registry,stateDirectory:home,bindingFilename:filename,coreCommit:WORKER_CORE_COMMIT,workerImage:'ghcr.io/example/core@sha256:'+'b'.repeat(64),controlUrl:'https://control.up.railway.app',pools:[{projectId:'a',environmentId:'ea',capacity:2,region:'eu'},{projectId:'b',environmentId:'eb',capacity:2,region:'eu'}],
  request:async <T>(document:string,variables:Record<string,unknown>)=>{
-  if(document.includes('WorkerInventory'))return {project:{id:variables.projectId,services:edge([{id:'service',name:'topic-node-'+binding.nodeId}]),volumes:edge([{id:'volume',volumeInstances:edge([{volumeId:'volume',environmentId:variables.environmentId,serviceId:'service',sizeMB:500,mountPath:'/data',isPendingDeletion:false}])}])},environment:{id:variables.environmentId,projectId:variables.projectId,serviceInstances:edge([{serviceId:'service',domains:{serviceDomains:[{id:'domain',domain:'worker.up.railway.app'}]},latestDeployment:{id:'deployment'}}])}} as T;
+  if(document.includes('WorkerInventory'))return {project:{id:variables.projectId,services:edge([{id:'service',name:'topic-node-'+binding.nodeId}]),volumes:edge([{id:'volume',volumeInstances:edge([{volumeId:'volume',environmentId:variables.environmentId,serviceId:'service',sizeMB:500,mountPath:'/data',isPendingDeletion:false}])}])},environment:{id:variables.environmentId,projectId:variables.projectId,serviceInstances:edge([{serviceId:'service',domains:{serviceDomains:[{id:'domain',domain:'worker.up.railway.app'}]},latestDeployment:{id:deploymentVersion===0?'deployment':'deployment-'+deploymentVersion,status:'SUCCESS'}}])}} as T;
   if(document.includes('WorkerVariables')){
    const env=(variables.input as {variables:Record<string,string>}).variables;
    assert.deepEqual(Object.keys(env).sort(),['CONTROL_PLANE_URL','NODE_GENERATION','NODE_ID','NODE_SHARED_SECRET']);
@@ -61,7 +61,8 @@ test('Root handoff fences old identity and confirms retirement before rotating W
    if(env.NODE_GENERATION==='1'){oldSecret=env.NODE_SHARED_SECRET!;}
    else{assert.equal(env.NODE_GENERATION,'2');assert.notEqual(env.NODE_SHARED_SECRET,oldSecret);assert.ok(events.indexOf('retired')<events.indexOf('variables:2'));}
   }
-  if(document.includes('WorkerSource')){const patch=variables.patch as {services:Record<string,{source:{image:string}}>};assert.match(patch.services.service!.source.image,/@sha256:/);}
+  if(document.includes('WorkerSource')){const patch=variables.patch as {services:Record<string,{source:{image:string}}>};assert.match(patch.services.service!.source.image,/@sha256:/);deploymentVersion++;}
+  if(document.includes('WorkerRedeploy'))deploymentVersion++;
   return {mutation:true} as T;
  },retireNode:async identity=>{
   events.push('retire');assert.equal(identity.binding.generation,1);assert.equal(identity.binding.chatId,0);assert.equal(identity.binding.threadId,0);assert.equal(identity.secret,oldSecret);

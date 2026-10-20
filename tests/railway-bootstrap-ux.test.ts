@@ -55,12 +55,18 @@ test("Railway bootstrap only exposes Continue after all four Workers are healthy
   assert.match(loaded.renderRailwayBootstrapProgress(progress), /🚂 <b>Railway Ready<\/b>/);
 });
 
-test("idle Workers sleep in Railway and active Topic bindings wake them", async () => {
+test("idle Workers sleep in Railway only after a successful Serverless-enabled deployment", async () => {
   const driver=await readFile(new URL("../src/infrastructure/railway-provisioning-driver.ts",import.meta.url),"utf8");
+  const controller=await readFile(new URL("../src/infrastructure/node-controller.ts",import.meta.url),"utf8");
   const lifecycle=await readFile(new URL("../src/control-plane/topic-node-lifecycle.ts",import.meta.url),"utf8");
   assert.match(driver,/const desiredSleep=binding\.chatId===0&&binding\.threadId===0/);
   assert.match(driver,/sleepApplication:desiredSleep/);
-  assert.match(driver,/WorkerSleepPolicy/);
+  assert.match(driver,/sleepPolicyDeploymentVerified/);
+  assert.match(driver,/sleepPolicyDeploymentPending=true/);
+  assert.match(driver,/WorkerConfig/);
+  assert.match(driver,/serviceInstanceRedeploy/);
+  assert.match(driver,/instance\.latestDeployment\.id!==record\.deploymentId/);
+  assert.match(controller,/before\.sleepPolicyDeploymentVerified!==true/);
   assert.match(lifecycle,/item\.slot!==undefined&&item\.slot<=4/);
   assert.match(lifecycle,/binding\.slot!>4/);
 });

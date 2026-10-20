@@ -18,12 +18,15 @@ export function nextCapacityAfterProjectQuota(
   }
   if (configuredCapacity === undefined) return undefined;
   const baseline = Math.max(journalWorkers, liveServices);
+  // Railway's free-plan Worker fleet is an absolute four-service ceiling.
+  // Project-quota recovery may widen a smaller pool, but can never allocate slot 5.
+  if (baseline >= 4) return undefined;
   if (baseline < configuredCapacity) return undefined;
-  return baseline + 1;
+  return Math.min(4, baseline + 1);
 }
 export interface ProvisionedNode {
   slot?:number;clusterId?:string;unbound?:boolean;
-  image?: string; runtimeCommit?:string; runtimeVersion?:string; imageUpdated?:boolean; sleepApplication?:boolean; sleepPolicyUpdated?:boolean; deploymentStatus?:string; volumeCreatePending?: boolean; everDeployed?:boolean;
+  image?: string; runtimeCommit?:string; runtimeVersion?:string; imageUpdated?:boolean; sleepApplication?:boolean; sleepPolicyUpdated?:boolean; sleepPolicyDeploymentVerified?:boolean; sleepPolicyDeploymentPending?:boolean; sleepPolicyDeploymentId?:string; deploymentStatus?:string; volumeCreatePending?: boolean; everDeployed?:boolean;
   workerVariablesContract?: "identity-v1";
   nodeId: string; generation: number; projectId: string; environmentId: string;
   serviceId?: string; volumeId?: string; domainId?: string; endpoint?: string; deploymentId?: string;

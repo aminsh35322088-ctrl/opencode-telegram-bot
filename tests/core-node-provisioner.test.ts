@@ -11,6 +11,7 @@ async function fixture() {
   const services: Array<{id:string;name:string;projectId:string}> = [];
   const volumes: Array<{id:string;projectId:string;serviceId:string;environmentId:string}> = [];
   const domains = new Map<string,{id:string;domain:string}>();
+  const deploymentVersions = new Map<string,number>();
   const calls: Array<{document:string;variables:Record<string,unknown>}> = [];
   let ambiguous = false; let rejected = false; let pendingReads=0; let attachPending=0; const waits:number[]=[];
   const filename=path.join(await mkdtemp(path.join(tmpdir(),'provisioner-')),'journal.json');
@@ -20,7 +21,7 @@ async function fixture() {
       calls.push({document,variables}); const input=variables.input as Record<string,unknown>;
       let result: unknown;
       if(document.includes('query WorkerInventory')) {
-        result={project:{id:variables.projectId,services:edges(services.filter(s=>s.projectId===variables.projectId)),volumes:edges(volumes.filter(v=>v.projectId===variables.projectId).map(v=>({id:v.id,volumeInstances:edges(pendingReads-->0?[]:[{volumeId:v.id,environmentId:v.environmentId,serviceId:v.serviceId,sizeMB:500,mountPath:'/data',isPendingDeletion:false}])})))},environment:{id:variables.environmentId,projectId:variables.projectId,serviceInstances:edges(services.filter(s=>s.projectId===variables.projectId).map(s=>({serviceId:s.id,domains:{serviceDomains:domains.has(s.id)?[domains.get(s.id)]:[]},latestDeployment:{id:'deployment-'+s.id}})))}};
+        result={project:{id:variables.projectId,services:edges(services.filter(s=>s.projectId===variables.projectId)),volumes:edges(volumes.filter(v=>v.projectId===variables.projectId).map(v=>({id:v.id,volumeInstances:edges(pendingReads-->0?[]:[{volumeId:v.id,environmentId:v.environmentId,serviceId:v.serviceId,sizeMB:500,mountPath:'/data',isPendingDeletion:false}])})))},environment:{id:variables.environmentId,projectId:variables.projectId,serviceInstances:edges(services.filter(s=>s.projectId===variables.projectId).map(s=>({serviceId:s.id,domains:{serviceDomains:domains.has(s.id)?[domains.get(s.id)]:[]},latestDeployment:{id:'deployment-'+s.id+(deploymentVersions.has(s.id)?'-v'+deploymentVersions.get(s.id):''),status:deploymentVersions.has(s.id)?'SUCCESS':undefined}})))}};
       } else if(document.includes('mutation WorkerService')) {
         const service={id:'s'+services.length,name:input.name as string,projectId:input.projectId as string}; services.push(service);
         if(ambiguous){ambiguous=false;throw new Error('ambiguous network result');} result={serviceCreate:{id:service.id}};
@@ -44,6 +45,15 @@ async function fixture() {
         const volume=volumes.find(v=>v.id===volumeId)!;volume.environmentId=variables.environmentId as string;volume.serviceId=Object.keys(patch.services)[0]!;pendingReads=attachPending;result={environmentPatchCommit:'workflow'};
       } else if(document.includes('mutation WorkerDomain')) {
         const domain={id:'d'+domains.size,domain:'worker'+domains.size+'.up.railway.app'};domains.set(input.serviceId as string,domain);result={serviceDomainCreate:domain};
+      } else if(document.includes('mutation WorkerSource')) {
+        const patch=variables.patch as {services:Record<string,unknown>};
+        const serviceId=Object.keys(patch.services)[0]!;
+        deploymentVersions.set(serviceId,(deploymentVersions.get(serviceId)??0)+1);
+        result={environmentPatchCommit:'workflow'};
+      } else if(document.includes('mutation WorkerRedeploy')) {
+        const serviceId=variables.serviceId as string;
+        deploymentVersions.set(serviceId,(deploymentVersions.get(serviceId)??0)+1);
+        result={serviceInstanceRedeploy:true};
       } else if(document.includes('mutation WorkerLimits')) result={serviceInstanceLimitsUpdate:!rejected};
       else if((document.includes('mutation RetireService')||document.includes('mutation WorkerRolloverService'))) {services.splice(services.findIndex(s=>s.id===variables.id),1);result={serviceDelete:true};}
       else if((document.includes('mutation RetireVolume')||document.includes('mutation WorkerRolloverVolume'))) {volumes.splice(volumes.findIndex(v=>v.id===variables.volumeId),1);result={volumeDelete:true};}
@@ -272,7 +282,7 @@ test('legacy image-less free Worker handoff preserves its source and storage wit
 test('driver inventory and inspection expose owned workers and actual deployment receipts without secrets',async()=>{
  const f=await fixture();f.add('inspect');const node=await f.controller.provision('inspect',1);
  assert.deepEqual((await f.controller.listWorkers()).map(n=>n.nodeId),['inspect']);
- const inspected=await f.controller.inspectWorker('inspect',1);assert.equal(inspected.serviceId,node.serviceId);assert.equal(inspected.deploymentId,'deployment-'+node.serviceId);
+ const inspected=await f.controller.inspectWorker('inspect',1);assert.equal(inspected.serviceId,node.serviceId);assert.equal(inspected.deploymentId,'deployment-'+node.serviceId+'-v1');
  assert.equal(JSON.stringify(inspected).includes('NODE_SHARED_SECRET'),false);
  await assert.rejects(f.controller.inspectWorker('inspect',2),/authorization/);
  const capacities=await f.controller.inspectCapacity();assert.deepEqual(capacities.map(p=>p.available),[1,2]);
