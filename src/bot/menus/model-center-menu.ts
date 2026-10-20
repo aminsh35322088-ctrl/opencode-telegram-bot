@@ -10,6 +10,7 @@ import { logger } from "../../utils/logger.js";
 import type { Context } from "grammy";
 import { replyWithInlineMenu } from "./inline-menu.js";
 import { getModelCapabilities, formatCapabilitiesIcons } from "../../app/services/model-capabilities-service.js";
+import { buildModelRoutingSummary } from "../../app/services/model-routing-summary-service.js";
 
 export const MODEL_CENTER_PRICE_LEGEND = "mc:price_legend";
 export const MODEL_CENTER_PRICE_PAGE_PREFIX = "mc:priced:";
@@ -160,7 +161,15 @@ export async function buildModelCenterRoot(current?: ModelInfo, source: ModelCen
   if (current?.providerID && current.modelID) {
     const icons = source.capabilityIcons ? await source.capabilityIcons(current.providerID, current.modelID) : "";
     const iconsLine = icons ? `\n${icons}` : "";
-    currentBlock = `🟢 <b>CURRENT MODEL</b>\n<code>${escapeHtml(formatModelName(current.modelID, current.name))}</code>${iconsLine}`;
+    let routingLine = "";
+    try {
+      const summary = await buildModelRoutingSummary(current);
+      const detailLines = summary.split("\n").slice(2).join("\n").trim();
+      if (detailLines) routingLine = `\n\n<b>CAPABILITIES &amp; ROUTING</b>\n<pre>${escapeHtml(detailLines)}</pre>`;
+    } catch (error) {
+      logger.warn("[ModelCenter] Could not build full model capability summary", error);
+    }
+    currentBlock = `🟢 <b>CURRENT MODEL</b>\n<code>${escapeHtml(formatModelName(current.modelID, current.name))}</code>${iconsLine}${routingLine}`;
   } else {
     currentBlock = "🟢 <b>CURRENT MODEL</b>\nNo model selected";
   }

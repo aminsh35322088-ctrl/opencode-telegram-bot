@@ -3,6 +3,7 @@ import type { Api } from "grammy";
 import { Agent as HttpsAgent } from "https";
 import {
   toDataUri,
+  buildTelegramFileUrl,
   formatFileSize,
   isFileSizeAllowed,
   isTextFileName,
@@ -244,6 +245,7 @@ describe("downloadTelegramFile reverse-proxy wiring", () => {
   function makeFetchStub(): ReturnType<typeof vi.fn> {
     return nodeFetchMock.mockResolvedValue({
       ok: true,
+      headers: { get: () => null },
       arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
     });
   }
@@ -252,6 +254,24 @@ describe("downloadTelegramFile reverse-proxy wiring", () => {
     vi.resetModules();
     return import("../../../src/app/services/file-download-service.js");
   }
+
+  it("rejects traversal and absolute paths before building a token-bearing file URL", () => {
+    expect(() => buildTelegramFileUrl("../secrets.txt")).toThrow(/invalid file path/i);
+    expect(() => buildTelegramFileUrl("/etc/passwd")).toThrow(/local file path/i);
+    expect(buildTelegramFileUrl("documents/report final.pdf")).toBe(
+      "https://api.telegram.org/file/botbot-token-xyz/documents/report%20final.pdf",
+    );
+  });
+
+  it("disables redirects on token-bearing file requests", async () => {
+    const fetchMock = makeFetchStub();
+    vi.stubGlobal("fetch", fetchMock);
+    const { downloadTelegramFile } = await loadDownloadModule();
+    await downloadTelegramFile(makeApiStub(), "fid");
+    const call = defined(fetchMock.mock.calls[0]);
+    const [, init] = call;
+    expect((init as { redirect?: string }).redirect).toBe("error");
+  });
 
   it("uses api.telegram.org as the file URL base when apiRoot is not set", async () => {
     configMock.telegram.apiRoot = "";

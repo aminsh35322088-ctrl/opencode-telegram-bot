@@ -5,16 +5,30 @@ const mocked = vi.hoisted(() => ({
   resolveCoreTopicBinding: vi.fn(),
   isCurrentCoreSessionRoute: vi.fn(),
   sendDocument: vi.fn(),
+  sendPhoto: vi.fn(),
+  resolveReadyTopicWorker: vi.fn(),
+  downloadRemoteWorkerFile: vi.fn(),
+  readRemoteWorkerFilePrefix: vi.fn(),
 }));
 
 vi.mock("../../../src/core/native-core-service.js", () => ({
   resolveCoreTopicBinding: mocked.resolveCoreTopicBinding,
   isCurrentCoreSessionRoute: mocked.isCurrentCoreSessionRoute,
 }));
+vi.mock("../../../src/app/services/remote-worker-file-service.js", () => ({
+  resolveReadyTopicWorker: mocked.resolveReadyTopicWorker,
+  downloadRemoteWorkerFile: mocked.downloadRemoteWorkerFile,
+  readRemoteWorkerFilePrefix: mocked.readRemoteWorkerFilePrefix,
+}));
 vi.mock("../../../src/bot/services/core-session-api.js", () => ({
   createCoreSessionApi: (_api: unknown, sessionId: string) => ({
     sendDocument: (chatId: number, file: unknown, options: Record<string, unknown>) =>
       mocked.sendDocument(chatId, file, {
+        ...options,
+        message_thread_id: sessionId === "b" ? 22 : 11,
+      }),
+    sendPhoto: (chatId: number, file: unknown, options: Record<string, unknown>) =>
+      mocked.sendPhoto(chatId, file, {
         ...options,
         message_thread_id: sessionId === "b" ? 22 : 11,
       }),
@@ -76,6 +90,7 @@ function enqueue(topic = topicA): void {
 
 describe("artifact destination isolation", () => {
   const send = mocked.sendDocument;
+  const sendPhoto = mocked.sendPhoto;
   beforeEach(() => {
     delivery.clear();
     currentTopicASessionId = "a";
@@ -94,9 +109,24 @@ describe("artifact destination isolation", () => {
     mocked.isCurrentCoreSessionRoute.mockReturnValue(true);
     send.mockReset();
     send.mockResolvedValue({ message_id: 1 });
+    sendPhoto.mockReset();
+    sendPhoto.mockResolvedValue({ message_id: 2 });
+    mocked.resolveReadyTopicWorker.mockReset();
+    mocked.resolveReadyTopicWorker.mockResolvedValue(null);
     delivery.setApi({} as never);
   });
   afterEach(() => { delivery.clear(); vi.useRealTimers(); vi.restoreAllMocks(); });
+
+  it("sends generated PNG/JPEG artifacts as inline Telegram photos", async () => {
+    const imageArtifact = { type: "message.part.updated", properties: { part: {
+      type: "tool", state: { status: "completed", input: {}, output: "__TELEGRAM_ARTIFACT__ /tmp/image-generated.png" },
+    } } } as unknown as Event;
+    runInTopicRuntimeContext(topicA, () => delivery.processEvent(imageArtifact));
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(sendPhoto).toHaveBeenCalledTimes(1);
+    expect(send).not.toHaveBeenCalled();
+    expect(sendPhoto.mock.calls[0][2].message_thread_id).toBe(11);
+  });
 
   it("delivers the same path independently to two concurrent Topics", async () => {
     enqueue(topicA); enqueue(topicB);
@@ -167,6 +197,7 @@ describe("artifact destination isolation", () => {
     runInTopicRuntimeContext(topicA, () => delivery.processEvent({
       type: "file.edited", properties: { file: "/tmp/report.pdf" },
     } as unknown as Event));
+    await vi.waitFor(() => expect(fs.readFile).toHaveBeenCalled());
     delivery.clear();
     release(Buffer.from("%PDF-1.4"));
     await vi.advanceTimersByTimeAsync(1500);

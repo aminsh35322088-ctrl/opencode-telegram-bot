@@ -180,6 +180,10 @@ async function main(): Promise<void> {
         const {runRailwayAgentAccess}=await import("./railway-agent-access.js");
         return await runRailwayAgentAccess(infrastructure.request,configuredWorkspaceId,payload);
       },
+      telegramTool:async(payload:unknown,owner:{nodeId:string;generation:number;chatId:number;threadId:number;sessionId:string})=>{
+        const {runTelegramAgentAccess}=await import("../app/services/telegram-agent-access.js");
+        return await runTelegramAgentAccess(payload,owner);
+      },
     };
     gatewayStart=child=>{stopGateway=startNodeGateway(child,nodes,protocol,port,controller,setupController,bootstrapGrants);};
   }

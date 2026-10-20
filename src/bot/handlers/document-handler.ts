@@ -13,6 +13,9 @@ import { getStoredModel } from "../../app/services/model-selection-service.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import type { FilePartInput, Model } from "@opencode-ai/sdk/v2";
+import type { ModelInfo } from "../../app/types/model.js";
+import { resolveCapabilityRoute } from "../../app/services/model-capability-routing-service.js";
+import { getTopicRuntimeContext } from "../../app/services/topic-runtime-context.js";
 import { flushPendingPrompt } from "./message-merger.js";
 
 export interface DocumentHandlerDeps extends ProcessPromptDeps {
@@ -30,6 +33,7 @@ export interface DocumentHandlerDeps extends ProcessPromptDeps {
     text: string,
     deps: ProcessPromptDeps,
     fileParts?: FilePartInput[],
+    modelOverride?: ModelInfo,
   ) => Promise<boolean>;
 }
 
@@ -81,7 +85,13 @@ export async function handleDocumentMessage(
     }
 
     if (mimeType.startsWith("image/")) {
-      const storedModel = getStored();
+      const topic = getTopicRuntimeContext();
+      const route = await resolveCapabilityRoute("vision", topic?.directory);
+      if (!route.model) {
+        await ctx.reply(route.reason ?? "No image-capable Vision model is configured for this Topic.");
+        return;
+      }
+      const storedModel = route.model;
       const capabilities = await getCapabilities(storedModel.providerID, storedModel.modelID);
 
       if (!supportsInput(capabilities, "image")) {
@@ -112,7 +122,7 @@ export async function handleDocumentMessage(
         `[Document] Sending image (${downloadedFile.buffer.length} bytes, ${filename}, ${mimeType}) with prompt`,
       );
 
-      await processPrompt(ctx, caption, deps, [filePart]);
+      await processPrompt(ctx, caption, deps, [filePart], { providerID: storedModel.providerID, modelID: storedModel.modelID });
       return;
     }
 

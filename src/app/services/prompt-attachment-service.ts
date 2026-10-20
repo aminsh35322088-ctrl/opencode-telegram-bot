@@ -11,8 +11,16 @@ import { isWithinProjectRootSafe } from "./file-browser-service.js";
 const OPENCODE_TEXT_MIME = "text/plain";
 
 async function resolveOne(pending: PendingAttachment, worktree: string): Promise<FilePartInput | null> {
-  const { absolutePath } = pending;
   if (pending.worktree !== worktree) { logger.warn(`[PromptAttachment] Dropping attachment: project changed, attached=${pending.worktree}, current=${worktree}`); return null; }
+  if (pending.dataUri !== undefined) {
+    if (!pending.filename || !/^data:text\/plain;base64,[A-Za-z0-9+/]*={0,2}$/u.test(pending.dataUri)) return null;
+    const encoded = pending.dataUri.slice(pending.dataUri.indexOf(",") + 1);
+    const bytes = Buffer.from(encoded, "base64");
+    if (bytes.length > config.files.maxFileSizeKb * 1024) { logger.warn(`[PromptAttachment] Dropping inline attachment: too large (${bytes.length} bytes)`); return null; }
+    return { type: "file", mime: pending.mimeType ?? OPENCODE_TEXT_MIME, filename: path.basename(pending.filename), url: pending.dataUri };
+  }
+  const absolutePath = pending.absolutePath;
+  if (!absolutePath) return null;
   let stat;
   try { stat = await fs.stat(absolutePath); }
   catch (error) { logger.warn(`[PromptAttachment] Dropping attachment: cannot stat ${absolutePath}`, error); return null; }

@@ -17,6 +17,7 @@ interface InfrastructureSetupController {
   getSettings():Promise<unknown>;
   updateSettings(patch:unknown):Promise<unknown>;
   railwayTool(payload:unknown):Promise<unknown>;
+  telegramTool(payload:unknown,owner:{nodeId:string;generation:number;chatId:number;threadId:number;sessionId:string}):Promise<unknown>;
 }
 interface BootstrapGrantConsumer {
   consume(input:{bootstrapToken:string;serviceId:string;projectId:string}):Promise<{version:1;identity:{nodeId:string;generation:number;chatId:number;threadId:number};secret:string}>;
@@ -28,6 +29,7 @@ export function startNodeGateway(child:ChildProcess,registry:Registry,protocol:N
   let infrastructureActive=0;
   let setupActive=0;
   let railwayToolActive=0;
+  let telegramToolActive=0;
   let applicationReady=false;
   let desiredRevision=0;
   let reconciling=false;
@@ -62,7 +64,7 @@ export function startNodeGateway(child:ChildProcess,registry:Registry,protocol:N
   });
   child.on("message",async message=>{
     if(!message || typeof message!=="object")return;
-    const input=message as {channel?:string;requestId?:string;envelope?:NodeEnvelope;stream?:boolean;operation?:string;nodeId?:string;generation?:number;payload?:Record<string,unknown>};
+    const input=message as {channel?:string;requestId?:string;envelope?:NodeEnvelope;stream?:boolean;operation?:string;nodeId?:string;generation?:number;payload?:Record<string,unknown>;owner?:unknown};
     if(typeof input.requestId!=="string" || input.requestId.length>128)return;
     if(input.channel==="railway-agent-tool"){
       if(!setup||railwayToolActive>=4){child.send({channel:"railway-agent-tool-response",requestId:input.requestId,ok:false});return;}
@@ -73,6 +75,20 @@ export function startNodeGateway(child:ChildProcess,registry:Registry,protocol:N
         child.send({channel:"railway-agent-tool-response",requestId:input.requestId,ok:true,result});
       }catch{child.send({channel:"railway-agent-tool-response",requestId:input.requestId,ok:false});}
       finally{railwayToolActive--;}
+      return;
+    }
+    if(input.channel==="telegram-agent-tool"){
+      const owner=input.owner as {nodeId?:unknown;generation?:unknown;chatId?:unknown;threadId?:unknown;sessionId?:unknown}|undefined;
+      if(!setup||telegramToolActive>=2||!input.payload||typeof input.payload!=="object"||Array.isArray(input.payload)||!owner||
+        typeof owner.nodeId!=="string"||!Number.isSafeInteger(owner.generation)||!Number.isSafeInteger(owner.chatId)||!Number.isSafeInteger(owner.threadId)||typeof owner.sessionId!=="string"){
+        child.send({channel:"telegram-agent-tool-response",requestId:input.requestId,ok:false});return;
+      }
+      telegramToolActive++;
+      try{
+        const result=await setup.telegramTool(input.payload,{nodeId:owner.nodeId,generation:owner.generation as number,chatId:owner.chatId as number,threadId:owner.threadId as number,sessionId:owner.sessionId});
+        child.send({channel:"telegram-agent-tool-response",requestId:input.requestId,ok:true,result});
+      }catch{child.send({channel:"telegram-agent-tool-response",requestId:input.requestId,ok:false});}
+      finally{telegramToolActive--;}
       return;
     }
     if(input.channel==="infrastructure-configure"){

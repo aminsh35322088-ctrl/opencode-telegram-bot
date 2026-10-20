@@ -2,7 +2,7 @@ import { logger } from "../../utils/logger.js";
 import { getCurrentSession } from "../services/session-service.js";
 import { getTopicRuntimeContext } from "../services/topic-runtime-context.js";
 
-export interface PendingAttachment { absolutePath: string; worktree: string; mimeType?: string; confirmationMessageId?: number; }
+export interface PendingAttachment { absolutePath?: string; worktree: string; mimeType?: string; filename?: string; dataUri?: string; confirmationMessageId?: number; }
 class PromptAttachmentManager {
   private readonly states = new Map<string, PendingAttachment[]>();
   private key(sessionId?: string): string {
@@ -15,12 +15,18 @@ class PromptAttachmentManager {
   set(absolutePath: string, worktree: string, sessionId?: string, mimeType?: string): void {
     this.setMany([{ absolutePath, worktree, mimeType }], sessionId);
   }
+  setInline(dataUri: string, worktree: string, filename: string, sessionId?: string, mimeType = "text/plain"): void {
+    if (!/^data:text\/plain;base64,[A-Za-z0-9+/]*={0,2}$/u.test(dataUri) || !filename.trim()) {
+      throw new Error("Invalid inline prompt attachment.");
+    }
+    this.setMany([{ worktree, filename, dataUri, mimeType }], sessionId);
+  }
   setMany(attachments: PendingAttachment[], sessionId?: string): void {
     const key = this.key(sessionId);
     const normalized = attachments.map((item) => ({ ...item }));
     if (!normalized.length) { this.states.delete(key); return; }
     this.states.set(key, normalized);
-    logger.info(`[PromptAttachment] Attached files: session=${key}, count=${normalized.length}, paths=${normalized.map((item) => item.absolutePath).join(",")}`);
+    logger.info(`[PromptAttachment] Attached files: session=${key}, count=${normalized.length}, paths=${normalized.map((item) => item.absolutePath ?? item.filename ?? "inline").join(",")}`);
   }
   setConfirmationMessageId(messageId: number, sessionId?: string): void {
     const state = this.state(sessionId); if (state?.[0]) state[0].confirmationMessageId = messageId;

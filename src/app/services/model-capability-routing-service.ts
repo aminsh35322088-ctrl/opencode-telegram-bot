@@ -76,11 +76,22 @@ export function resolveCapabilityRouteFromContext(
     return { capability, routeSource: "unavailable", primarySupportsCapability: primarySupported, reason: "The configured Topic override is unavailable or does not support this capability." };
   }
 
+  const fallback = context.mainDefaults?.[key];
+  // A deliberately configured Voice → Text helper means the user wants an
+  // actual transcript, even when the coding model also accepts audio natively.
+  // Keep this precedence limited to voice input; image/vision routes continue
+  // preferring the Primary model when it can execute the operation.
+  if (capability === "voiceInput" && fallback) {
+    if (helperSupports(lookup(catalog, fallback), capability)) {
+      return { capability, model: cloneModelRef(fallback), routeSource: "main-default", primarySupportsCapability: primarySupported };
+    }
+    return { capability, routeSource: "unavailable", primarySupportsCapability: primarySupported, reason: "The configured Main Default transcription helper is unavailable or does not support speech-to-text." };
+  }
+
   if (allowPrimaryNative && primarySupported && primary) {
     return { capability, model: cloneModelRef(primary), routeSource: "primary-native", primarySupportsCapability: true };
   }
 
-  const fallback = context.mainDefaults?.[key];
   if (fallback) {
     if (helperSupports(lookup(catalog, fallback), capability)) {
       return { capability, model: cloneModelRef(fallback), routeSource: "main-default", primarySupportsCapability: false };

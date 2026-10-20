@@ -51,11 +51,11 @@ export async function buildVoiceModelSettingsView(ctx: Context, notice = ""): Pr
   keyboard.text("🔌 API Connections", MANAGE_CONNECTIONS_CALLBACK).row();
   keyboard.text(topic ? "← Topic Model Center" : "← Default Models", topic ? SETTINGS_BACK_CALLBACK : SETTINGS_DEFAULT_MODELS_CALLBACK);
 
-  const current = topic ? (override ? `${format(override)} · Topic Override` : `Auto · Verified Primary native audio → otherwise ${format(mainDefault)}`) : format(mainDefault);
+  const current = topic ? (override ? `${format(override)} · Topic Override` : `Auto · ${mainDefault ? `${format(mainDefault)} first` : "verified Primary native audio"}`) : format(mainDefault);
   return {
     text: [notice, "🎙️ <b>Voice → Text</b>", "", `Current · ${current}`, "", topic
-      ? "Auto uses the Primary model natively only when both audio capability and its OpenCode/provider audio transport are verified; otherwise it uses the Main Default STT helper. Choose a model here to force a Topic override."
-      : "Choose the Main Default transcription helper used only when a Topic Primary cannot accept audio natively.", "", models.length ? "Only models with confirmed speech-to-text support are listed." : "No connected model currently has confirmed speech-to-text support."].filter(Boolean).join("\n"),
+      ? "A configured Voice → Text model takes priority and returns a transcript before the Coding AI responds. Auto uses verified Primary native audio only when no helper is configured. Choose a model here to force a Topic override."
+      : "Choose the Main Default transcription helper for incoming Telegram voice messages. When none is configured, a Primary model with verified native-audio transport may handle audio directly.", "", models.length ? "Only models with confirmed speech-to-text support are listed." : "No connected model currently has confirmed speech-to-text support."].filter(Boolean).join("\n"),
     keyboard,
   };
 }

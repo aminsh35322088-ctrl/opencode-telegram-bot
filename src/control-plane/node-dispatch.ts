@@ -32,6 +32,10 @@ export async function dispatchAuthenticatedNodeControl(envelope: NodeEnvelope): 
       const {requestRailwayAgentTool}=await import("./application-transport.js");
       return await requestRailwayAgentTool(data);
     }
+    if (envelope.operation==="telegram.tool") {
+      const {requestTelegramAgentTool}=await import("./application-transport.js");
+      return await requestTelegramAgentTool(data,{nodeId:envelope.nodeId,generation:envelope.generation,chatId:envelope.chatId,threadId:envelope.threadId,sessionId});
+    }
     if (envelope.operation==="credential.get") {
       if(data.purpose==="mcp.request"){
         const {leaseMcpCredential}=await import("./mcp-credential-lease.js");

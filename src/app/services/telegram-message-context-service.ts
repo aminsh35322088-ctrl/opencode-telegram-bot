@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { Context } from "grammy";
-import { config } from "../../config.js";
+import { downloadTelegramFileById } from "./file-download-service.js";
 import { readAppState, updateAppState } from "../stores/app-state-store.js";
 
 const STATE_KEY = "telegramMessageContexts";
@@ -110,16 +110,17 @@ export async function fetchTelegramContextMedia(worktree: string, input: { targe
   const index = Math.trunc(input.index ?? 0); const media = message.media[index];
   if (!media) throw new Error(`No Telegram media at index ${index} for target=${input.target ?? "current"}.`);
   if ((media.fileSize ?? 0) > MAX_MEDIA_BYTES) throw new Error("Telegram media exceeds the 20 MB agent fetch limit.");
-  const token = config.telegram.token; if (!token) throw new Error("Telegram bot token is not configured.");
-  const fileInfo = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${encodeURIComponent(media.fileId)}`);
-  const payload = await fileInfo.json() as { ok?: boolean; result?: { file_path?: string }; description?: string };
-  const filePath = payload.result?.file_path; if (!fileInfo.ok || !payload.ok || !filePath) throw new Error(payload.description || "Telegram getFile failed.");
-  const response = await fetch(`https://api.telegram.org/file/bot${token}/${filePath}`);
-  if (!response.ok) throw new Error(`Telegram media download failed (HTTP ${response.status}).`);
-  const contentLength = Number(response.headers.get("content-length") || 0); if (contentLength > MAX_MEDIA_BYTES) throw new Error("Telegram media exceeds the 20 MB agent fetch limit.");
-  const buffer = Buffer.from(await response.arrayBuffer()); if (buffer.length > MAX_MEDIA_BYTES) throw new Error("Telegram media exceeds the 20 MB agent fetch limit.");
+  const downloaded = await downloadTelegramFileById(media.fileId, { maxBytes: MAX_MEDIA_BYTES });
+  const buffer = downloaded.buffer;
+  const filePath = downloaded.filePath;
   const fallbackName = path.basename(filePath) || `${media.kind}-${Date.now()}`;
   const output = safeTarget(worktree, input.output?.trim() || path.join(".telegram", "fetched", fallbackName));
-  await fs.mkdir(path.dirname(output), { recursive: true }); await fs.writeFile(output, buffer);
+  await fs.mkdir(path.dirname(output), { recursive: true });
+  try {
+    await fs.writeFile(output, buffer, { flag: "wx", mode: 0o600 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new Error("Telegram media output already exists; choose a different path.");
+    throw error;
+  }
   return { path: output, media };
 }

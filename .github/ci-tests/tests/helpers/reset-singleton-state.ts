@@ -45,26 +45,29 @@ export async function resetSingletonState(): Promise<void> {
     { __resetPromptRecoveryStateForTests },
     { __resetToolActivityForTests },
     loggerModule,
-  ] = await Promise.all([
-    import("../../src/app/managers/question-manager.js"),
-    import("../../src/app/managers/permission-manager.js"),
-    import("../../src/app/managers/rename-manager.js"),
-    import("../../src/app/managers/interaction-manager.js"),
-    import("../../src/app/managers/summary-aggregation-manager.js"),
-    import("../../src/bot/keyboards/keyboard-manager.js"),
-    import("../../src/bot/pinned/pinned-message-manager.js"),
-    import("../../src/opencode/events.js"),
-    import("../../src/app/services/session-cache-service.js"),
-    import("../../src/bot/handlers/message-merger.js"),
-    import("../../src/app/managers/prompt-queue-manager.js"),
-    import("../../src/bot/handlers/prompt-queue-dispatch.js"),
-    import("../../src/app/managers/prompt-attachment-manager.js"),
-    import("../../src/bot/streaming/stream-throttle.js"),
-    import("../../src/app/services/session-stall-watchdog.js"),
-    import("../../src/bot/handlers/prompt.js"),
-    import("../../src/app/managers/tool-activity-manager.js"),
-    import("../../src/utils/logger.js"),
-  ]);
+  ] = [
+    // Import sequentially. Several reset targets share cyclic runtime dependencies;
+    // resolving all first-time imports concurrently can leave the ESM graph waiting
+    // forever before the test itself starts (the CI suite then stalls in beforeEach).
+    await import("../../src/app/managers/question-manager.js"),
+    await import("../../src/app/managers/permission-manager.js"),
+    await import("../../src/app/managers/rename-manager.js"),
+    await import("../../src/app/managers/interaction-manager.js"),
+    await import("../../src/app/managers/summary-aggregation-manager.js"),
+    await import("../../src/bot/keyboards/keyboard-manager.js"),
+    await import("../../src/bot/pinned/pinned-message-manager.js"),
+    await import("../../src/opencode/events.js"),
+    await import("../../src/app/services/session-cache-service.js"),
+    await import("../../src/bot/handlers/message-merger.js"),
+    await import("../../src/app/managers/prompt-queue-manager.js"),
+    await import("../../src/bot/handlers/prompt-queue-dispatch.js"),
+    await import("../../src/app/managers/prompt-attachment-manager.js"),
+    await import("../../src/bot/streaming/stream-throttle.js"),
+    await import("../../src/app/services/session-stall-watchdog.js"),
+    await import("../../src/bot/handlers/prompt.js"),
+    await import("../../src/app/managers/tool-activity-manager.js"),
+    await import("../../src/utils/logger.js"),
+  ];
 
   stopEventListening();
   __resetStreamThrottleForTests();

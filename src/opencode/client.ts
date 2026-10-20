@@ -98,7 +98,7 @@ const TOOL_GUIDANCE_PROMPT = `You have access to project-specific action tools. 
 • session-recovery — stuck sessions. action="inspect" (check status), action="abort", action="continue".
 • session — OpenCode session control. action="current", action="messages", action="abort", action="fork".
 • telegram — Telegram context. action="context.current", action="media.fetch".
-• media — image/audio. action="image.generate", action="stt.transcribe".
+• media — image/audio. Actions include "stt.status", "stt.transcribe", "video.prepare", "image.providers", "image.models", "image.current", "image.generate", and "image.edit". When the user asks you to create an image from a prompt, call media action="image.generate" with their full prompt; do not only describe the image or return a prompt. For a requested modification of an existing image, call action="image.edit" with its worktree-relative path. These actions use the configured Image Model and their generated files are delivered back to the same Telegram Topic.
 • browser — web browsing. action="goto", action="snapshot", action="click", action="screenshot".
 • actions — discover all available actions. action="list", action="describe", action="summary".
 • full-diagnostics / system-diagnostics / logs-observability — health and logs.

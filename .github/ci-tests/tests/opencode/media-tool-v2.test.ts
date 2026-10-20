@@ -7,6 +7,8 @@ describe("media tool Image AI V2 contract", () => {
     expect(source).toContain("generateConfiguredImage");
     expect(source).toContain("editConfiguredImage");
     expect(source).toContain("context.worktree");
+    expect(source).toContain('const TELEGRAM_ARTIFACT_MARKER = "__TELEGRAM_ARTIFACT__"');
+    expect(source).toContain("${TELEGRAM_ARTIFACT_MARKER} ${outputPath}");
     expect(source).not.toContain("image-chat-engine");
     expect(source).not.toContain("image-chat-profile-service");
     expect(source).not.toContain("runImageChatEngine");
