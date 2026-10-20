@@ -45,8 +45,7 @@ export async function buildRailwaySettingsView(settings?: RailwayWorkerSettings)
       `Workspace · <b>${workspace}</b>`,
       `Worker creation · <b>${current.workerCreationEnabled ? "ON" : "OFF"}</b>`,
       "Worker fleet · <b>4 maximum</b> (+ this Control Plane)",
-      "Sleep policy · <b>Unassigned Workers only</b>",
-      `Worker creation · <b>${current.workerCreationEnabled ? "ON" : "OFF"}</b>`, "",
+      "Sleep policy · <b>Unassigned Workers only</b>", "";
       "A Worker assigned to a Topic stays awake even when its model is idle.",
       "Only a Worker with no Topic assignment may sleep. Its Railway Service and /data Volume are retained for reuse.",
       "The four-Worker fleet limit is fixed; capacity controls are managed by the Control Plane and cannot exceed this limit.",
