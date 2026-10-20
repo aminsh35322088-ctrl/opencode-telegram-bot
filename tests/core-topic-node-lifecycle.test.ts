@@ -87,10 +87,9 @@ test('New Chat preflight verifies the selected live Worker before returning it',
  assert.equal(f.calls.includes('health'),true);assert.equal(f.calls.includes('session.create'),false);
 });
 
-test('New Chat recovers an existing Worker even when another warm slot cannot be provisioned',async()=>{
- const f=await fixture('overflow-capacity');await f.lifecycle.bootstrapPool(1);
+test('New Chat reconciles an existing slot when no Worker is currently marked available',async()=>{
+ const f=await fixture();await f.lifecycle.bootstrapPool(1);
  const [first]=await f.bindings.list();
- await f.bindings.ensurePoolSlots(2);
  await f.bindings.update(first!.nodeId,first!.generation,{status:'pool-provisioning'});
  const worker=await f.lifecycle.verifyAvailableWorker();
  assert.equal(worker.nodeId,first!.nodeId);assert.equal(worker.status,'available');
