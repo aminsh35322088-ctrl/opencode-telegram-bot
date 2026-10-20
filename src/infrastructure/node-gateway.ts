@@ -16,6 +16,7 @@ interface InfrastructureSetupController {
   selectWorkspace(workspaceId:string):Promise<unknown>;
   getSettings():Promise<unknown>;
   updateSettings(patch:unknown):Promise<unknown>;
+  railwayTool(payload:unknown):Promise<unknown>;
 }
 interface BootstrapGrantConsumer {
   consume(input:{bootstrapToken:string;serviceId:string;projectId:string}):Promise<{version:1;identity:{nodeId:string;generation:number;chatId:number;threadId:number};secret:string}>;
@@ -78,6 +79,7 @@ export function startNodeGateway(child:ChildProcess,registry:Registry,protocol:N
           result=await setup.selectWorkspace(workspaceId);
         }else if(input.operation==="settings.get")result=await setup.getSettings();
         else if(input.operation==="settings.update")result=await setup.updateSettings(input.payload?.patch);
+        else if(input.operation==="railway.tool")result=await setup.railwayTool(input.payload);
         else throw new Error("Infrastructure setup operation denied");
         child.send({channel:"infrastructure-configure-response",requestId:input.requestId,ok:true,result});
       }catch{child.send({channel:"infrastructure-configure-response",requestId:input.requestId,ok:false});}
