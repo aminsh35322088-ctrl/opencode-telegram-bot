@@ -470,8 +470,16 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       // Existing image-less Workers retain their legacy source during authenticated
       // identity handoff. Only new allocations require the immutable image contract.
       const source=record.image&&desiredImage?{image:desiredImage}:record.image?{image:record.image}:{repo:"aminsh35322088-ctrl/opencode-telegram-core",branch:"main",commitSha:"9a188586a660967227a044a3224280e6923e3067"};
+      const previousDeploymentId=serviceInstance?.latestDeployment?.id??record.deploymentId;
+      const redeployForSleepOnly=sleepPolicyChanged&&!managedImageDrift&&record.everDeployed===true;
       record.everDeployed=true;await this.save(journal);
-      await this.mutate(`mutation WorkerSource($environmentId:String!,$patch:EnvironmentConfig!){environmentPatchCommit(environmentId:$environmentId,patch:$patch,commitMessage:"Deploy fenced Worker runtime")}`, {environmentId:pool.environmentId,patch:{services:{[record.serviceId!]:{source}}}});
+      if(redeployForSleepOnly){
+        // Railway documents a dedicated redeploy mutation. Reapplying an identical
+        // source patch is not a reliable way to activate a changed Serverless flag.
+        await this.mutate(`mutation WorkerRedeploy($serviceId:String!,$environmentId:String!){serviceInstanceRedeploy(serviceId:$serviceId,environmentId:$environmentId)}`,{serviceId:record.serviceId,environmentId:pool.environmentId});
+      }else{
+        await this.mutate(`mutation WorkerSource($environmentId:String!,$patch:EnvironmentConfig!){environmentPatchCommit(environmentId:$environmentId,patch:$patch,commitMessage:"Deploy fenced Worker runtime")}`, {environmentId:pool.environmentId,patch:{services:{[record.serviceId!]:{source}}}});
+      }
       // Record the new immutable identity only after Railway accepts the source
       // change. If the mutation response is lost, retrying retains the old pin
       // and re-applies the identical, idempotent source patch instead of
@@ -479,7 +487,6 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       if(record.image&&desiredImage){record.image=desiredImage;record.runtimeCommit=desiredCommit;record.runtimeVersion=desiredVersion;}
       record.phase = "deploying"; await this.save(journal);
       inventory = await this.inventory(pool);
-      const previousDeploymentId=record.deploymentId;
       let latestDeployment=inventory.environment.serviceInstances.edges.find(entry => entry.node.serviceId === record!.serviceId)?.node.latestDeployment;
       if(sleepPolicyChanged){
         record.sleepPolicyDeploymentVerified=false;
