@@ -10,6 +10,12 @@ test("initial Railway fleet is hard-capped at four Workers", () => {
   assert.equal(DEFAULT_RAILWAY_WORKER_SETTINGS.warmCapacity, 4);
 });
 
+test("onboarding progress cannot advertise more than four Workers", async () => {
+  assert.equal(summarizeRailwayBootstrap([],0,0).workersTarget,4);
+  assert.equal(summarizeRailwayBootstrap([],0,5).workersTarget,4);
+  assert.equal(summarizeRailwayBootstrap([],0,99).workersTarget,4);
+});
+
 test("legacy Worker settings migrate down to four and updates cannot exceed the hard cap", async () => {
   const directory=await mkdtemp(path.join(tmpdir(),"railway-worker-settings-"));
   const filename=path.join(directory,"settings.json");
