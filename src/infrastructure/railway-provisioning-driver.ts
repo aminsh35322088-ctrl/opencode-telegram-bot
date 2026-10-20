@@ -81,7 +81,7 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
   listWorkers():Promise<ProvisionedNode[]>{return this.singleFlight(async()=>structuredClone((await this.read()).nodes));}
   inspectWorker(nodeId:string,generation:number):Promise<ProvisionedNode>{
     return this.singleFlight(async()=>{
-      await this.binding(nodeId,generation);
+      const binding=await this.binding(nodeId,generation);
       const journal=await this.read();const record=journal.nodes.find(n=>n.nodeId===nodeId&&n.generation===generation);
       if(!record)throw new WorkerProvisioningError("reconciliation_required");
       const pool=this.options.pools.find(p=>p.projectId===record.projectId)!;const inventory=await this.inventory(pool);
@@ -89,6 +89,12 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       const instance=inventory.environment.serviceInstances.edges.find(e=>e.node.serviceId===record.serviceId)?.node;
       const attached=inventory.project.volumes.edges.flatMap(e=>e.node.volumeInstances.edges.map(v=>v.node)).filter(v=>v.environmentId===pool.environmentId&&v.serviceId===record.serviceId);
       if(!instance?.latestDeployment?.id||!instance.domains.serviceDomains.some(domain=>new URL(record.endpoint!).hostname===domain.domain)||attached.length!==1||attached[0]!.volumeId!==record.volumeId||attached[0]!.mountPath!=="/data"||attached[0]!.isPendingDeletion)throw new WorkerProvisioningError("reconciliation_required");
+      const shouldSleep=binding.chatId===0&&binding.threadId===0;
+      if(record.sleepApplication!==shouldSleep){
+        await this.mutate(`mutation WorkerSleepPolicy($environmentId:String!,$serviceId:String!,$input:ServiceInstanceUpdateInput!){serviceInstanceUpdate(environmentId:$environmentId,serviceId:$serviceId,input:$input)}`,{environmentId:pool.environmentId,serviceId:record.serviceId,input:{numReplicas:1,sleepApplication:shouldSleep}});
+        record.sleepApplication=shouldSleep;
+        await this.save(journal);
+      }
       return {...structuredClone(record),deploymentId:inventory.environment.serviceInstances.edges.find(e=>e.node.serviceId===record.serviceId)?.node.latestDeployment?.id};
     });
   }
@@ -330,8 +336,8 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       // Serverless sleep mode stops idle Worker compute while preserving its volume;
       // an inbound Worker request wakes it before lifecycle readiness is confirmed.
       // Existing attached volumes retain their region; discovery defaults must never move their service.
-      await this.mutate(`mutation WorkerConfig($environmentId:String!,$serviceId:String!,$input:ServiceInstanceUpdateInput!){serviceInstanceUpdate(environmentId:$environmentId,serviceId:$serviceId,input:$input)}`, {environmentId:pool.environmentId,serviceId:record.serviceId,input:{numReplicas:1,sleepApplication:true,healthcheckPath:"/health",healthcheckTimeout:30,...(instances.length===0?{multiRegionConfig:{[pool.region]:{numReplicas:1}}}:{}),tracingEnabled:false,autoInstrumentationEnabled:false,restartPolicyType:"ON_FAILURE",restartPolicyMaxRetries:3}});
-      record.sleepApplication=true;
+      await this.mutate(`mutation WorkerConfig($environmentId:String!,$serviceId:String!,$input:ServiceInstanceUpdateInput!){serviceInstanceUpdate(environmentId:$environmentId,serviceId:$serviceId,input:$input)}`, {environmentId:pool.environmentId,serviceId:record.serviceId,input:{numReplicas:1,sleepApplication:binding.chatId===0&&binding.threadId===0,healthcheckPath:"/health",healthcheckTimeout:30,...(instances.length===0?{multiRegionConfig:{[pool.region]:{numReplicas:1}}}:{}),tracingEnabled:false,autoInstrumentationEnabled:false,restartPolicyType:"ON_FAILURE",restartPolicyMaxRetries:3}});
+      record.sleepApplication=binding.chatId===0&&binding.threadId===0;
       await this.save(journal);
       if(record.volumeId){
         const volume=inventory.project.volumes.edges.find(entry=>entry.node.id===record!.volumeId)?.node;
