@@ -374,8 +374,12 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       // Serverless sleep mode stops idle Worker compute while preserving its volume;
       // an inbound Worker request wakes it before lifecycle readiness is confirmed.
       // Existing attached volumes retain their region; discovery defaults must never move their service.
+      const desiredImage=this.options.workerImage;
+      const desiredCommit=this.options.coreCommit??WORKER_CORE_COMMIT;
+      const desiredVersion=this.options.workerVersion??WORKER_CORE_VERSION;
+      const managedImageDrift=Boolean(record.image&&desiredImage&&(record.image!==desiredImage||record.runtimeCommit!==desiredCommit||record.runtimeVersion!==desiredVersion));
       const desiredSleep=binding.chatId===0&&binding.threadId===0;
-      const sleepPolicyChanged=desiredSleep
+      let sleepPolicyChanged=desiredSleep
         ? record.sleepApplication!==true||record.sleepPolicyDeploymentVerified!==true
         : record.sleepApplication===true;
       // If the source rollout already started, never start a second deployment.
@@ -395,7 +399,9 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
         }
         if(record.sleepPolicyDeploymentId===latest.id&&["SUCCESS","ACTIVE"].includes(status??"")){
           record.sleepPolicyDeploymentPending=false;record.sleepPolicyDeploymentVerified=true;await this.save(journal);
-          return {...structuredClone(record),deploymentId:latest.id,deploymentStatus:latest.status,sleepPolicyUpdated:true};
+          // Do not let a completed sleep rollout mask a newer requested image.
+          sleepPolicyChanged=record.sleepApplication!==desiredSleep;
+          if(!managedImageDrift)return {...structuredClone(record),deploymentId:latest.id,deploymentStatus:latest.status,sleepPolicyUpdated:true};
         }
         return {...structuredClone(record),deploymentId:latest.id,deploymentStatus:status,sleepPolicyUpdated:true};
       }
@@ -437,10 +443,6 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
         await this.binding(nodeId,generation);
       }
       if(!verifiedVolume)throw new Error("Worker volume activation pending; retry reconciliation");
-      const desiredImage=this.options.workerImage;
-      const desiredCommit=this.options.coreCommit??WORKER_CORE_COMMIT;
-      const desiredVersion=this.options.workerVersion??WORKER_CORE_VERSION;
-      const managedImageDrift=Boolean(record.image&&desiredImage&&(record.image!==desiredImage||record.runtimeCommit!==desiredCommit||record.runtimeVersion!==desiredVersion));
       if(managedImageDrift&&(binding.chatId!==0||binding.threadId!==0))throw new WorkerProvisioningError("image_mismatch");
       if (record.phase === "deploying" && record.endpoint && !managedImageDrift && !sleepPolicyChanged) {
         const knownDomains = inventory.environment.serviceInstances.edges.find(entry => entry.node.serviceId === record!.serviceId)?.node.domains.serviceDomains ?? [];
