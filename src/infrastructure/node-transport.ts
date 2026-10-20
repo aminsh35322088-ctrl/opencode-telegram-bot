@@ -52,7 +52,7 @@ export class InfrastructureNodeTransport {
  /** Bounded reconciliation evidence only. Never admits execution or exposes signing material. */
  async probeUnboundBoundary(nodeId:string,generation:number):Promise<{health:true;replayRejected:true;foreignTopicRejected:true;staleGenerationRejected:true}>{
   const identity=await this.registry.resolve(nodeId);
-  if(!identity||identity.binding.generation!==generation||identity.binding.chatId!==0||identity.binding.threadId!==0||identity.binding.status!=="available")throw new Error("Unbound boundary probe scope denied");
+  if(!identity||identity.binding.generation!==generation||identity.binding.chatId!==0||identity.binding.threadId!==0||!["available","pool-provisioning"].includes(identity.binding.status))throw new Error("Unbound boundary probe scope denied");
   const envelope:NodeEnvelope={version:1,nodeId,generation,chatId:0,threadId:0,operation:"health",payload:{},timestamp:Date.now(),nonce:randomUUID().replaceAll("-","")};
   const send=async(signed:{body:string;signature:string})=>{
    const current=await this.registry.resolve(nodeId);
