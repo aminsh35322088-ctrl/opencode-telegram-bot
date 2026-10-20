@@ -117,7 +117,7 @@ export class TopicNodeLifecycle {
       // (for example when Railway rejects creating another project). Reconcile the
       // existing slots before reporting exhaustion, then re-read durable state:
       // successful available Workers must remain usable even if another slot failed.
-      try{await this.bootstrapPool(0);}catch{ /* Partial pool recovery is allowed; re-check available bindings below. */ }
+      try{await this.bootstrapPool();}catch{ /* Partial pool recovery is allowed; re-check available bindings below. */ }
       binding=(await this.dependencies.bindings.list()).find(item=>item.status==='available'&&item.chatId===0&&item.threadId===0);
     }
     if(!binding)throw new WorkerProvisioningError("capacity_exhausted");
