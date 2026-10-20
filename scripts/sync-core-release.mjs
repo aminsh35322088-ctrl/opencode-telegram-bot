@@ -172,20 +172,28 @@ async function getRegistryToken() {
 }
 
 async function fetchWorkerManifest(reference, token) {
+  const referencePath = /^sha256:[a-f0-9]{64}$/.test(reference) ? reference : encodeURIComponent(reference);
   const response = await fetch(
-    `${REGISTRY}/v2/${WORKER_IMAGE_REPOSITORY}/manifests/${/^sha256:[a-f0-9]{64}$/.test(reference) ? reference : encodeURIComponent(reference)}`,
+    REGISTRY + "/v2/" + WORKER_IMAGE_REPOSITORY + "/manifests/" + referencePath,
     {
-      headers: { Authorization: `Bearer ${token}`, Accept: MANIFEST_ACCEPT },
+      headers: { Authorization: "Bearer " + token, Accept: MANIFEST_ACCEPT },
       redirect: "error",
       signal: AbortSignal.timeout(30_000),
     },
   );
-  if (!response.ok) throw new Error(`Worker image manifest unavailable for verified Core commit (HTTP ${response.status})`);
+  if (!response.ok) throw new Error("Worker image manifest unavailable for verified Core commit (HTTP " + response.status + ")");
   const imageDigest = response.headers.get("docker-content-digest");
   if (typeof imageDigest !== "string" || !/^sha256:[a-f0-9]{64}$/.test(imageDigest)) {
     throw new Error("Worker registry did not return an immutable SHA-256 manifest digest");
   }
-  return { digest: imageDigest, manifest: await response.json() };
+  if (/^sha256:[a-f0-9]{64}$/.test(reference) && imageDigest !== reference) {
+    throw new Error("Worker registry returned a manifest different from the requested digest");
+  }
+  const body = await readBoundedBytes(response, 8 * 1024 * 1024, "Worker image manifest");
+  if (digest(body, "sha256") !== imageDigest.slice("sha256:".length)) {
+    throw new Error("Worker registry manifest failed its content digest");
+  }
+  return { digest: imageDigest, manifest: JSON.parse(body.toString("utf8")) };
 }
 
 async function verifyWorkerImage(sourceCommit) {
@@ -208,20 +216,23 @@ async function verifyWorkerImage(sourceCommit) {
     throw new Error("Worker image manifest has no valid config digest");
   }
   const configResponse = await fetch(
-    `${REGISTRY}/v2/${WORKER_IMAGE_REPOSITORY}/blobs/${configDigest}`,
+    REGISTRY + "/v2/" + WORKER_IMAGE_REPOSITORY + "/blobs/" + configDigest,
     {
-      headers: { Authorization: `Bearer ${token}` },
-      redirect: "error",
+      headers: { Authorization: "Bearer " + token },
+      redirect: "follow",
       signal: AbortSignal.timeout(30_000),
     },
   );
   const configBytes = await readBoundedBytes(configResponse, 8 * 1024 * 1024, "Worker image config");
-  if (digest(configBytes, "sha256") !== configDigest.slice("sha256:".length)) {\n    throw new Error("Worker image configuration failed its content digest");\n  }\n  const imageConfig = JSON.parse(configBytes.toString("utf8"));
+  if (digest(configBytes, "sha256") !== configDigest.slice("sha256:".length)) {
+    throw new Error("Worker image configuration failed its content digest");
+  }
+  const imageConfig = JSON.parse(configBytes.toString("utf8"));
   const labels = imageConfig.config?.Labels ?? imageConfig.config?.labels ?? {};
   if (labels["org.opencontainers.image.revision"] !== sourceCommit) {
     throw new Error("Worker image source label does not match the verified Core release commit");
   }
-  return `${REGISTRY}/${WORKER_IMAGE_REPOSITORY}@${root.digest}`;
+  return REGISTRY + "/" + WORKER_IMAGE_REPOSITORY + "@" + root.digest;
 }
 
 export function selectLatestRelease(releases) {
