@@ -25,6 +25,7 @@ export const MANAGED_OPENCODE_PERMISSION_POLICY = {
   "safe-download": "allow",
   "send-file": "allow",
   "tailscale": "allow",
+  "railway": "allow",
   "ssh": "allow",
   "ssh-remote": "ask",
   "bash": {

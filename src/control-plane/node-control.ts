@@ -11,6 +11,7 @@ export interface NodeControlDependencies {
 }
 const operations = new Set([
   "snapshot.get",
+  "railway.tool",
   "credential.get",
   "credential.acquire",
   "credential.validate",

@@ -24,8 +24,15 @@ given that identity or an escalation capability.
 
 The application has only a narrow inherited IPC setup surface: read setup status,
 submit one transient candidate credential, and select one validated workspace.
-There is no generic GraphQL proxy or credential getter. Infrastructure lifecycle
-requests are separately allow-listed (`provision`, `retire`, `reconcile`). The
+There is no generic GraphQL proxy or credential getter. Bound Topic Workers may
+request a fixed read-only Railway tool surface (workspace/projects, project and
+service metadata, recent deployment status, and bounded deployment logs). The
+Control Plane validates each project against its selected workspace, each service
+and environment against that project, and each log request against a deployment
+belonging to that service. The model cannot submit GraphQL documents or mutations;
+secret variable values are never returned. The tool request travels over the
+existing signed node protocol and privileged launcher IPC. Infrastructure lifecycle
+requests remain separately allow-listed (`provision`, `retire`, `reconcile`). The
 public HTTP gateway exposes only health and the signed node protocol.
 
 Worker allocation is request-driven. Definitive Railway quota exhaustion may
