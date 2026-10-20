@@ -142,7 +142,7 @@ test('cluster canary does not hold the Root infrastructure queue and keeps the c
  const canaryStarted=new Promise<void>(resolve=>{startedCanary=resolve;});
  const canaryGate=new Promise<void>(resolve=>{releaseCanary=resolve;});
  const worker={...binding,unbound:true,image:WORKER_RUNTIME_IMAGE,runtimeCommit:WORKER_CORE_COMMIT,runtimeVersion:WORKER_CORE_VERSION,phase:'recycled' as const};
- const provisioner={listWorkers:async()=>[worker],inspectWorker:async()=>worker};
+ const provisioner={listWorkers:async()=>[worker],inspectWorker:async()=>worker,provision:async()=>({...worker,sleepApplication:true})};
  const controller=new InfrastructureController({
   registry,stateDirectory:home,bindingFilename:filename,request:async()=>{throw Error('unexpected Railway mutation');},
   probeUnbound:async()=>{},

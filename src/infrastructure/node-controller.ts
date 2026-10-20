@@ -177,7 +177,7 @@ export class InfrastructureController {
     // retired. Inspect it without deployment churn when its immutable release is
     // already current; only image drift or an incomplete provisioning phase calls
     // provision(), which may apply a new source and initiate a Railway deployment.
-    const needsProvision=!before||imageDrift||!["deploying","recycled"].includes(before.phase);
+    const needsProvision=!before||imageDrift||before.sleepApplication!==true||!["deploying","recycled"].includes(before.phase);
     const reconciled=needsProvision
       ? await provisioner.provision(nodeId,generation)
       : await provisioner.inspectWorker(nodeId,generation);
@@ -188,10 +188,10 @@ export class InfrastructureController {
     if(!registered||registered.binding.generation!==generation||registered.binding.chatId!==0||registered.binding.threadId!==0||registered.endpoint!==binding.endpoint)throw Error('Worker registry changed during runtime reconciliation');
     this.options.registry.install({...registered,binding:{...registered.binding,status:binding.status}});
     await this.options.registry.persist(path.join(this.options.stateDirectory,'nodes.json'));
-    if(imageUpdateStarted){
+    if(imageUpdateStarted||reconciled.sleepPolicyUpdated){
      this.verifiedUnbound.delete(nodeId);
      this.clusterVerified=false;
-     process.stdout.write(`[InfrastructureBoundary] worker_image_update_started node=${nodeId} generation=${generation} version=${reconciled.runtimeVersion??"unknown"}\n`);
+     process.stdout.write(`[InfrastructureBoundary] worker_runtime_update_started node=${nodeId} generation=${generation} version=${reconciled.runtimeVersion??"unknown"} sleepPolicyUpdated=${reconciled.sleepPolicyUpdated===true}\n`);
      return {...reconciled,imageUpdated:true};
     }
    }

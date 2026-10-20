@@ -31,7 +31,10 @@ async function fixture() {
         assert.equal(input.region,undefined);
         assert.equal(input.builder,undefined,'Dockerfile detection must not pass unsupported DOCKERFILE Builder enum');
         assert.equal(input.healthcheckTimeout,30,'Worker Agent liveness must fail fast instead of retrying for five minutes');
-        assert.equal(input.sleepApplication,false,'Warm pool Workers must stay awake for reliable readiness and New Chat routing');
+        const service=services.find(item=>item.id===variables.serviceId);
+        const workerId=service?.name.startsWith("topic-node-")?service.name.slice("topic-node-".length):"";
+        const binding=bindings.get(workerId);
+        assert.equal(input.sleepApplication,binding?.chatId===0&&binding.threadId===0,'Only unbound idle Workers should enter Railway sleep mode');
         result={serviceInstanceUpdate:true};
       } else if(document.includes('mutation WorkerVolume(')) {
         const volume={id:'v'+volumes.length,projectId:input.projectId as string,serviceId:input.serviceId as string,environmentId:input.environmentId as string};volumes.push(volume);result={volumeCreate:{id:volume.id}};
@@ -142,12 +145,14 @@ test('Worker cleanup fails closed on profile failure, ownership mismatch and can
  await assert.rejects(f.controller.cleanupDeprecatedWorkerVariables('one',1,async(id,generation,profile)=>{if(profile==='network')binding.sessionId='now-bound';return good(id,generation,profile);}));assert.equal(deletes,0);
 });
 
-test('dynamic configured project limits permit more than four and roll over deterministically',async()=>{
+test('global Worker ceiling blocks the fifth service across configured Railway projects',async()=>{
  const f=await fixture();f.options.pools[0]!.capacity=3;f.options.pools[1]!.capacity=3;
- for(let i=0;i<7;i++)f.add('dynamic'+i);
- const nodes=await Promise.all(Array.from({length:6},(_,i)=>f.controller.provision('dynamic'+i,1)));
- assert.deepEqual(nodes.map(n=>n.projectId),['a','a','a','b','b','b']);
- await assert.rejects(f.controller.provision('dynamic6',1),error=>typeof error==='object'&&error!==null&&'category' in error&&error.category==='capacity_exhausted');
+ for(let i=0;i<5;i++)f.add('dynamic'+i);
+ const nodes=[];for(let i=0;i<4;i++)nodes.push(await f.controller.provision('dynamic'+i,1));
+ assert.deepEqual(nodes.map(n=>n.projectId),['a','a','a','b']);
+ assert.equal(f.services.length,4);
+ await assert.rejects(f.controller.provision('dynamic4',1),error=>typeof error==='object'&&error!==null&&'category' in error&&error.category==='capacity_exhausted');
+ assert.equal(f.services.length,4,'no overflow project may create a fifth Worker service');
 });
 test('immutable image identity is deployed and persisted without repository source or bootstrap expansion',async()=>{
  const f=await fixture();f.add('image');f.options.workerImage='ghcr.io/example/core@sha256:'+'a'.repeat(64);

@@ -14,7 +14,7 @@ interface Edge<T> { edges: Array<{ node: T }>; pageInfo: { hasNextPage: boolean 
 interface VolumeInstance { environmentId: string; serviceId: string | null; volumeId: string; sizeMB: number; mountPath: string; isPendingDeletion: boolean }
 interface Inventory {
   project: { id: string; services: Edge<{ id: string; name: string; deletedAt?:string|null }>; volumes: Edge<{ id: string; volumeInstances: Edge<VolumeInstance> }> };
-  environment: { id: string; projectId: string; serviceInstances: Edge<{serviceId: string; domains: {serviceDomains: Array<{id: string; domain: string}>}; latestDeployment: {id: string} | null}> };
+  environment: { id: string; projectId: string; serviceInstances: Edge<{serviceId: string; domains: {serviceDomains: Array<{id: string; domain: string}>}; latestDeployment: {id: string;status?:string} | null}> };
 }
 export interface NodeProvisionerOptions {
   request<T>(document: string, variables: Record<string, unknown>): Promise<T>;
@@ -33,7 +33,7 @@ export interface NodeProvisionerOptions {
   /** Install the root-private transport identity before the Worker can call back during startup. */
   configured?(binding: Readonly<NodeBinding>, node: Readonly<ProvisionedNode>): Promise<void>;
 }
-const INVENTORY = `query WorkerInventory($projectId:String!,$environmentId:String!){ project(id:$projectId){id services(first:100){pageInfo{hasNextPage} edges{node{id name deletedAt}}} volumes(first:100){pageInfo{hasNextPage} edges{node{id volumeInstances(first:100){pageInfo{hasNextPage} edges{node{environmentId serviceId volumeId sizeMB mountPath isPendingDeletion}}}}}}} environment(id:$environmentId){id projectId serviceInstances(first:100){pageInfo{hasNextPage} edges{node{serviceId domains{serviceDomains{id domain}} latestDeployment{id}}}}}}`;
+const INVENTORY = `query WorkerInventory($projectId:String!,$environmentId:String!){ project(id:$projectId){id services(first:100){pageInfo{hasNextPage} edges{node{id name deletedAt}}} volumes(first:100){pageInfo{hasNextPage} edges{node{id volumeInstances(first:100){pageInfo{hasNextPage} edges{node{environmentId serviceId volumeId sizeMB mountPath isPendingDeletion}}}}}}} environment(id:$environmentId){id projectId serviceInstances(first:100){pageInfo{hasNextPage} edges{node{serviceId domains{serviceDomains{id domain}} latestDeployment{id status}}}}}}`;
 
 /** Root-owned request-driven controller: no background loop and no arbitrary GraphQL interface. */
 export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
@@ -42,7 +42,7 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
     if (!/^[a-f0-9]{40}$/.test(options.coreCommit ?? WORKER_CORE_COMMIT)) throw new Error("Worker Core source must be an exact commit");
     const control = new URL(options.controlUrl);
     if (control.protocol !== "https:" || !control.hostname.endsWith(".up.railway.app") || control.username || control.password || control.search || control.hash || control.pathname !== "/") throw new Error("Control URL must be a Railway HTTPS domain");
-    if ((!options.pools.length && !options.createPool) || new Set(options.pools.map(p=>p.projectId)).size!==options.pools.length || options.pools.some(p=>!p.projectId||!p.environmentId||(p.capacity!==undefined&&(!Number.isSafeInteger(p.capacity)||p.capacity<0)))) throw new Error("Invalid Worker pool policy");
+    if ((!options.pools.length && !options.createPool) || new Set(options.pools.map(p=>p.projectId)).size!==options.pools.length || options.pools.some(p=>!p.projectId||!p.environmentId||(p.capacity!==undefined&&(!Number.isSafeInteger(p.capacity)||p.capacity<0||p.capacity>4)))) throw new Error("Invalid Worker pool policy");
     if(options.workerImage&&!/^[a-z0-9][a-z0-9./_-]*@sha256:[a-f0-9]{64}$/.test(options.workerImage))throw new Error("Worker image must be an immutable digest");
   }
   /** Only explicit Railway deletedAt evidence authorizes forgetting an unbound pool. */
@@ -75,13 +75,13 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
   }
   listPools():readonly WorkerPool[]{return structuredClone(this.options.pools);}
   setPoolCapacity(capacity:number):void{
-    if(!Number.isSafeInteger(capacity)||capacity<1||capacity>100)throw new Error("Invalid Worker pool capacity");
+    if(!Number.isSafeInteger(capacity)||capacity<1||capacity>4)throw new Error("Worker pool capacity is capped at four");
     for(const pool of this.options.pools)pool.capacity=capacity;
   }
   listWorkers():Promise<ProvisionedNode[]>{return this.singleFlight(async()=>structuredClone((await this.read()).nodes));}
   inspectWorker(nodeId:string,generation:number):Promise<ProvisionedNode>{
     return this.singleFlight(async()=>{
-      await this.binding(nodeId,generation);
+      const binding=await this.binding(nodeId,generation);
       const journal=await this.read();const record=journal.nodes.find(n=>n.nodeId===nodeId&&n.generation===generation);
       if(!record)throw new WorkerProvisioningError("reconciliation_required");
       const pool=this.options.pools.find(p=>p.projectId===record.projectId)!;const inventory=await this.inventory(pool);
@@ -89,7 +89,13 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       const instance=inventory.environment.serviceInstances.edges.find(e=>e.node.serviceId===record.serviceId)?.node;
       const attached=inventory.project.volumes.edges.flatMap(e=>e.node.volumeInstances.edges.map(v=>v.node)).filter(v=>v.environmentId===pool.environmentId&&v.serviceId===record.serviceId);
       if(!instance?.latestDeployment?.id||!instance.domains.serviceDomains.some(domain=>new URL(record.endpoint!).hostname===domain.domain)||attached.length!==1||attached[0]!.volumeId!==record.volumeId||attached[0]!.mountPath!=="/data"||attached[0]!.isPendingDeletion)throw new WorkerProvisioningError("reconciliation_required");
-      return {...structuredClone(record),deploymentId:inventory.environment.serviceInstances.edges.find(e=>e.node.serviceId===record.serviceId)?.node.latestDeployment?.id};
+      const shouldSleep=binding.chatId===0&&binding.threadId===0;
+      if(record.sleepApplication!==shouldSleep){
+        await this.mutate(`mutation WorkerSleepPolicy($environmentId:String!,$serviceId:String!,$input:ServiceInstanceUpdateInput!){serviceInstanceUpdate(environmentId:$environmentId,serviceId:$serviceId,input:$input)}`,{environmentId:pool.environmentId,serviceId:record.serviceId,input:{numReplicas:1,sleepApplication:shouldSleep}});
+        record.sleepApplication=shouldSleep;
+        await this.save(journal);
+      }
+      return {...structuredClone(record),deploymentId:instance.latestDeployment.id,deploymentStatus:instance.latestDeployment.status};
     });
   }
   async inspectCapacity():Promise<Array<{pool:WorkerPool;used:number;available:number|null}>>{
@@ -315,6 +321,21 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       if (!record.serviceId) {
         record.serviceId = candidates[0]?.node.id;
         if (!record.serviceId) {
+          // Count actual services across every configured Railway project, not just
+          // the selected pool. Pool-quota fallback must never create Worker five.
+          const pools=[...this.options.pools];
+          if(!pools.some(candidate=>candidate.projectId===pool.projectId))pools.push(pool);
+          const inventories=await Promise.allSettled(pools.map(candidate=>candidate.projectId===pool.projectId?Promise.resolve(inventory):this.inventory(candidate)));
+          let actualWorkers=0;
+          for(const result of inventories){
+            if(result.status==="fulfilled"){
+              actualWorkers+=result.value.project.services.edges.filter(entry=>entry.node.name.startsWith("topic-node-")&&!entry.node.deletedAt).length;
+            }else if(!(result.reason instanceof InfrastructureRequestError&&result.reason.category==="project_unavailable")){
+              throw result.reason;
+            }
+          }
+          const journalWorkers=journal.nodes.filter(item=>item.phase!=="retired"&&!!item.serviceId).length;
+          if(Math.max(actualWorkers,journalWorkers)>=4)throw new WorkerProvisioningError("capacity_exhausted");
           // An ambiguous create is never blindly retried: next invocation reconciles the fixed name first.
           this.options.onStage?.("WorkerServiceCreate");
           const created = await this.options.request<{serviceCreate: {id: string}}>(`mutation WorkerService($input:ServiceCreateInput!){serviceCreate(input:$input){id}}`, {input:{projectId:pool.projectId,environmentId:pool.environmentId,name:serviceName}});
@@ -326,9 +347,15 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       inventory = await this.inventory(pool);
       const instances = inventory.project.volumes.edges.flatMap(entry => entry.node.volumeInstances.edges.map(instance => instance.node)).filter(instance => instance.environmentId === pool.environmentId && instance.serviceId === record!.serviceId);
       if (instances.length > 1) throw new Error("Worker must have exactly one volume");
-      // These five slots are the warm admission pool; Railway sleep/wake adds cold-start latency to health checks and New Chat.
+      // Hard cap the fleet through the durable four-slot admission policy. Railway
+      // Serverless sleep mode stops idle Worker compute while preserving its volume;
+      // an inbound Worker request wakes it before lifecycle readiness is confirmed.
       // Existing attached volumes retain their region; discovery defaults must never move their service.
-      await this.mutate(`mutation WorkerConfig($environmentId:String!,$serviceId:String!,$input:ServiceInstanceUpdateInput!){serviceInstanceUpdate(environmentId:$environmentId,serviceId:$serviceId,input:$input)}`, {environmentId:pool.environmentId,serviceId:record.serviceId,input:{numReplicas:1,sleepApplication:false,healthcheckPath:"/health",healthcheckTimeout:30,...(instances.length===0?{multiRegionConfig:{[pool.region]:{numReplicas:1}}}:{}),tracingEnabled:false,autoInstrumentationEnabled:false,restartPolicyType:"ON_FAILURE",restartPolicyMaxRetries:3}});
+      const desiredSleep=binding.chatId===0&&binding.threadId===0;
+      const sleepPolicyChanged=desiredSleep?record.sleepApplication!==true:record.sleepApplication===true;
+      await this.mutate(`mutation WorkerConfig($environmentId:String!,$serviceId:String!,$input:ServiceInstanceUpdateInput!){serviceInstanceUpdate(environmentId:$environmentId,serviceId:$serviceId,input:$input)}`, {environmentId:pool.environmentId,serviceId:record.serviceId,input:{numReplicas:1,sleepApplication:desiredSleep,healthcheckPath:"/health",healthcheckTimeout:30,...(instances.length===0?{multiRegionConfig:{[pool.region]:{numReplicas:1}}}:{}),tracingEnabled:false,autoInstrumentationEnabled:false,restartPolicyType:"ON_FAILURE",restartPolicyMaxRetries:3}});
+      record.sleepApplication=desiredSleep;
+      await this.save(journal);
       if(record.volumeId){
         const volume=inventory.project.volumes.edges.find(entry=>entry.node.id===record!.volumeId)?.node;
         if(!volume||volume.volumeInstances.edges.some(entry=>entry.node.serviceId!==null && entry.node.serviceId!==record!.serviceId))throw new Error("Node volume ownership mismatch");
@@ -369,11 +396,11 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       const desiredVersion=this.options.workerVersion??WORKER_CORE_VERSION;
       const managedImageDrift=Boolean(record.image&&desiredImage&&(record.image!==desiredImage||record.runtimeCommit!==desiredCommit||record.runtimeVersion!==desiredVersion));
       if(managedImageDrift&&(binding.chatId!==0||binding.threadId!==0))throw new WorkerProvisioningError("image_mismatch");
-      if (record.phase === "deploying" && record.endpoint && !managedImageDrift) {
+      if (record.phase === "deploying" && record.endpoint && !managedImageDrift && !sleepPolicyChanged) {
         const knownDomains = inventory.environment.serviceInstances.edges.find(entry => entry.node.serviceId === record!.serviceId)?.node.domains.serviceDomains ?? [];
         if (knownDomains.length !== 1 || `https://${knownDomains[0]?.domain}` !== record.endpoint || knownDomains[0]?.id !== record.domainId) throw new Error("Worker domain ownership mismatch");
         record.deploymentId = inventory.environment.serviceInstances.edges.find(entry => entry.node.serviceId === record!.serviceId)?.node.latestDeployment?.id;
-        await this.save(journal); await this.binding(nodeId,generation); return structuredClone(record);
+        await this.save(journal); await this.binding(nodeId,generation); return {...structuredClone(record),deploymentStatus:inventory.environment.serviceInstances.edges.find(entry=>entry.node.serviceId===record!.serviceId)?.node.latestDeployment?.status};
       }
       await this.binding(nodeId,generation);
       const secret = await this.options.ensureIdentity(binding, () => randomBytes(48).toString("base64url"));
@@ -403,10 +430,11 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       if(record.image&&desiredImage){record.image=desiredImage;record.runtimeCommit=desiredCommit;record.runtimeVersion=desiredVersion;}
       record.phase = "deploying"; await this.save(journal);
       inventory = await this.inventory(pool);
-      record.deploymentId = inventory.environment.serviceInstances.edges.find(entry => entry.node.serviceId === record!.serviceId)?.node.latestDeployment?.id;
+      const latestDeployment=inventory.environment.serviceInstances.edges.find(entry => entry.node.serviceId === record!.serviceId)?.node.latestDeployment;
+      record.deploymentId = latestDeployment?.id;
       await this.save(journal);
       await this.binding(nodeId,generation);
-      return structuredClone(record);
+      return {...structuredClone(record),deploymentStatus:latestDeployment?.status,sleepPolicyUpdated:sleepPolicyChanged};
   }
   retire(nodeId: string, generation: number): Promise<ProvisionedNode> {
     return this.singleFlight(async () => {

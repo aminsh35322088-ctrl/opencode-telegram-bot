@@ -12,8 +12,8 @@ export interface RailwayWorkerSettings {
 
 export const DEFAULT_RAILWAY_WORKER_SETTINGS: RailwayWorkerSettings = {
   workerCreationEnabled: true,
-  warmCapacity: 5,
-  workersPerProject: 5,
+  warmCapacity: 4,
+  workersPerProject: 4,
 };
 
 function integer(value: unknown, minimum: number, maximum: number, name: string): number {
@@ -36,8 +36,8 @@ export function normalizeRailwayWorkerSettings(value: unknown): RailwayWorkerSet
   if (typeof workerCreationEnabled !== "boolean") throw new Error("Invalid Railway Worker setting: workerCreationEnabled");
   return {
     workerCreationEnabled,
-    warmCapacity: integer(candidate.warmCapacity ?? DEFAULT_RAILWAY_WORKER_SETTINGS.warmCapacity, 0, 100, "warmCapacity"),
-    workersPerProject: integer(candidate.workersPerProject ?? DEFAULT_RAILWAY_WORKER_SETTINGS.workersPerProject, 1, 100, "workersPerProject"),
+    warmCapacity: integer(candidate.warmCapacity ?? DEFAULT_RAILWAY_WORKER_SETTINGS.warmCapacity, 0, 4, "warmCapacity"),
+    workersPerProject: integer(candidate.workersPerProject ?? DEFAULT_RAILWAY_WORKER_SETTINGS.workersPerProject, 1, 4, "workersPerProject"),
   };
 }
 
@@ -55,7 +55,18 @@ export class RailwayWorkerSettingsStore {
     try {
       const stat = await lstat(this.filename);
       if (!stat.isFile() || stat.isSymbolicLink() || !isRestrictiveMode(stat.mode) || stat.size > 64 * 1024) throw new Error("Invalid Railway Worker settings store");
-      this.current = normalizeRailwayWorkerSettings(JSON.parse(await readFile(this.filename, "utf8")));
+      const persisted=JSON.parse(await readFile(this.filename, "utf8")) as unknown;
+      // Migrate older persisted policies that allowed five or more Workers.
+      // Runtime settings updates still reject values above the hard four-Worker cap.
+      if(persisted&&typeof persisted==="object"&&!Array.isArray(persisted)){
+        const legacy=persisted as Record<string,unknown>;
+        this.current=normalizeRailwayWorkerSettings({
+          ...legacy,
+          warmCapacity:typeof legacy.warmCapacity==="number"?Math.min(legacy.warmCapacity,4):legacy.warmCapacity,
+          workersPerProject:typeof legacy.workersPerProject==="number"?Math.min(legacy.workersPerProject,4):legacy.workersPerProject,
+        });
+        if(legacy.warmCapacity!==this.current.warmCapacity||legacy.workersPerProject!==this.current.workersPerProject)await this.save(this.current);
+      }else this.current=normalizeRailwayWorkerSettings(persisted);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       this.current = { ...DEFAULT_RAILWAY_WORKER_SETTINGS };

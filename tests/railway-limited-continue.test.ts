@@ -12,7 +12,7 @@ test("limited Continue checks a ready Worker without provisioning the remaining 
  const listeners=process.listeners("message");
  process.send=((request:{requestId:string;operation:string})=>{
   assert.ok(["status","settings.get"].includes(request.operation));
-  const result=request.operation==="settings.get"?{workerCreationEnabled:true,warmCapacity:5,workersPerProject:5}:{configured:true,tokenType:"workspace",workspaceId:"w",projectCount:1,workers:Array.from({length:liveCount},(_,index)=>({nodeId:`n${index}`,generation:1,projectId:"p",serviceId:`s${index}`,volumeId:`v${index}`,verified:true}))};
+  const result=request.operation==="settings.get"?{workerCreationEnabled:true,warmCapacity:4,workersPerProject:4}:{configured:true,tokenType:"workspace",workspaceId:"w",projectCount:1,workers:Array.from({length:liveCount},(_,index)=>({nodeId:`n${index}`,generation:1,projectId:"p",serviceId:`s${index}`,volumeId:`v${index}`,verified:true}))};
   queueMicrotask(()=>process.emit("message",{channel:"infrastructure-configure-response",requestId:request.requestId,ok:true,result},undefined));
   return true;
  }) as typeof process.send;
@@ -33,8 +33,8 @@ test("limited Continue checks a ready Worker without provisioning the remaining 
   {name:"transport failure cannot use limited Continue",count:4,error:new Error("Node transport failed"),limited:true,panel:true,expected:false},
   {name:"policy capacity exhaustion cannot impersonate a free plan limit",count:4,error:new Error("NO WORKER AVAILABLE / CAPACITY EXHAUSTED"),limited:true,panel:true,expected:false},
   {name:"failure to open Main does not persist completion",count:4,error:undefined,limited:true,panel:false,expected:false},
-  {name:"normal Continue still requires all five Workers",count:4,error:undefined,limited:false,panel:true,expected:false},
-  {name:"full recovery also admits a previously limited button",count:5,error:undefined,limited:true,panel:true,expected:true},
+  {name:"normal Continue still requires all four Workers",count:3,error:undefined,limited:false,panel:true,expected:false},
+  {name:"full recovery also admits a previously limited button",count:4,error:undefined,limited:true,panel:true,expected:true},
  ];
  try{
   for(const scenario of cases)await t.test(scenario.name,async sub=>{
@@ -60,15 +60,15 @@ test("limited Continue checks a ready Worker without provisioning the remaining 
    }
   });
   await t.test("Retry renders truthful Free plan limit choices with real newlines",async sub=>{
-   liveCount=4;
+   liveCount=3;
    await setRailwaySetupCompleted(false);
-   sub.mock.method(nodeBindings,"list",async()=>Array.from({length:4},(_,index)=>({nodeId:`n${index}`,generation:1,slot:index+1,projectId:"p",serviceId:`s${index}`,volumeId:`v${index}`,status:"available"})));
+   sub.mock.method(nodeBindings,"list",async()=>Array.from({length:3},(_,index)=>({nodeId:`n${index}`,generation:1,slot:index+1,projectId:"p",serviceId:`s${index}`,volumeId:`v${index}`,status:"available"})));
    sub.mock.method(topicNodeLifecycle,"bootstrapPool",async()=>{throw quota;});
    let finish:()=>void=()=>{};
    const rendered=new Promise<void>(resolve=>{finish=resolve;});
    const ctx={chat:{id:-100},callbackQuery:{data:"railway:retry",message:{message_id:7,chat:{id:-100}}},answerCallbackQuery:async()=>{},api:{editMessageText:async(_chat:number,_id:number,text:string,options:{reply_markup?:{inline_keyboard:Array<Array<{text:string;callback_data:string}>>}})=>{
     if(!text.includes("Free plan limit"))return;
-    assert.match(text,/4\/5/);assert.doesNotMatch(text,/\\n/);
+    assert.match(text,/3\/4/);assert.doesNotMatch(text,/\\n/);
     const buttons=options.reply_markup?.inline_keyboard.flat()??[];
     assert.ok(buttons.some(button=>button.callback_data==="railway:continue-limited"&&button.text.includes("Continue with limited resources")));
     assert.ok(buttons.some(button=>button.callback_data==="railway:retry"));
@@ -86,12 +86,12 @@ test("limited Continue checks a ready Worker without provisioning the remaining 
    sub.mock.method(topicNodeLifecycle,"bootstrapPool",async()=>{
     attempts++;
     if(attempts===1)throw new Error("Infrastructure operation failed (provisioning_pending, HTTP 0)");
-    liveCount=4;throw quota;
+    liveCount=3;throw quota;
    });
    let finish!:()=>void;
    const rendered=new Promise<void>(resolve=>{finish=resolve;});
    const ctx={chat:{id:-101},callbackQuery:{data:"railway:retry",message:{message_id:8,chat:{id:-101}}},answerCallbackQuery:async()=>{},api:{editMessageText:async(_chat:number,_id:number,text:string,options:{reply_markup?:{inline_keyboard:Array<Array<{callback_data:string}>>}})=>{
-    if(text.includes("1/5")&&options.reply_markup?.inline_keyboard.flat().some(b=>b.callback_data==="railway:continue-limited"))offeredBeforeQuota=true;
+    if(text.includes("1/4")&&options.reply_markup?.inline_keyboard.flat().some(b=>b.callback_data==="railway:continue-limited"))offeredBeforeQuota=true;
     if(text.includes("Free plan limit"))finish();
    }}} as unknown as Context;
    await handleRailwayOnboardingCallback(ctx);

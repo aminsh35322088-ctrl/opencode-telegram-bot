@@ -9,10 +9,11 @@ test("concurrent allocations reserve durable unique identities", async () => {
   const filename = path.join(await mkdtemp(path.join(tmpdir(), "node-bindings-")), "bindings.json");
   const store = new NodeBindingStore(filename);
   const result = await Promise.allSettled(Array.from({ length: 5 }, (_, index) => store.reserve(-100, index + 2)));
-  assert.equal(result.filter((entry) => entry.status === "fulfilled").length, 5);
+  assert.equal(result.filter((entry) => entry.status === "fulfilled").length, 4);
+  assert.equal(result.filter((entry) => entry.status === "rejected").length, 1);
   const bindings = await new NodeBindingStore(filename).list();
-  assert.equal(new Set(bindings.map((entry) => entry.nodeId)).size, 5);
-  assert.equal((await store.reserve(-100,6)).nodeId,bindings[4]?.nodeId);
+  assert.equal(new Set(bindings.map((entry) => entry.nodeId)).size, 4);
+  await assert.rejects(store.reserve(-100,6),/CAPACITY EXHAUSTED/);
   assert.equal((await store.reserve(-100, 2)).nodeId, bindings[0]?.nodeId);
   assert.equal((await readFile(filename, "utf8")).includes("secret"), false);
 });
@@ -42,8 +43,9 @@ test('four unbound slots bootstrap idempotently and allocation claims only avail
  assert.deepEqual((await new NodeBindingStore(filename).ensurePoolSlots(4)).map(n=>n.nodeId),slots.map(n=>n.nodeId));
  for(const n of slots)await store.update(n.nodeId,n.generation,{status:'available',endpoint:'https://worker.up.railway.app'});
  const claims=await Promise.allSettled(Array.from({length:5},(_,i)=>store.reserve(-100,i+2)));
- assert.equal(claims.filter(n=>n.status==='fulfilled').length,5);
- const active=await store.list();assert.equal(new Set(active.map(n=>n.nodeId)).size,5);assert.deepEqual(active.map(n=>n.slot).sort((a,b)=>a!-b!),[1,2,3,4,5]);assert.equal(active.filter(n=>n.generation===2).length,4);assert.equal(active.filter(n=>n.generation===1).length,1);
+ assert.equal(claims.filter(n=>n.status==='fulfilled').length,4);
+ assert.equal(claims.filter(n=>n.status==='rejected').length,1);
+ const active=await store.list();assert.equal(new Set(active.map(n=>n.nodeId)).size,4);assert.deepEqual(active.map(n=>n.slot).sort((a,b)=>a!-b!),[1,2,3,4]);assert.equal(active.filter(n=>n.generation===2).length,4);
  assert.equal(await store.find(0,0),undefined);
 });
 
@@ -64,15 +66,17 @@ test('unbound slots reject session ownership and ready Topic status before writi
  assert.equal((await store.list())[0]!.status,'pool-reserved');assert.equal((await store.list())[0]!.sessionId,undefined);
 });
 
-test('lazy allocations exceed historical four and duplicate New Chat reservation is stable',async()=>{
+test('lazy allocations never exceed the four-Worker ceiling and duplicate reservation is stable',async()=>{
  const filename=path.join(await mkdtemp(path.join(tmpdir(),'dynamic-bindings-')),'bindings.json');
  const store=new NodeBindingStore(filename);
  await store.ensurePoolSlots(0);
- const nodes=await Promise.all(Array.from({length:7},(_,i)=>store.reserve(-100,i+2)));
- assert.equal(new Set(nodes.map(n=>n.nodeId)).size,7);
+ const attempts=await Promise.allSettled(Array.from({length:7},(_,i)=>store.reserve(-100,i+2)));
+ const nodes=attempts.filter((item):item is PromiseFulfilledResult<Awaited<ReturnType<typeof store.reserve>>>=>item.status==='fulfilled').map(item=>item.value);
+ assert.equal(new Set(nodes.map(n=>n.nodeId)).size,4);
+ assert.equal(attempts.filter(item=>item.status==='rejected').length,3);
  const duplicates=await Promise.all(Array.from({length:12},()=>store.reserve(-100,2)));
  assert.ok(duplicates.every(n=>n.nodeId===nodes[0]!.nodeId));
- assert.equal((await new NodeBindingStore(filename).list()).length,7);
+ assert.equal((await new NodeBindingStore(filename).list()).length,4);
 });
 test('a verified free Worker is claimed before a lazy reservation is created',async()=>{
  const store=new NodeBindingStore(path.join(await mkdtemp(path.join(tmpdir(),'reuse-bindings-')),'bindings.json'));
