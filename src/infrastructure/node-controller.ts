@@ -185,7 +185,7 @@ export class InfrastructureController {
     const needsProvision=!before||!observed||imageDrift||!["deploying","recycled"].includes(before.phase);
     const reconciled=needsProvision
       ? await provisioner.provision(nodeId,generation)
-      : observed;
+      : observed??await provisioner.inspectWorker(nodeId,generation);
     const imageUpdateStarted=actualImageDrift||Boolean(reconciled.image&&(!before||before.image!==reconciled.image||before.runtimeCommit!==reconciled.runtimeCommit||before.runtimeVersion!==reconciled.runtimeVersion));
     const currentBinding=await this.lookup(nodeId);
     if(!currentBinding||currentBinding.generation!==generation||currentBinding.chatId!==0||currentBinding.threadId!==0||currentBinding.status!==binding.status||currentBinding.serviceId!==binding.serviceId||currentBinding.volumeId!==binding.volumeId||currentBinding.endpoint!==binding.endpoint)throw Error('Canonical Worker binding changed during runtime reconciliation');
