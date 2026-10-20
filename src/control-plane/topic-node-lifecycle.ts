@@ -37,7 +37,7 @@ export class TopicNodeLifecycle {
     const operation=this.preparePool(warmCapacity,repairOnly).finally(()=>{if(this.poolFlight===operation)this.poolFlight=undefined;});
     this.poolFlight=operation;return operation;
   }
-  private async waitReady(binding:NodeBinding,status:'provisioning'|'pool-provisioning'|'available'|'retiring',expected?:ProvisionedNode):Promise<void> {
+  private async waitReady(binding:NodeBinding,status:'provisioning'|'pool-provisioning'|'available'|'retiring',expected?:ProvisionedNode,allowRuntimeTransition=false):Promise<void> {
     const deadline=this.dependencies.now()+300_000;
     let delay=50;
     const expectedReadiness=binding.chatId===0&&binding.threadId===0?'ready-unbound':'ready';
@@ -46,9 +46,15 @@ export class TopicNodeLifecycle {
       try {health=await this.rpc(binding,'health');} catch { /* deployment/wake may still be underway */ }
       const explicitlyReady=health?.ready===true&&health?.readiness===expectedReadiness;
       if(health&&explicitlyReady){
-        if(expected?.image&&(health.runtime?.telegramCoreCommit!==expected.runtimeCommit||health.runtime?.telegramCoreVersion!==expected.runtimeVersion))throw new WorkerProvisioningError("image_mismatch");
-        if(health.runtime)logger.info(`[WorkerImage] node=${binding.nodeId} generation=${binding.generation} image=${expected?.image??"legacy-contract"} actualCommit=${health.runtime!.telegramCoreCommit} actualVersion=${health.runtime!.telegramCoreVersion}`);
-        break;
+        const runtimeMatches=!expected?.image||(health.runtime?.telegramCoreCommit===expected.runtimeCommit&&health.runtime?.telegramCoreVersion===expected.runtimeVersion);
+        if(runtimeMatches){
+          if(health.runtime)logger.info(`[WorkerImage] node=${binding.nodeId} generation=${binding.generation} image=${expected?.image??"legacy-contract"} actualCommit=${health.runtime.telegramCoreCommit} actualVersion=${health.runtime.telegramCoreVersion}`);
+          break;
+        }
+        // Railway's old replica can still answer health while an immutable image
+        // deployment is rolling out. Only an explicitly reported image transition
+        // gets a bounded chance to converge; all other mismatches fail closed.
+        if(!allowRuntimeTransition)throw new WorkerProvisioningError("image_mismatch");
       }
       if(this.dependencies.now()>=deadline)throw new Error("Topic node readiness timed out");
       await this.dependencies.wait(Math.min(delay,Math.max(0,deadline-this.dependencies.now())));delay=Math.min(delay*2,1_000);
