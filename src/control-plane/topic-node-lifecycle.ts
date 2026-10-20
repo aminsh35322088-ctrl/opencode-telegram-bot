@@ -111,7 +111,15 @@ export class TopicNodeLifecycle {
     return (await this.dependencies.bindings.list()).filter(binding=>binding.status!=='retired').sort((a,b)=>a.slot!-b.slot!);
   }
   async verifyAvailableWorker():Promise<NodeBinding>{
-    const binding=(await this.dependencies.bindings.list()).find(item=>item.status==='available'&&item.chatId===0&&item.threadId===0);
+    let binding=(await this.dependencies.bindings.list()).find(item=>item.status==='available'&&item.chatId===0&&item.threadId===0);
+    if(!binding){
+      // A previous warm-pool bootstrap can fail while provisioning an extra slot
+      // (for example when Railway rejects creating another project). Reconcile the
+      // existing slots before reporting exhaustion, then re-read durable state:
+      // successful available Workers must remain usable even if another slot failed.
+      try{await this.bootstrapPool(0);}catch{ /* Partial pool recovery is allowed; re-check available bindings below. */ }
+      binding=(await this.dependencies.bindings.list()).find(item=>item.status==='available'&&item.chatId===0&&item.threadId===0);
+    }
     if(!binding)throw new WorkerProvisioningError("capacity_exhausted");
     try{
       // Reconcile the immutable runtime contract before comparing live health metadata.
