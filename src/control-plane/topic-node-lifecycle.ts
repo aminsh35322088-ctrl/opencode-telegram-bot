@@ -64,7 +64,6 @@ export class TopicNodeLifecycle {
             if(health.runtime)logger.info(`[WorkerImage] node=${binding.nodeId} generation=${binding.generation} image=${expected?.image??"legacy-contract"} actualCommit=${health.runtime.telegramCoreCommit} actualVersion=${health.runtime.telegramCoreVersion}`);
             break;
           }
-        }
         }else{
           // Railway's old replica can still answer health while an immutable image
           // deployment is rolling out. Only an explicitly reported image transition
