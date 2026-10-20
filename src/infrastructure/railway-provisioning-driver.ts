@@ -89,13 +89,32 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       const instance=inventory.environment.serviceInstances.edges.find(e=>e.node.serviceId===record.serviceId)?.node;
       const attached=inventory.project.volumes.edges.flatMap(e=>e.node.volumeInstances.edges.map(v=>v.node)).filter(v=>v.environmentId===pool.environmentId&&v.serviceId===record.serviceId);
       if(!instance?.latestDeployment?.id||!instance.domains.serviceDomains.some(domain=>new URL(record.endpoint!).hostname===domain.domain)||attached.length!==1||attached[0]!.volumeId!==record.volumeId||attached[0]!.mountPath!=="/data"||attached[0]!.isPendingDeletion)throw new WorkerProvisioningError("reconciliation_required");
-      const shouldSleep=binding.chatId===0&&binding.threadId===0;
-      if(record.sleepApplication!==shouldSleep){
-        await this.mutate(`mutation WorkerSleepPolicy($environmentId:String!,$serviceId:String!,$input:ServiceInstanceUpdateInput!){serviceInstanceUpdate(environmentId:$environmentId,serviceId:$serviceId,input:$input)}`,{environmentId:pool.environmentId,serviceId:record.serviceId,input:{numReplicas:1,sleepApplication:shouldSleep}});
-        record.sleepApplication=shouldSleep;
-        await this.save(journal);
+      // A setting read-back is not proof that the running container was created
+      // with Serverless enabled. Railway applies sleepApplication only on deployment.
+      // Keep inspection observational; the fenced reconcile/provision path owns rollout.
+      let deploymentStatus=instance.latestDeployment.status;
+      if(record.sleepPolicyDeploymentPending===true){
+        if(!record.sleepPolicyDeploymentId){
+          if(instance.latestDeployment.id!==record.deploymentId){
+            record.sleepPolicyDeploymentId=instance.latestDeployment.id;
+            record.deploymentId=instance.latestDeployment.id;
+            await this.save(journal);
+          }else{
+            // The old deployment still serves traffic; do not report it as proof.
+            deploymentStatus="DEPLOYING";
+          }
+        }else if(instance.latestDeployment.id!==record.sleepPolicyDeploymentId){
+          throw new WorkerProvisioningError("reconciliation_required");
+        }
+        const status=deploymentStatus?.toUpperCase();
+        if(["FAILED","CRASHED","REMOVED"].includes(status??""))throw new WorkerProvisioningError("provisioning_pending");
+        if(record.sleepPolicyDeploymentId===instance.latestDeployment.id&&["SUCCESS","ACTIVE"].includes(status??"")){
+          record.sleepPolicyDeploymentPending=false;
+          record.sleepPolicyDeploymentVerified=true;
+          await this.save(journal);
+        }
       }
-      return {...structuredClone(record),deploymentId:instance.latestDeployment.id,deploymentStatus:instance.latestDeployment.status};
+      return {...structuredClone(record),deploymentId:instance.latestDeployment.id,deploymentStatus,sleepPolicyUpdated:record.sleepPolicyDeploymentPending===true};
     });
   }
   async inspectCapacity():Promise<Array<{pool:WorkerPool;used:number;available:number|null}>>{
@@ -352,7 +371,26 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       // an inbound Worker request wakes it before lifecycle readiness is confirmed.
       // Existing attached volumes retain their region; discovery defaults must never move their service.
       const desiredSleep=binding.chatId===0&&binding.threadId===0;
-      const sleepPolicyChanged=desiredSleep?record.sleepApplication!==true:record.sleepApplication===true;
+      const sleepPolicyChanged=desiredSleep
+        ? record.sleepApplication!==true||record.sleepPolicyDeploymentVerified!==true
+        : record.sleepApplication===true;
+      // If the source rollout already started, never start a second deployment.
+      // Wait for that exact deployment and mark the policy applied only on success.
+      if(record.phase==="deploying"&&record.sleepPolicyDeploymentPending===true){
+        const latest=inventory.environment.serviceInstances.edges.find(entry=>entry.node.serviceId===record!.serviceId)?.node.latestDeployment;
+        if(!latest?.id)throw new WorkerProvisioningError("provisioning_pending");
+        if(!record.sleepPolicyDeploymentId&&latest.id!==record.deploymentId){
+          record.sleepPolicyDeploymentId=latest.id;record.deploymentId=latest.id;await this.save(journal);
+        }
+        if(record.sleepPolicyDeploymentId&&latest.id!==record.sleepPolicyDeploymentId)throw new WorkerProvisioningError("reconciliation_required");
+        const status=latest.status?.toUpperCase();
+        if(["FAILED","CRASHED","REMOVED"].includes(status??""))throw new WorkerProvisioningError("provisioning_pending");
+        if(record.sleepPolicyDeploymentId===latest.id&&["SUCCESS","ACTIVE"].includes(status??"")){
+          record.sleepPolicyDeploymentPending=false;record.sleepPolicyDeploymentVerified=true;await this.save(journal);
+        }else{
+          return {...structuredClone(record),deploymentId:latest.id,deploymentStatus:status,sleepPolicyUpdated:true};
+        }
+      }
       await this.mutate(`mutation WorkerConfig($environmentId:String!,$serviceId:String!,$input:ServiceInstanceUpdateInput!){serviceInstanceUpdate(environmentId:$environmentId,serviceId:$serviceId,input:$input)}`, {environmentId:pool.environmentId,serviceId:record.serviceId,input:{numReplicas:1,sleepApplication:desiredSleep,healthcheckPath:"/health",healthcheckTimeout:30,...(instances.length===0?{multiRegionConfig:{[pool.region]:{numReplicas:1}}}:{}),tracingEnabled:false,autoInstrumentationEnabled:false,restartPolicyType:"ON_FAILURE",restartPolicyMaxRetries:3}});
       record.sleepApplication=desiredSleep;
       await this.save(journal);
@@ -430,8 +468,14 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       if(record.image&&desiredImage){record.image=desiredImage;record.runtimeCommit=desiredCommit;record.runtimeVersion=desiredVersion;}
       record.phase = "deploying"; await this.save(journal);
       inventory = await this.inventory(pool);
+      const previousDeploymentId=record.deploymentId;
       const latestDeployment=inventory.environment.serviceInstances.edges.find(entry => entry.node.serviceId === record!.serviceId)?.node.latestDeployment;
-      record.deploymentId = latestDeployment?.id;
+      if(latestDeployment?.id)record.deploymentId=latestDeployment.id;
+      if(sleepPolicyChanged){
+        record.sleepPolicyDeploymentVerified=false;
+        record.sleepPolicyDeploymentPending=true;
+        record.sleepPolicyDeploymentId=latestDeployment?.id&&latestDeployment.id!==previousDeploymentId?latestDeployment.id:undefined;
+      }
       await this.save(journal);
       await this.binding(nodeId,generation);
       return {...structuredClone(record),deploymentStatus:latestDeployment?.status,sleepPolicyUpdated:sleepPolicyChanged};
