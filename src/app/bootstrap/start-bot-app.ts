@@ -254,11 +254,11 @@ export async function startBotApp(): Promise<void> {
   if(distributedControlPlane){
     const workerSettings=normalizeRailwayWorkerSettings(await requestInfrastructureSetup("settings.get"));
     setTopicNodeCreationEnabled(workerSettings.workerCreationEnabled);
-    logger.info(`[WorkerCluster] Railway policy loaded; onboarding owns initial warm bootstrap capacity=${workerSettings.warmCapacity}`);
-    // Finish already-recorded unbound Worker reservations after every deploy.
-    // ensurePoolSlots(0) never grows the slot count, and lifecycle skips every
-    // Topic-bound Worker. Onboarding remains the only path that chooses initial
-    // warm capacity; startup merely finishes reservations that already exist.
+    logger.info(`[WorkerCluster] Railway policy loaded; startup hard-capacity=4 warmWorkers=4 configuredPerProject=${workerSettings.workersPerProject}`);
+    // Enforce the Railway free-tier fleet limit on every startup: exactly four
+    // durable slots are the target, independent of older persisted onboarding
+    // settings. Existing Topic-bound Workers are never interrupted; idle slots
+    // are reconciled into Serverless sleep before they are returned to capacity.
     safeBackgroundTask({
       taskName: "app.workerPoolReleaseReconcile",
       task: async () => {
@@ -266,7 +266,7 @@ export async function startBotApp(): Promise<void> {
         let nodes: Awaited<ReturnType<typeof topicNodeLifecycle.bootstrapPool>>;
         let incomplete = false;
         try {
-          nodes = await topicNodeLifecycle.bootstrapPool(undefined, false, true);
+          nodes = await topicNodeLifecycle.bootstrapPool(4, false, true);
         } catch (error) {
           // Continue through every existing slot even if one cannot be provisioned.
           // Failed slots remain fenced; report their error and the actual remaining capacity.
