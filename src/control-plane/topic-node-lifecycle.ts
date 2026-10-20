@@ -32,9 +32,9 @@ export class TopicNodeLifecycle {
     return response.result as T;
   }
   /** Reconcile existing unbound Workers; New Chat allocates additional capacity lazily. */
-  bootstrapPool(warmCapacity?:number):Promise<NodeBinding[]> {
+  bootstrapPool(warmCapacity?:number,repairOnly=false):Promise<NodeBinding[]> {
     if(this.poolFlight)return this.poolFlight;
-    const operation=this.preparePool(warmCapacity).finally(()=>{if(this.poolFlight===operation)this.poolFlight=undefined;});
+    const operation=this.preparePool(warmCapacity,repairOnly).finally(()=>{if(this.poolFlight===operation)this.poolFlight=undefined;});
     this.poolFlight=operation;return operation;
   }
   private async waitReady(binding:NodeBinding,status:'provisioning'|'pool-provisioning'|'available'|'retiring',expected?:ProvisionedNode):Promise<void> {
@@ -66,11 +66,15 @@ export class TopicNodeLifecycle {
     }
     throw new Error("Global state changed repeatedly during bootstrap; retry Topic readiness");
   }
-  private async preparePool(warmCapacity?:number):Promise<NodeBinding[]> {
+  private async preparePool(warmCapacity?:number,repairOnly=false):Promise<NodeBinding[]> {
     const slots=await this.dependencies.bindings.ensurePoolSlots(warmCapacity??0);
     for(let binding of slots) {
       // Previously prepared or already claimed slots keep their identity/resources.
       if(binding.chatId!==0||binding.threadId!==0)continue;
+      // New Chat recovery must not allocate a new Railway service/project just to
+      // repair availability. Reconcile only slots whose owned runtime resources
+      // are already recorded; leave empty reservations for the normal pool manager.
+      if(repairOnly&&['pool-reserved','pool-provisioning'].includes(binding.status)&&(!binding.serviceId||!binding.volumeId||!binding.endpoint))continue;
       // Explicitly reducing an administrative warm target cancels unused pending
       // reservations after fencing; it never retires a ready or claimed Worker.
       if(warmCapacity!==undefined&&binding.slot!>warmCapacity&&['pool-reserved','pool-provisioning','retiring'].includes(binding.status)){
@@ -117,7 +121,7 @@ export class TopicNodeLifecycle {
       // (for example when Railway rejects creating another project). Reconcile the
       // existing slots before reporting exhaustion, then re-read durable state:
       // successful available Workers must remain usable even if another slot failed.
-      try{await this.bootstrapPool();}catch{ /* Partial pool recovery is allowed; re-check available bindings below. */ }
+      try{await this.bootstrapPool(undefined,true);}catch{ /* Partial pool recovery is allowed; re-check available bindings below. */ }
       binding=(await this.dependencies.bindings.list()).find(item=>item.status==='available'&&item.chatId===0&&item.threadId===0);
     }
     if(!binding)throw new WorkerProvisioningError("capacity_exhausted");
