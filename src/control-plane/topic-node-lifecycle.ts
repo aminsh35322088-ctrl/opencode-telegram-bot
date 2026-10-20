@@ -169,7 +169,9 @@ export class TopicNodeLifecycle {
       // New Chat may finish a reservation that already exists in the durable pool.
       // ensurePoolSlots(0) does not add slots, and preparePool ignores every
       // Topic-bound binding, so this cannot grow capacity or disturb active Topics.
-      try{await this.bootstrapPool(undefined,false);}catch(error){lastError=error;}
+      // Try every existing reservation so one broken slot does not hide another
+      // viable Worker. The first error is still surfaced if no verified capacity remains.
+      try{await this.bootstrapPool(undefined,false,true);}catch(error){lastError=error;}
       available=await listAvailable();
     }
     for(const candidate of available){
