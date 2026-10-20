@@ -1,0 +1,140 @@
+name: Sync Core release
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: sync-core-release
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Discover, verify, and propose Core update
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout Bot main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.14.0
+
+      - name: Test release-selection guardrails
+        run: node --test scripts/sync-core-release.test.mjs
+
+      - name: Check for an existing Core update PR
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          number="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --json number,headRefName \
+            --jq '[.[] | select(.headRefName | startswith("automation/core-release-sync-"))] | .[0].number // empty')"
+          if [[ -n "$number" ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Existing verified Core update PR #$number is awaiting review; not creating a duplicate."
+            echo "## Core release sync" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Existing update PR: #$number (awaiting review)." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Discover and verify newest published Core prerelease
+        id: sync
+        if: steps.existing.outputs.skip != 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/sync-core-release.mjs
+
+      - name: Create isolated update branch
+        if: steps.existing.outputs.skip != 'true' && steps.sync.outputs.changed == 'true'
+        id: branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          branch="automation/core-release-sync-${{ steps.sync.outputs.version }}"
+          if git ls-remote --exit-code --heads origin "refs/heads/$branch" >/dev/null 2>&1; then
+            git push origin --delete "$branch"
+          fi
+          git switch -c "$branch"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add core-release.lock.json package.json package-lock.json src/infrastructure/worker-core-release.ts
+          git diff --cached --check
+          git diff --cached --quiet && { echo "Release sync produced no changes."; exit 1; }
+          git commit -m "chore: sync OpenCode Telegram Core ${{ steps.sync.outputs.tag }}"
+          git push origin "$branch"
+          echo "name=$branch" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch full Bot test suite for the update commit
+        if: steps.existing.outputs.skip != 'true' && steps.sync.outputs.changed == 'true'
+        id: tests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          branch="${{ steps.branch.outputs.name }}"
+          previous_run="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow full-test-suite.yml \
+            --branch "$branch" --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+          gh workflow run full-test-suite.yml --repo "$GITHUB_REPOSITORY" --ref "$branch" -f "ref=$branch"
+
+          run_id=""
+          for attempt in $(seq 1 36); do
+            candidate="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow full-test-suite.yml \
+              --branch "$branch" --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+            if [[ -n "$candidate" && "$candidate" != "$previous_run" ]]; then
+              run_id="$candidate"
+              break
+            fi
+            sleep 5
+          done
+          if [[ -z "$run_id" ]]; then
+            echo "Full Test Suite run did not appear after dispatch." >&2
+            exit 1
+          fi
+
+          gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --exit-status
+          url="$(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --json url --jq '.url')"
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "- Full Bot test suite: passed ($url)." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open reviewed update PR
+        if: steps.existing.outputs.skip != 'true' && steps.sync.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          body_file="$RUNNER_TEMP/core-release-sync-pr.md"
+          cat > "$body_file" <<EOF
+          ## Verified Core release update
+
+          This change was generated by the scheduled Core release synchronizer.
+
+          - Core release: ${{ steps.sync.outputs.tag }}
+          - Verified source commit: ${{ steps.sync.outputs.commit }}
+          - Full Bot Test Suite: passed (${{ steps.tests.outputs.url }})
+          - Worker image is pinned by immutable SHA-256 digest; the image config revision, release tag, runtime, SDK, and native runtime assets were verified before modifying these pins.
+
+          Existing Topic-bound Workers are not forcibly replaced. The Bot lifecycle may reconcile an image only while a Worker is unbound, and runtime readiness must be verified before it is allocated again.
+          EOF
+          gh pr create --repo "$GITHUB_REPOSITORY" --base main \
+            --head "${{ steps.branch.outputs.name }}" \
+            --title "chore: sync OpenCode Telegram Core ${{ steps.sync.outputs.tag }}" \
+            --body-file "$body_file"
+          echo "- Opened Core update PR for ${{ steps.sync.outputs.tag }} after successful validation." >> "$GITHUB_STEP_SUMMARY"
