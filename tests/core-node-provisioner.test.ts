@@ -145,12 +145,14 @@ test('Worker cleanup fails closed on profile failure, ownership mismatch and can
  await assert.rejects(f.controller.cleanupDeprecatedWorkerVariables('one',1,async(id,generation,profile)=>{if(profile==='network')binding.sessionId='now-bound';return good(id,generation,profile);}));assert.equal(deletes,0);
 });
 
-test('dynamic configured project limits permit more than four and roll over deterministically',async()=>{
+test('global Worker ceiling blocks the fifth service across configured Railway projects',async()=>{
  const f=await fixture();f.options.pools[0]!.capacity=3;f.options.pools[1]!.capacity=3;
- for(let i=0;i<7;i++)f.add('dynamic'+i);
- const nodes=await Promise.all(Array.from({length:6},(_,i)=>f.controller.provision('dynamic'+i,1)));
- assert.deepEqual(nodes.map(n=>n.projectId),['a','a','a','b','b','b']);
- await assert.rejects(f.controller.provision('dynamic6',1),error=>typeof error==='object'&&error!==null&&'category' in error&&error.category==='capacity_exhausted');
+ for(let i=0;i<5;i++)f.add('dynamic'+i);
+ const nodes=[];for(let i=0;i<4;i++)nodes.push(await f.controller.provision('dynamic'+i,1));
+ assert.deepEqual(nodes.map(n=>n.projectId),['a','a','a','b']);
+ assert.equal(f.services.length,4);
+ await assert.rejects(f.controller.provision('dynamic4',1),error=>typeof error==='object'&&error!==null&&'category' in error&&error.category==='capacity_exhausted');
+ assert.equal(f.services.length,4,'no overflow project may create a fifth Worker service');
 });
 test('immutable image identity is deployed and persisted without repository source or bootstrap expansion',async()=>{
  const f=await fixture();f.add('image');f.options.workerImage='ghcr.io/example/core@sha256:'+'a'.repeat(64);
