@@ -1,4 +1,5 @@
 import {randomBytes,randomUUID} from 'node:crypto';
+import {WORKER_CORE_COMMIT,WORKER_CORE_VERSION,WORKER_RUNTIME_IMAGE} from './worker-core-release.js';
 import {lstat,mkdir,open,readFile,rename} from 'node:fs/promises';
 import path from 'node:path';
 import {syncDirectory} from '../utils/sync-directory.js';
@@ -159,7 +160,18 @@ export class InfrastructureController {
     if(this.poolConfiguration)await this.poolConfiguration;
     const provisioner=this.provisioner;if(!provisioner)throw Error('Worker pools not configured');
     const before=(await provisioner.listWorkers()).find(item=>item.nodeId===nodeId&&item.generation===generation);
-    const reconciled=await provisioner.provision(nodeId,generation);
+    const desiredImage=this.options.workerImage??WORKER_RUNTIME_IMAGE;
+    const desiredCommit=this.options.coreCommit??WORKER_CORE_COMMIT;
+    const desiredVersion=WORKER_CORE_VERSION;
+    const imageDrift=Boolean(before?.image&&desiredImage&&(before.image!==desiredImage||before.runtimeCommit!==desiredCommit||before.runtimeVersion!==desiredVersion));
+    // "recycled" is the normal durable state of an idle Worker after a Topic is
+    // retired. Inspect it without deployment churn when its immutable release is
+    // already current; only image drift or an incomplete provisioning phase calls
+    // provision(), which may apply a new source and initiate a Railway deployment.
+    const needsProvision=!before||imageDrift||!["deploying","recycled"].includes(before.phase);
+    const reconciled=needsProvision
+      ? await provisioner.provision(nodeId,generation)
+      : await provisioner.inspectWorker(nodeId,generation);
     const imageUpdateStarted=Boolean(reconciled.image&&(!before||before.image!==reconciled.image||before.runtimeCommit!==reconciled.runtimeCommit||before.runtimeVersion!==reconciled.runtimeVersion));
     const currentBinding=await this.lookup(nodeId);
     if(!currentBinding||currentBinding.generation!==generation||currentBinding.chatId!==0||currentBinding.threadId!==0||currentBinding.status!==binding.status||currentBinding.serviceId!==binding.serviceId||currentBinding.volumeId!==binding.volumeId||currentBinding.endpoint!==binding.endpoint)throw Error('Canonical Worker binding changed during runtime reconciliation');
