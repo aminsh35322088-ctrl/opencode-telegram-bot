@@ -216,7 +216,7 @@ async function verifyWorkerImage(sourceCommit) {
     },
   );
   const configBytes = await readBoundedBytes(configResponse, 8 * 1024 * 1024, "Worker image config");
-  const imageConfig = JSON.parse(configBytes.toString("utf8"));
+  if (digest(configBytes, "sha256") !== configDigest.slice("sha256:".length)) {\n    throw new Error("Worker image configuration failed its content digest");\n  }\n  const imageConfig = JSON.parse(configBytes.toString("utf8"));
   const labels = imageConfig.config?.Labels ?? imageConfig.config?.labels ?? {};
   if (labels["org.opencontainers.image.revision"] !== sourceCommit) {
     throw new Error("Worker image source label does not match the verified Core release commit");
@@ -224,7 +224,7 @@ async function verifyWorkerImage(sourceCommit) {
   return `${REGISTRY}/${WORKER_IMAGE_REPOSITORY}@${root.digest}`;
 }
 
-function selectLatestRelease(releases) {
+export function selectLatestRelease(releases) {
   return releases
     .filter((release) => release && release.draft === false && release.prerelease === true && parseCoreReleaseVersion(release.tag_name))
     .sort((left, right) => compareCoreReleaseVersions(right.tag_name, left.tag_name))[0];
