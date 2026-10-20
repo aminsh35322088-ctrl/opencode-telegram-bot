@@ -26,7 +26,7 @@ interface SetupStatus {
 }
 interface ValidationResult {valid:boolean;tokenType?:"account"|"workspace";subjectName?:string;workspaces?:WorkspaceChoice[];reason?:string}
 
-const INITIAL_BOOTSTRAP_WORKERS=5;
+const INITIAL_BOOTSTRAP_WORKERS=4;
 const waitingForToken=new Set<number>();
 const workspaceChoices=new Map<number,WorkspaceChoice[]>();
 const bootstrapFlights=new Map<number,Promise<void>>();
