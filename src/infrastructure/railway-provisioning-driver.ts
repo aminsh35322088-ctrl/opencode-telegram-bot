@@ -108,7 +108,10 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
           throw new WorkerProvisioningError("reconciliation_required");
         }
         const status=deploymentStatus?.toUpperCase();
-        if(["FAILED","CRASHED","REMOVED"].includes(status??""))throw new WorkerProvisioningError("provisioning_pending");
+        if(["FAILED","CRASHED","REMOVED"].includes(status??"")){
+          record.sleepPolicyDeploymentPending=false;record.sleepPolicyDeploymentVerified=false;record.sleepPolicyDeploymentId=undefined;await this.save(journal);
+          throw new WorkerProvisioningError("provisioning_pending");
+        }
         if(record.sleepPolicyDeploymentId===instance.latestDeployment.id&&["SUCCESS","ACTIVE"].includes(status??"")){
           record.sleepPolicyDeploymentPending=false;
           record.sleepPolicyDeploymentVerified=true;
@@ -386,7 +389,10 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
         if(!record.sleepPolicyDeploymentId)throw new WorkerProvisioningError("provisioning_pending");
         if(latest.id!==record.sleepPolicyDeploymentId)throw new WorkerProvisioningError("reconciliation_required");
         const status=latest.status?.toUpperCase();
-        if(["FAILED","CRASHED","REMOVED"].includes(status??""))throw new WorkerProvisioningError("provisioning_pending");
+        if(["FAILED","CRASHED","REMOVED"].includes(status??"")){
+          record.sleepPolicyDeploymentPending=false;record.sleepPolicyDeploymentVerified=false;record.sleepPolicyDeploymentId=undefined;await this.save(journal);
+          throw new WorkerProvisioningError("provisioning_pending");
+        }
         if(record.sleepPolicyDeploymentId===latest.id&&["SUCCESS","ACTIVE"].includes(status??"")){
           record.sleepPolicyDeploymentPending=false;record.sleepPolicyDeploymentVerified=true;await this.save(journal);
           return {...structuredClone(record),deploymentId:latest.id,deploymentStatus:latest.status,sleepPolicyUpdated:true};
