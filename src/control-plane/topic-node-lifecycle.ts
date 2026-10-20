@@ -48,8 +48,22 @@ export class TopicNodeLifecycle {
       if(health&&explicitlyReady){
         const runtimeMatches=!expected?.image||(health.runtime?.telegramCoreCommit===expected.runtimeCommit&&health.runtime?.telegramCoreVersion===expected.runtimeVersion);
         if(runtimeMatches){
-          if(health.runtime)logger.info(`[WorkerImage] node=${binding.nodeId} generation=${binding.generation} image=${expected?.image??"legacy-contract"} actualCommit=${health.runtime.telegramCoreCommit} actualVersion=${health.runtime.telegramCoreVersion}`);
-          break;
+          let deploymentReady=true;
+          if(expected?.sleepPolicyUpdated){
+            deploymentReady=false;
+            try{
+              const observed=await this.dependencies.infrastructure('inspect',binding.nodeId,binding.generation);
+              const deploymentStatus=observed.deploymentStatus?.toUpperCase();
+              if(["FAILED","CRASHED","REMOVED"].includes(deploymentStatus??""))throw new Error("Worker sleep-policy deployment failed");
+              deploymentReady=observed.deploymentId===expected.deploymentId&&["SUCCESS","ACTIVE"].includes(deploymentStatus??"");
+            }catch(error){
+              if(error instanceof Error&&error.message==="Worker sleep-policy deployment failed")throw error;
+            }
+          }
+          if(deploymentReady){
+            if(health.runtime)logger.info(`[WorkerImage] node=${binding.nodeId} generation=${binding.generation} image=${expected?.image??"legacy-contract"} actualCommit=${health.runtime.telegramCoreCommit} actualVersion=${health.runtime.telegramCoreVersion}`);
+            break;
+          }
         }
         // Railway's old replica can still answer health while an immutable image
         // deployment is rolling out. Only an explicitly reported image transition
