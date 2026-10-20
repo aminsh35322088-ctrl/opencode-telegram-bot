@@ -140,7 +140,7 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
         const pool = this.options.pools.find(item => item.projectId === record.projectId && item.environmentId === record.environmentId)!;
         const fence = async () => {
           const binding = await this.binding(nodeId, generation);
-          if (binding.status !== "available" || binding.chatId !== 0 || binding.threadId !== 0 || binding.sessionId !== undefined || binding.slot !== record.slot || binding.clusterId !== record.clusterId || binding.projectId !== record.projectId || binding.serviceId !== record.serviceId || binding.volumeId !== record.volumeId) throw new Error("Canonical Worker fence changed");
+          if (!(["available","pool-provisioning"].includes(binding.status)) || binding.chatId !== 0 || binding.threadId !== 0 || binding.sessionId !== undefined || binding.slot !== record.slot || binding.clusterId !== record.clusterId || binding.projectId !== record.projectId || binding.serviceId !== record.serviceId || binding.volumeId !== record.volumeId) throw new Error("Canonical Worker fence changed");
           const inventory = await this.inventory(pool);
           const services = inventory.project.services.edges.filter(({node}) => node.id === record.serviceId || node.name === `topic-node-${nodeId}`);
           const volumes = inventory.project.volumes.edges.filter(({node}) => node.id === record.volumeId || node.volumeInstances.edges.some(({node: instance}) => instance.serviceId === record.serviceId));
@@ -148,7 +148,7 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
           const volume = volumes[0]!.node.volumeInstances.edges[0]!.node;
           if (volume.volumeId !== record.volumeId || volume.serviceId !== record.serviceId || volume.environmentId !== record.environmentId || volume.mountPath !== "/data" || volume.sizeMB !== 500 || volume.isPendingDeletion) throw new Error("Worker Volume ownership changed");
           const current = await this.binding(nodeId, generation);
-          if (current.status !== "available" || current.chatId !== 0 || current.threadId !== 0 || current.sessionId !== undefined || current.slot !== record.slot || current.clusterId !== record.clusterId || current.projectId !== record.projectId || current.serviceId !== record.serviceId || current.volumeId !== record.volumeId) throw new Error("Canonical Worker fence changed");
+          if (!(["available","pool-provisioning"].includes(current.status)) || current.chatId !== 0 || current.threadId !== 0 || current.sessionId !== undefined || current.slot !== record.slot || current.clusterId !== record.clusterId || current.projectId !== record.projectId || current.serviceId !== record.serviceId || current.volumeId !== record.volumeId) throw new Error("Canonical Worker fence changed");
         };
         await fence();
         for (const profile of ["baseline", "browser", "network"] as const) {
