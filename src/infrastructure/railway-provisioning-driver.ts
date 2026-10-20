@@ -332,10 +332,7 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       const desiredCommit=this.options.coreCommit??WORKER_CORE_COMMIT;
       const desiredVersion=this.options.workerVersion??WORKER_CORE_VERSION;
       const managedImageDrift=Boolean(record.image&&desiredImage&&(record.image!==desiredImage||record.runtimeCommit!==desiredCommit||record.runtimeVersion!==desiredVersion));
-      if(managedImageDrift){
-        if(binding.chatId!==0||binding.threadId!==0)throw new WorkerProvisioningError("image_mismatch");
-        record.image=desiredImage;record.runtimeCommit=desiredCommit;record.runtimeVersion=desiredVersion;await this.save(journal);
-      }
+      if(managedImageDrift&&(binding.chatId!==0||binding.threadId!==0))throw new WorkerProvisioningError("image_mismatch");
       if (record.phase === "deploying" && record.endpoint && !managedImageDrift) {
         const knownDomains = inventory.environment.serviceInstances.edges.find(entry => entry.node.serviceId === record!.serviceId)?.node.domains.serviceDomains ?? [];
         if (knownDomains.length !== 1 || `https://${knownDomains[0]?.domain}` !== record.endpoint || knownDomains[0]?.id !== record.domainId) throw new Error("Worker domain ownership mismatch");
@@ -360,9 +357,14 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       await this.binding(nodeId,generation);
       // Existing image-less Workers retain their legacy source during authenticated
       // identity handoff. Only new allocations require the immutable image contract.
-      const source=record.image?{image:record.image}:{repo:"aminsh35322088-ctrl/opencode-telegram-core",branch:"main",commitSha:"9a188586a660967227a044a3224280e6923e3067"};
+      const source=record.image&&desiredImage?{image:desiredImage}:record.image?{image:record.image}:{repo:"aminsh35322088-ctrl/opencode-telegram-core",branch:"main",commitSha:"9a188586a660967227a044a3224280e6923e3067"};
       record.everDeployed=true;await this.save(journal);
       await this.mutate(`mutation WorkerSource($environmentId:String!,$patch:EnvironmentConfig!){environmentPatchCommit(environmentId:$environmentId,patch:$patch,commitMessage:"Deploy fenced Worker runtime")}`, {environmentId:pool.environmentId,patch:{services:{[record.serviceId!]:{source}}}});
+      // Record the new immutable identity only after Railway accepts the source
+      // change. If the mutation response is lost, retrying retains the old pin
+      // and re-applies the identical, idempotent source patch instead of
+      // falsely treating an old running image as current.
+      if(record.image&&desiredImage){record.image=desiredImage;record.runtimeCommit=desiredCommit;record.runtimeVersion=desiredVersion;}
       record.phase = "deploying"; await this.save(journal);
       inventory = await this.inventory(pool);
       record.deploymentId = inventory.environment.serviceInstances.edges.find(entry => entry.node.serviceId === record!.serviceId)?.node.latestDeployment?.id;
