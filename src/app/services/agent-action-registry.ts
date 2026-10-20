@@ -72,7 +72,6 @@ export const CUSTOM_TOOL_ACTIONS = {
   "database-query": ["query"],
   "full-diagnostics": ["quick", "full"],
   "github-ci": ["status", "jobs", "dispatch", "watch", "logs", "verify", "rerun-failed", "cancel"],
-  railway: ["workspace", "projects", "project", "service-instance", "deployments", "logs"],
   "image-inspect": ["inspect"],
   "logs-observability": ["search"],
   media: ["stt.status", "stt.transcribe", "video.prepare", "image.providers", "image.models", "image.current", "image.generate", "image.edit"],
@@ -100,7 +99,7 @@ const CORE_CATEGORIES: Record<CoreToolName, string> = {
 const CUSTOM_CATEGORIES: Record<CustomToolName, string> = {
   actions: "discovery", bot: "bot-control", file: "filesystem", git: "version-control", monitoring: "observability",
   notify: "notification", security: "security", "session-extended": "session", test: "ci", browser: "browser", "database-query": "database",
-  "full-diagnostics": "diagnostics", "github-ci": "ci", railway: "infrastructure", "image-inspect": "media", "logs-observability": "observability",
+  "full-diagnostics": "diagnostics", "github-ci": "ci", "image-inspect": "media", "logs-observability": "observability",
   media: "media", telegram: "telegram-context", "network-diagnostics": "network", tailscale: "remote-access", ssh: "remote-access",
   "safe-download": "transfer", "send-file": "transfer", session: "session", "session-recovery": "session", "storage-health": "storage",
   "system-diagnostics": "diagnostics",
@@ -135,12 +134,6 @@ const DESCRIPTIONS: Record<string, string> = {
   "media.image.models": "List image models discovered from configured image providers.",
   "media.image.current": "Show the effective Image Model for the current worktree/Topic.",
   "github-ci.dispatch": "Dispatch an existing GitHub Actions workflow on an explicit branch/tag/SHA.",
-  "railway.workspace": "Read the configured Railway workspace identity.",
-  "railway.projects": "List projects in the Control Plane's configured Railway workspace.",
-  "railway.project": "Inspect one project and its service/environment identifiers within the configured workspace.",
-  "railway.service-instance": "Inspect non-secret service settings and latest deployment status for a project environment.",
-  "railway.deployments": "List recent deployments for a service in the configured workspace.",
-  "railway.logs": "Read bounded deployment logs for a deployment owned by the selected Railway workspace and service.",
   "github-ci.jobs": "Inspect jobs and steps for a GitHub Actions run before falling back to raw logs.",
   "tailscale.status": "Inspect the bot's current Tailnet connection.",
   "tailscale.devices": "List all Tailnet peers visible to the bot with SSH eligibility diagnostics.",
@@ -197,7 +190,7 @@ function customRisk(tool: string, action: string): AgentActionRisk {
     if (["commit", "branch", "checkout", "stash", "merge", "rebase"].includes(action)) return "mutating";
     return "read";
   }
-  if (tool === "monitoring" || tool === "security" || tool === "railway") return "read";
+  if (tool === "monitoring" || tool === "security") return "read";
   if (tool === "notify") {
     if (action === "list") return "read";
     if (action === "cancel") return "mutating";
