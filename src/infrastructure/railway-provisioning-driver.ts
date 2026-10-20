@@ -14,7 +14,7 @@ interface Edge<T> { edges: Array<{ node: T }>; pageInfo: { hasNextPage: boolean 
 interface VolumeInstance { environmentId: string; serviceId: string | null; volumeId: string; sizeMB: number; mountPath: string; isPendingDeletion: boolean }
 interface Inventory {
   project: { id: string; services: Edge<{ id: string; name: string; deletedAt?:string|null }>; volumes: Edge<{ id: string; volumeInstances: Edge<VolumeInstance> }> };
-  environment: { id: string; projectId: string; serviceInstances: Edge<{serviceId: string; domains: {serviceDomains: Array<{id: string; domain: string}>}; latestDeployment: {id: string} | null}> };
+  environment: { id: string; projectId: string; serviceInstances: Edge<{serviceId: string; source?: {image?: string | null; repo?: string | null; branch?: string | null} | null; domains: {serviceDomains: Array<{id: string; domain: string}>}; latestDeployment: {id: string} | null}> };
 }
 export interface NodeProvisionerOptions {
   request<T>(document: string, variables: Record<string, unknown>): Promise<T>;
@@ -33,7 +33,7 @@ export interface NodeProvisionerOptions {
   /** Install the root-private transport identity before the Worker can call back during startup. */
   configured?(binding: Readonly<NodeBinding>, node: Readonly<ProvisionedNode>): Promise<void>;
 }
-const INVENTORY = `query WorkerInventory($projectId:String!,$environmentId:String!){ project(id:$projectId){id services(first:100){pageInfo{hasNextPage} edges{node{id name deletedAt}}} volumes(first:100){pageInfo{hasNextPage} edges{node{id volumeInstances(first:100){pageInfo{hasNextPage} edges{node{environmentId serviceId volumeId sizeMB mountPath isPendingDeletion}}}}}}} environment(id:$environmentId){id projectId serviceInstances(first:100){pageInfo{hasNextPage} edges{node{serviceId domains{serviceDomains{id domain}} latestDeployment{id}}}}}}`;
+const INVENTORY = `query WorkerInventory($projectId:String!,$environmentId:String!){ project(id:$projectId){id services(first:100){pageInfo{hasNextPage} edges{node{id name deletedAt}}} volumes(first:100){pageInfo{hasNextPage} edges{node{id volumeInstances(first:100){pageInfo{hasNextPage} edges{node{environmentId serviceId volumeId sizeMB mountPath isPendingDeletion}}}}}}} environment(id:$environmentId){id projectId serviceInstances(first:100){pageInfo{hasNextPage} edges{node{serviceId source{image repo branch} domains{serviceDomains{id domain}} latestDeployment{id}}}}}}`;
 
 /** Root-owned request-driven controller: no background loop and no arbitrary GraphQL interface. */
 export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
@@ -89,7 +89,7 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       const instance=inventory.environment.serviceInstances.edges.find(e=>e.node.serviceId===record.serviceId)?.node;
       const attached=inventory.project.volumes.edges.flatMap(e=>e.node.volumeInstances.edges.map(v=>v.node)).filter(v=>v.environmentId===pool.environmentId&&v.serviceId===record.serviceId);
       if(!instance?.latestDeployment?.id||!instance.domains.serviceDomains.some(domain=>new URL(record.endpoint!).hostname===domain.domain)||attached.length!==1||attached[0]!.volumeId!==record.volumeId||attached[0]!.mountPath!=="/data"||attached[0]!.isPendingDeletion)throw new WorkerProvisioningError("reconciliation_required");
-      return {...structuredClone(record),deploymentId:inventory.environment.serviceInstances.edges.find(e=>e.node.serviceId===record.serviceId)?.node.latestDeployment?.id};
+      return {...structuredClone(record),configuredImage:instance.source?.image??undefined,deploymentId:instance.latestDeployment.id};
     });
   }
   async inspectCapacity():Promise<Array<{pool:WorkerPool;used:number;available:number|null}>>{
@@ -367,7 +367,10 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       const desiredImage=this.options.workerImage;
       const desiredCommit=this.options.coreCommit??WORKER_CORE_COMMIT;
       const desiredVersion=this.options.workerVersion??WORKER_CORE_VERSION;
-      const managedImageDrift=Boolean(record.image&&desiredImage&&(record.image!==desiredImage||record.runtimeCommit!==desiredCommit||record.runtimeVersion!==desiredVersion));
+      const configuredImage=inventory.environment.serviceInstances.edges.find(entry=>entry.node.serviceId===record!.serviceId)?.node.source?.image??undefined;
+      // The durable journal is not authoritative for the image Railway has actually configured.
+      // Older deployments may have advanced journal metadata without changing source.image.
+      const managedImageDrift=Boolean(desiredImage&&(record.image!==desiredImage||record.runtimeCommit!==desiredCommit||record.runtimeVersion!==desiredVersion||configuredImage!==desiredImage));
       if(managedImageDrift&&(binding.chatId!==0||binding.threadId!==0))throw new WorkerProvisioningError("image_mismatch");
       if (record.phase === "deploying" && record.endpoint && !managedImageDrift) {
         const knownDomains = inventory.environment.serviceInstances.edges.find(entry => entry.node.serviceId === record!.serviceId)?.node.domains.serviceDomains ?? [];

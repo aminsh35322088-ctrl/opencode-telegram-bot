@@ -172,16 +172,21 @@ export class InfrastructureController {
     const desiredImage=this.options.workerImage??WORKER_RUNTIME_IMAGE;
     const desiredCommit=this.options.coreCommit??WORKER_CORE_COMMIT;
     const desiredVersion=WORKER_CORE_VERSION;
-    const imageDrift=Boolean(before?.image&&desiredImage&&(before.image!==desiredImage||before.runtimeCommit!==desiredCommit||before.runtimeVersion!==desiredVersion));
-    // "recycled" is the normal durable state of an idle Worker after a Topic is
-    // retired. Inspect it without deployment churn when its immutable release is
-    // already current; only image drift or an incomplete provisioning phase calls
-    // provision(), which may apply a new source and initiate a Railway deployment.
-    const needsProvision=!before||imageDrift||!["deploying","recycled"].includes(before.phase);
+    // Journal metadata can be stale even when it claims the desired version.
+    // Inspect Railway's live ServiceInstance.source.image before deciding to skip
+    // provisioning; this is the authoritative configured source, not the journal.
+    const observed=before?.serviceId&&before.volumeId&&before.endpoint
+      ? await provisioner.inspectWorker(nodeId,generation)
+      : undefined;
+    const actualImageDrift=Boolean(desiredImage&&observed&&observed.configuredImage!==desiredImage);
+    const imageDrift=Boolean(before&&desiredImage&&(before.image!==desiredImage||before.runtimeCommit!==desiredCommit||before.runtimeVersion!==desiredVersion))||actualImageDrift;
+    // "recycled" and "deploying" can be inspected without deployment churn only
+    // when both the immutable journal pin and Railway's actual source image agree.
+    const needsProvision=!before||!observed||imageDrift||!["deploying","recycled"].includes(before.phase);
     const reconciled=needsProvision
       ? await provisioner.provision(nodeId,generation)
-      : await provisioner.inspectWorker(nodeId,generation);
-    const imageUpdateStarted=Boolean(reconciled.image&&(!before||before.image!==reconciled.image||before.runtimeCommit!==reconciled.runtimeCommit||before.runtimeVersion!==reconciled.runtimeVersion));
+      : observed??await provisioner.inspectWorker(nodeId,generation);
+    const imageUpdateStarted=actualImageDrift||Boolean(reconciled.image&&(!before||before.image!==reconciled.image||before.runtimeCommit!==reconciled.runtimeCommit||before.runtimeVersion!==reconciled.runtimeVersion));
     const currentBinding=await this.lookup(nodeId);
     if(!currentBinding||currentBinding.generation!==generation||currentBinding.chatId!==0||currentBinding.threadId!==0||currentBinding.status!==binding.status||currentBinding.serviceId!==binding.serviceId||currentBinding.volumeId!==binding.volumeId||currentBinding.endpoint!==binding.endpoint)throw Error('Canonical Worker binding changed during runtime reconciliation');
     const registered=await this.options.registry.resolve(nodeId);
