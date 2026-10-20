@@ -266,7 +266,7 @@ export async function startBotApp(): Promise<void> {
         let nodes: Awaited<ReturnType<typeof topicNodeLifecycle.bootstrapPool>>;
         let incomplete = false;
         try {
-          nodes = await topicNodeLifecycle.bootstrapPool(undefined, false, true);
+          nodes = await topicNodeLifecycle.bootstrapPool(undefined, true, true);
         } catch (error) {
           // Continue through every existing slot even if one cannot be provisioned.
           // Failed slots remain fenced; report their error and the actual remaining capacity.
