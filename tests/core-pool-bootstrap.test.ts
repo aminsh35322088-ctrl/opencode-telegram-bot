@@ -42,7 +42,8 @@ async function fixture() {
 // Four is an explicit legacy warm-pool fixture, not a production capacity limit.
 test('bootstrap prepares the configured unbound Workers and preserves identity on retries',async()=>{
   const f=await fixture();const first=f.lifecycle.bootstrapPool();assert.equal(first,f.lifecycle.bootstrapPool());
-  const slots=await first;assert.deepEqual(f.provisioned,[1,2,3,4]);assert.deepEqual(f.reconciled,[1,1,2,2,3,3,4,4]);\n  assert.equal(f.reconciled.length,8,"each initial Worker is boundary-verified while fenced and cluster-verified after release");
+  const slots=await first;assert.deepEqual(f.provisioned,[1,2,3,4]);assert.deepEqual(f.reconciled,[1,1,2,2,3,3,4,4]);
+  assert.equal(f.reconciled.length,8,"each initial Worker is boundary-verified while fenced and cluster-verified after release");
   assert.equal(slots.length,4);assert.ok(slots.every(item=>item.status==='available'&&item.chatId===0&&item.threadId===0&&item.generation===1&&item.currentRevision===7&&!item.sessionId));
   const again=await f.lifecycle.bootstrapPool();assert.deepEqual(again,slots);assert.deepEqual(f.provisioned,[1,2,3,4]);
   assert.deepEqual(new Set(f.operations),new Set(['health','sync-global']));
