@@ -55,6 +55,6 @@ test("Railway logs are deployment-scoped and redact token-like values", async ()
 
 test("Railway agent access rejects arbitrary GraphQL and mutation actions", async () => {
   const { request, calls } = requestFixture();
-  await assert.rejects(() => runRailwayAgentAccess(request, "workspace-1", { action: "mutation", query: "mutation { projectDelete(id: \"project-1\") }" }), /Unsupported Railway action/);
+  await assert.rejects(() => runRailwayAgentAccess(request, "workspace-1", { action: "mutation", query: "mutation { projectDelete(id: \"project-1\") }" }), /Unexpected Railway tool argument|Unsupported Railway action/);
   assert.equal(calls.length, 0);
 });
