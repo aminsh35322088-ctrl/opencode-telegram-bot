@@ -64,6 +64,7 @@ test("idle Workers sleep in Railway only after a successful Serverless-enabled d
   assert.match(driver,/sleepPolicyDeploymentVerified/);
   assert.match(driver,/sleepPolicyDeploymentPending=true/);
   assert.match(driver,/WorkerConfig/);
+  assert.match(driver,/serviceInstanceRedeploy/);
   assert.match(driver,/instance\.latestDeployment\.id!==record\.deploymentId/);
   assert.match(controller,/before\.sleepPolicyDeploymentVerified!==true/);
   assert.match(lifecycle,/item\.slot!==undefined&&item\.slot<=4/);
