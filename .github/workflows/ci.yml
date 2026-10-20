@@ -113,9 +113,11 @@ jobs:
         if: steps.sync.outputs.changed == 'true'
         run: npm ci
 
-      - name: Verify pinned Core packages
+      - name: Materialize and verify the candidate Core runtime
         if: steps.sync.outputs.changed == 'true'
-        run: node scripts/verify-core-install.mjs
+        run: |
+          node scripts/materialize-core-release.mjs
+          node scripts/verify-core-install.mjs --runtime
 
       - name: Install CI test runner
         if: steps.sync.outputs.changed == 'true'
