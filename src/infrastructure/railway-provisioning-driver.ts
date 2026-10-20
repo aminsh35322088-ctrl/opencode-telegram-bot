@@ -402,8 +402,9 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
           // Do not let a completed sleep rollout mask a newer requested image.
           sleepPolicyChanged=record.sleepApplication!==desiredSleep;
           if(!managedImageDrift&&!sleepPolicyChanged)return {...structuredClone(record),deploymentId:latest.id,deploymentStatus:latest.status,sleepPolicyUpdated:true};
+        }else{
+          return {...structuredClone(record),deploymentId:latest.id,deploymentStatus:status,sleepPolicyUpdated:true};
         }
-        return {...structuredClone(record),deploymentId:latest.id,deploymentStatus:status,sleepPolicyUpdated:true};
       }
       await this.mutate(`mutation WorkerConfig($environmentId:String!,$serviceId:String!,$input:ServiceInstanceUpdateInput!){serviceInstanceUpdate(environmentId:$environmentId,serviceId:$serviceId,input:$input)}`, {environmentId:pool.environmentId,serviceId:record.serviceId,input:{numReplicas:1,sleepApplication:desiredSleep,healthcheckPath:"/health",healthcheckTimeout:30,...(instances.length===0?{multiRegionConfig:{[pool.region]:{numReplicas:1}}}:{}),tracingEnabled:false,autoInstrumentationEnabled:false,restartPolicyType:"ON_FAILURE",restartPolicyMaxRetries:3}});
       record.sleepApplication=desiredSleep;
