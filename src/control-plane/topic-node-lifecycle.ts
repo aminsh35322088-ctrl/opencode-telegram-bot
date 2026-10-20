@@ -98,7 +98,7 @@ export class TopicNodeLifecycle {
       // an existing idle overflow Worker may still be reconciled into sleep mode below.
       if(binding.slot!>4&&['pool-reserved','pool-provisioning'].includes(binding.status)&&(!binding.serviceId||!binding.volumeId||!binding.endpoint))continue;
       if(repairOnly&&['pool-reserved','pool-provisioning'].includes(binding.status)&&(!binding.serviceId||!binding.volumeId||!binding.endpoint))continue;
-      if(warmCapacity!==undefined&&binding.slot!>warmCapacity&&['pool-reserved','pool-provisioning','retiring'].includes(binding.status)){
+      if((warmCapacity!==undefined&&binding.slot!<=4&&binding.slot!>warmCapacity&&['pool-reserved','pool-provisioning','retiring'].includes(binding.status))||(binding.slot!>4&&binding.status==='retiring')){
         if(binding.status!=='retiring')binding=await this.dependencies.bindings.fence(binding.nodeId,binding.generation);
         const retired=await this.dependencies.infrastructure('retire',binding.nodeId,binding.generation);
         if(retired.nodeId!==binding.nodeId||retired.phase!=='retired')throw new Error("Warm Worker retirement not confirmed");
