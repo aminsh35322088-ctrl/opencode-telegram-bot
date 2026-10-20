@@ -119,8 +119,8 @@ export class InfrastructureController {
   await mkdir(this.options.stateDirectory,{recursive:true,mode:0o700});const temporary=`${filename}.${randomUUID()}.tmp`;const file=await open(temporary,'wx',0o600);try{await file.writeFile(JSON.stringify(seeds));await file.sync();}finally{await file.close();}await rename(temporary,filename);await syncDirectory(this.options.stateDirectory);return replacement;
  }
  /** Root startup maintenance only; never exposed through request() or inherited application IPC. */
- cleanupRuntimeCanaryVariables(nodeId:string,generation:number,selftest:(nodeId:string,generation:number,profile:"baseline"|"browser"|"network")=>Promise<unknown>):Promise<void>{
-  const task=this.queue.then(async()=>{
+ cleanupRuntimeCanaryVariables(nodeId:string,generation:number,selftest:(nodeId:string,generation:number,profile:"baseline"|"browser"|"network")=>Promise<unknown>,alreadySerialized=false):Promise<void>{
+  const run=async()=>{
    try{
     if(this.poolConfiguration)await this.poolConfiguration;
     if(!this.provisioner||typeof nodeId!=="string"||nodeId.length>128||!Number.isSafeInteger(generation)||generation<1)throw Error("Worker cleanup unavailable");
@@ -131,7 +131,9 @@ export class InfrastructureController {
     const after=await this.lookup(nodeId);
     if(!available(after)||after!.projectId!==before!.projectId||after!.serviceId!==before!.serviceId||after!.volumeId!==before!.volumeId||after!.clusterId!==before!.clusterId||after!.endpoint!==before!.endpoint)throw Error("Worker cleanup fence changed");
    }catch{throw Error("Worker runtime canary cleanup failed");}
-  });this.queue=task.catch(()=>undefined);return task;
+  };
+  if(alreadySerialized)return run();
+  const task=this.queue.then(run);this.queue=task.catch(()=>undefined);return task;
  }
  request(operation:string,nodeId:string,generation:number):Promise<ProvisionedNode>{
   const task=this.queue.then(async()=>{
