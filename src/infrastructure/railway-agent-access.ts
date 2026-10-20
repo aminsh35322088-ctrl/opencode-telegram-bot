@@ -57,6 +57,8 @@ export async function runRailwayAgentAccess(request: RailwayRequest, workspaceId
   const workspaceId = requiredId(workspaceIdValue, "workspace is not configured");
   if (!inputValue || typeof inputValue !== "object" || Array.isArray(inputValue)) throw new Error("Invalid Railway tool request");
   const input = inputValue as Input;
+  const allowedKeys = new Set(["action", "projectId", "serviceId", "environmentId", "deploymentId", "limit"]);
+  if (Object.keys(input).some(key => !allowedKeys.has(key))) throw new Error("Unexpected Railway tool argument");
   const actions: RailwayAction[] = ["workspace", "projects", "project", "service-instance", "deployments", "logs"];
   if (typeof input.action !== "string" || !actions.includes(input.action as RailwayAction)) throw new Error("Unsupported Railway action");
   const action = input.action as RailwayAction;
