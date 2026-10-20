@@ -27,6 +27,7 @@ export function startNodeGateway(child:ChildProcess,registry:Registry,protocol:N
   const outbound=new Map<string,AbortController>();
   let infrastructureActive=0;
   let setupActive=0;
+  let railwayToolActive=0;
   let applicationReady=false;
   let desiredRevision=0;
   let reconciling=false;
@@ -63,6 +64,17 @@ export function startNodeGateway(child:ChildProcess,registry:Registry,protocol:N
     if(!message || typeof message!=="object")return;
     const input=message as {channel?:string;requestId?:string;envelope?:NodeEnvelope;stream?:boolean;operation?:string;nodeId?:string;generation?:number;payload?:Record<string,unknown>};
     if(typeof input.requestId!=="string" || input.requestId.length>128)return;
+    if(input.channel==="railway-agent-tool"){
+      if(!setup||railwayToolActive>=4){child.send({channel:"railway-agent-tool-response",requestId:input.requestId,ok:false});return;}
+      railwayToolActive++;
+      try{
+        if(!input.payload||typeof input.payload!=="object"||Array.isArray(input.payload))throw new Error("Invalid Railway tool request");
+        const result=await setup.railwayTool(input.payload);
+        child.send({channel:"railway-agent-tool-response",requestId:input.requestId,ok:true,result});
+      }catch{child.send({channel:"railway-agent-tool-response",requestId:input.requestId,ok:false});}
+      finally{railwayToolActive--;}
+      return;
+    }
     if(input.channel==="infrastructure-configure"){
       if(!setup||setupActive>=1||!input.operation){child.send({channel:"infrastructure-configure-response",requestId:input.requestId,ok:false});return;}
       setupActive++;
