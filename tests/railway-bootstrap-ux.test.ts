@@ -11,6 +11,7 @@ test("initial Railway fleet is hard-capped at four Workers", () => {
 });
 
 test("onboarding progress cannot advertise more than four Workers", async () => {
+  const {summarizeRailwayBootstrap}=await import("../src/bot/services/railway-bootstrap-progress.js");
   assert.equal(summarizeRailwayBootstrap([],0,0).workersTarget,4);
   assert.equal(summarizeRailwayBootstrap([],0,5).workersTarget,4);
   assert.equal(summarizeRailwayBootstrap([],0,99).workersTarget,4);
