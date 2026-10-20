@@ -49,7 +49,8 @@ test("Railway bootstrap only exposes Continue after all four Workers are healthy
 test("idle Workers sleep in Railway and active Topic bindings wake them", async () => {
   const driver=await readFile(new URL("../src/infrastructure/railway-provisioning-driver.ts",import.meta.url),"utf8");
   const lifecycle=await readFile(new URL("../src/control-plane/topic-node-lifecycle.ts",import.meta.url),"utf8");
-  assert.match(driver,/sleepApplication:binding\.chatId===0&&binding\.threadId===0/);
+  assert.match(driver,/const desiredSleep=binding\.chatId===0&&binding\.threadId===0/);
+  assert.match(driver,/sleepApplication:desiredSleep/);
   assert.match(driver,/WorkerSleepPolicy/);
   assert.match(lifecycle,/item\.slot!==undefined&&item\.slot<=4/);
   assert.match(lifecycle,/binding\.slot!>4/);
