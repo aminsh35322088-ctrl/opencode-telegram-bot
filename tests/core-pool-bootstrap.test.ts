@@ -21,9 +21,13 @@ async function fixture() {
       if(operation==='provision'){
         assert.equal(binding.status,'pool-provisioning');provisioned.push(binding.slot!);
         if(binding.slot===failSlot)throw failure;
+      }else if(operation==='inspect'){
+        assert.equal(binding.status,'pool-provisioning');
+        return {nodeId,generation,projectId:'workers',environmentId:'production',serviceId:'service-'+nodeId,volumeId:'volume-'+nodeId,endpoint:'https://worker.up.railway.app',phase:'deploying'} as ProvisionedNode;
       }else if(operation==='reconcile'){
-        assert.equal(binding.status,'available');reconciled.push(binding.slot!);
-      }else assert.fail('bootstrap must not retire Workers');
+        assert.ok(['pool-provisioning','available'].includes(binding.status));
+        reconciled.push(binding.slot!);
+      }else assert.fail('unexpected Worker lifecycle operation '+operation);
       return {nodeId,generation,projectId:'workers',environmentId:'production',serviceId:'service-'+nodeId,volumeId:'volume-'+nodeId,endpoint:'https://worker.up.railway.app',phase:'deploying'} as ProvisionedNode;
     },node:async(binding,operation)=>{
       assert.equal(binding.chatId,0);assert.equal(binding.threadId,0);assert.equal(binding.sessionId,undefined);
@@ -38,7 +42,7 @@ async function fixture() {
 // Four is an explicit legacy warm-pool fixture, not a production capacity limit.
 test('bootstrap prepares the configured unbound Workers and preserves identity on retries',async()=>{
   const f=await fixture();const first=f.lifecycle.bootstrapPool();assert.equal(first,f.lifecycle.bootstrapPool());
-  const slots=await first;assert.deepEqual(f.provisioned,[1,2,3,4]);assert.deepEqual(f.reconciled,[1,2,3,4]);
+  const slots=await first;assert.deepEqual(f.provisioned,[1,2,3,4]);assert.deepEqual(f.reconciled,[1,1,2,2,3,3,4,4]);
   assert.equal(slots.length,4);assert.ok(slots.every(item=>item.status==='available'&&item.chatId===0&&item.threadId===0&&item.generation===1&&item.currentRevision===7&&!item.sessionId));
   const again=await f.lifecycle.bootstrapPool();assert.deepEqual(again,slots);assert.deepEqual(f.provisioned,[1,2,3,4]);
   assert.deepEqual(new Set(f.operations),new Set(['health','sync-global']));
