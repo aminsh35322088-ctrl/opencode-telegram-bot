@@ -268,9 +268,10 @@ test('legacy image-less free Worker handoff preserves its source and storage wit
  const {writeFile}=await import('node:fs/promises');
  for(const configured of [true,false]){
   const f=await fixture();f.add('legacy');const binding=f.bindings.get('legacy')!;Object.assign(binding,{chatId:0,threadId:0,slot:1,status:'available'});
+  const configuredImage=f.options.workerImage;f.options.workerImage=undefined;
   const original=await f.controller.provision('legacy',1);
   const journal=JSON.parse(await readFile(f.filename,'utf8'));delete journal.nodes[0].image;delete journal.nodes[0].runtimeCommit;delete journal.nodes[0].runtimeVersion;await writeFile(f.filename,JSON.stringify(journal));
-  if(!configured)f.options.workerImage=undefined;
+  f.options.workerImage=configured?configuredImage:undefined;
   Object.assign(binding,{chatId:-100,threadId:2,generation:2,status:'provisioning'});
   const claimed=await f.controller.provision('legacy',2);assert.equal(claimed.volumeId,original.volumeId);assert.equal(claimed.serviceId,original.serviceId);assert.equal(claimed.image,undefined);
   const source=f.calls.filter(c=>c.document.includes('WorkerSource')).at(-1)!;
