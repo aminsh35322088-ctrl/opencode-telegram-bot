@@ -153,6 +153,26 @@ export class InfrastructureController {
     return this.provisioner.handoff(nodeId,generation);
    }
    if(operation==='retire'){if(!this.provisioner)throw Error('Worker pools not configured');return this.provisioner.retire(nodeId,generation);}
+   // Reconcile the configured immutable image only for an unbound, already
+   // provisioned Worker. A Topic-bound generation never enters this path.
+   if(operation==='reconcile'&&binding.chatId===0&&binding.threadId===0&&['available','pool-provisioning'].includes(binding.status)&&binding.projectId&&binding.serviceId&&binding.volumeId&&binding.endpoint&&binding.slot){
+    if(this.poolConfiguration)await this.poolConfiguration;
+    const provisioner=this.provisioner;if(!provisioner)throw Error('Worker pools not configured');
+    const before=(await provisioner.listWorkers()).find(item=>item.nodeId===nodeId&&item.generation===generation);
+    const reconciled=await provisioner.provision(nodeId,generation);
+    const imageUpdateStarted=Boolean(reconciled.image&&(!before||before.image!==reconciled.image||before.runtimeCommit!==reconciled.runtimeCommit||before.runtimeVersion!==reconciled.runtimeVersion));
+    const currentBinding=await this.lookup(nodeId);
+    if(!currentBinding||currentBinding.generation!==generation||currentBinding.chatId!==0||currentBinding.threadId!==0||currentBinding.status!==binding.status||currentBinding.serviceId!==binding.serviceId||currentBinding.volumeId!==binding.volumeId||currentBinding.endpoint!==binding.endpoint)throw Error('Canonical Worker binding changed during runtime reconciliation');
+    const registered=await this.options.registry.resolve(nodeId);
+    if(!registered||registered.binding.generation!==generation||registered.binding.chatId!==0||registered.binding.threadId!==0||registered.endpoint!==binding.endpoint)throw Error('Worker registry changed during runtime reconciliation');
+    this.options.registry.install({...registered,binding:{...registered.binding,status:binding.status}});
+    await this.options.registry.persist(path.join(this.options.stateDirectory,'nodes.json'));
+    if(imageUpdateStarted){
+     this.verifiedUnbound.delete(nodeId);
+     process.stdout.write(`[InfrastructureBoundary] worker_image_update_started node=${nodeId} generation=${generation} version=${reconciled.runtimeVersion??"unknown"}\n`);
+     return reconciled;
+    }
+   }
    const identity=await this.options.registry.resolve(nodeId);if(!identity||identity.binding.generation!==generation||identity.binding.chatId!==binding.chatId||identity.binding.threadId!==binding.threadId)throw Error('Infrastructure identity mismatch');
    if(binding.status==='ready' && (!binding.sessionId||binding.sessionId!==identity.binding.sessionId))throw Error('Infrastructure session mismatch');
    this.options.registry.install({...identity,binding:{...identity.binding,status:binding.status}});await this.options.registry.persist(path.join(this.options.stateDirectory,'nodes.json'));
