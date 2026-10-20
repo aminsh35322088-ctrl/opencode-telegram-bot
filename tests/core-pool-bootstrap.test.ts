@@ -130,7 +130,7 @@ test('limited bootstrap keeps verified capacity and never allocates a fifth Work
 test('Worker pool bootstrap rejects capacity above the Railway free-plan ceiling',async()=>{
  const f=await fixture();
  await assert.rejects(f.lifecycle.bootstrapPool(5),/four|capacity|warm Worker policy/i);
- await assert.rejects(f.bindings.ensurePoolSlots(5),/four|capacity|warm Worker policy/i);
+ assert.throws(()=>f.bindings.ensurePoolSlots(5),/four|capacity|warm Worker policy/i);
  assert.equal((await f.bindings.list()).length,4);
 });
 
