@@ -325,8 +325,15 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
           // the selected pool. Pool-quota fallback must never create Worker five.
           const pools=[...this.options.pools];
           if(!pools.some(candidate=>candidate.projectId===pool.projectId))pools.push(pool);
-          const inventories=await Promise.all(pools.map(candidate=>candidate.projectId===pool.projectId?Promise.resolve(inventory):this.inventory(candidate)));
-          const actualWorkers=inventories.reduce((total,current)=>total+current.project.services.edges.filter(entry=>entry.node.name.startsWith("topic-node-")&&!entry.node.deletedAt).length,0);
+          const inventories=await Promise.allSettled(pools.map(candidate=>candidate.projectId===pool.projectId?Promise.resolve(inventory):this.inventory(candidate)));
+          let actualWorkers=0;
+          for(const result of inventories){
+            if(result.status==="fulfilled"){
+              actualWorkers+=result.value.project.services.edges.filter(entry=>entry.node.name.startsWith("topic-node-")&&!entry.node.deletedAt).length;
+            }else if(!(result.reason instanceof InfrastructureRequestError&&result.reason.category==="project_unavailable")){
+              throw result.reason;
+            }
+          }
           const journalWorkers=journal.nodes.filter(item=>item.phase!=="retired"&&!!item.serviceId).length;
           if(Math.max(actualWorkers,journalWorkers)>=4)throw new WorkerProvisioningError("capacity_exhausted");
           // An ambiguous create is never blindly retried: next invocation reconciles the fixed name first.
