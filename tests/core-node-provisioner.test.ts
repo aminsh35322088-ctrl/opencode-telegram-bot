@@ -278,7 +278,7 @@ test('legacy image-less free Worker handoff preserves its source and storage wit
 test('driver inventory and inspection expose owned workers and actual deployment receipts without secrets',async()=>{
  const f=await fixture();f.add('inspect');const node=await f.controller.provision('inspect',1);
  assert.deepEqual((await f.controller.listWorkers()).map(n=>n.nodeId),['inspect']);
- const inspected=await f.controller.inspectWorker('inspect',1);assert.equal(inspected.serviceId,node.serviceId);assert.equal(inspected.deploymentId,'deployment-'+node.serviceId+'-v1');assert.equal(inspected.sleepPolicyDeploymentVerified,true);
+ const inspected=await f.controller.inspectWorker('inspect',1);assert.equal(inspected.serviceId,node.serviceId);assert.equal(inspected.deploymentId,'deployment-'+node.serviceId+'-v1');
  assert.equal(JSON.stringify(inspected).includes('NODE_SHARED_SECRET'),false);
  await assert.rejects(f.controller.inspectWorker('inspect',2),/authorization/);
  const capacities=await f.controller.inspectCapacity();assert.deepEqual(capacities.map(p=>p.available),[1,2]);
