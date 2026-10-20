@@ -471,7 +471,8 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       // identity handoff. Only new allocations require the immutable image contract.
       const source=record.image&&desiredImage?{image:desiredImage}:record.image?{image:record.image}:{repo:"aminsh35322088-ctrl/opencode-telegram-core",branch:"main",commitSha:"9a188586a660967227a044a3224280e6923e3067"};
       const previousDeploymentId=serviceInstance?.latestDeployment?.id??record.deploymentId;
-      const redeployForSleepOnly=sleepPolicyChanged&&!managedImageDrift&&record.everDeployed===true;
+      const wasEverDeployed=record.everDeployed===true;
+      const redeployForSleepOnly=sleepPolicyChanged&&!managedImageDrift&&wasEverDeployed&&record.image!==undefined;
       record.everDeployed=true;await this.save(journal);
       if(redeployForSleepOnly){
         // Railway documents a dedicated redeploy mutation. Reapplying an identical
@@ -498,6 +499,17 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
           await (this.options.wait??(milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds))))(Math.min(500*2**attempt,8_000));
           inventory=await this.inventory(pool);
           latestDeployment=inventory.environment.serviceInstances.edges.find(entry=>entry.node.serviceId===record!.serviceId)?.node.latestDeployment;
+        }
+        if((!latestDeployment?.id||latestDeployment.id===previousDeploymentId)&&sleepPolicyChanged&&!managedImageDrift&&wasEverDeployed&&!redeployForSleepOnly){
+          // A legacy source patch can be a no-op if it already points at the same
+          // commit. Explicitly redeploy as a bounded fallback so the sleep flag
+          // still reaches a newly created container.
+          await this.mutate(`mutation WorkerRedeploy($serviceId:String!,$environmentId:String!){serviceInstanceRedeploy(serviceId:$serviceId,environmentId:$environmentId)}`,{serviceId:record.serviceId,environmentId:pool.environmentId});
+          for(let attempt=0;attempt<5&&(!latestDeployment?.id||latestDeployment.id===previousDeploymentId);attempt++){
+            await (this.options.wait??(milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds))))(Math.min(500*2**attempt,8_000));
+            inventory=await this.inventory(pool);
+            latestDeployment=inventory.environment.serviceInstances.edges.find(entry=>entry.node.serviceId===record!.serviceId)?.node.latestDeployment;
+          }
         }
         if(!latestDeployment?.id||latestDeployment.id===previousDeploymentId){
           await this.save(journal);
