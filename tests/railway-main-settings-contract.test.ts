@@ -47,3 +47,15 @@ test('legacy Railway variables are reconciled after workspace verification, with
   assert.ok(configureStart >= 0 && cleanup > configureStart, 'workspace cleanup must exist');
   assert.ok(workerVerify < 0 || cleanup < workerVerify, 'cleanup must not wait for Worker verification');
 });
+
+test('Railway UI presents the fixed four-Worker cap and ownership-based sleep policy', () => {
+  const menu = read('src/bot/menus/railway-settings-menu.ts');
+  const callback = read('src/bot/callbacks/settings-callback-handler.ts');
+  assert.match(menu, /Worker fleet · <b>4 maximum<\/b>/);
+  assert.match(menu, /Sleep policy · <b>Unassigned Workers only<\/b>/);
+  assert.match(menu, /stays awake even when its model is idle/);
+  assert.match(menu, /Service and \/data Volume are retained for reuse/);
+  assert.doesNotMatch(menu, /− Warm|\+ Warm|\/ project/);
+  assert.match(callback, /Worker capacity is fixed at four/);
+  assert.match(callback, /Legacy inline keyboards may still contain these controls/);
+});

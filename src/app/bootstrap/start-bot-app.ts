@@ -255,10 +255,10 @@ export async function startBotApp(): Promise<void> {
     const workerSettings=normalizeRailwayWorkerSettings(await requestInfrastructureSetup("settings.get"));
     setTopicNodeCreationEnabled(workerSettings.workerCreationEnabled);
     logger.info(`[WorkerCluster] Railway policy loaded; startup hard-capacity=4 warmWorkers=4 configuredPerProject=${workerSettings.workersPerProject}`);
-    // Enforce the Railway free-tier fleet limit on every startup: exactly four
-    // durable slots are the target, independent of older persisted onboarding
-    // settings. Existing Topic-bound Workers are never interrupted; idle slots
-    // are reconciled into Serverless sleep before they are returned to capacity.
+    // Hard-code the Railway fleet limit: four Worker services plus this Control
+    // Plane. Existing Topic-bound Workers are never interrupted. Only genuinely
+    // unbound slots are reconciled into Serverless sleep before reuse; model
+    // inactivity alone must never put a Topic-owned Worker to sleep.
     safeBackgroundTask({
       taskName: "app.workerPoolReleaseReconcile",
       task: async () => {
