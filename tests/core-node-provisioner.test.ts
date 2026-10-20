@@ -31,7 +31,10 @@ async function fixture() {
         assert.equal(input.region,undefined);
         assert.equal(input.builder,undefined,'Dockerfile detection must not pass unsupported DOCKERFILE Builder enum');
         assert.equal(input.healthcheckTimeout,30,'Worker Agent liveness must fail fast instead of retrying for five minutes');
-        assert.equal(input.sleepApplication,false,'Warm pool Workers must stay awake for reliable readiness and New Chat routing');
+        const service=services.find(item=>item.id===variables.serviceId);
+        const workerId=service?.name.startsWith("topic-node-")?service.name.slice("topic-node-".length):"";
+        const binding=bindings.get(workerId);
+        assert.equal(input.sleepApplication,binding?.chatId===0&&binding.threadId===0,'Only unbound idle Workers should enter Railway sleep mode');
         result={serviceInstanceUpdate:true};
       } else if(document.includes('mutation WorkerVolume(')) {
         const volume={id:'v'+volumes.length,projectId:input.projectId as string,serviceId:input.serviceId as string,environmentId:input.environmentId as string};volumes.push(volume);result={volumeCreate:{id:volume.id}};
