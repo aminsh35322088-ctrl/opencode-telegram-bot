@@ -102,41 +102,36 @@ test('explicit reconciliation withdraws cached availability on corrupt sync and 
  assert.deepEqual(f.provisioned,[1,2,3,4]);assert.deepEqual(f.reconciled,[1,2,3,4,1]);assert.equal(after.slice(1).every(binding=>binding.status==='available'),true);
 });
 
-test('claiming reuses prepared Workers then reserves lazy capacity',async()=>{
-  const f=await fixture();await f.bindings.ensurePoolSlots(4);
-  await f.lifecycle.bootstrapPool();
+test('claiming reuses prepared Workers and refuses a fifth durable slot',async()=>{
+  const f=await fixture();await f.lifecycle.bootstrapPool();
   const claimed=[];for(let thread=2;thread<6;thread++)claimed.push(await f.bindings.reserve(-100,thread));
-  assert.ok(claimed.every(item=>item.generation===2&&item.status==='reserved'));assert.equal((await f.bindings.reserve(-100,6)).generation,1);
-  await f.lifecycle.bootstrapPool();assert.deepEqual(f.provisioned,[1,2,3,4]);assert.equal((await f.bindings.list()).length,5);
+  assert.ok(claimed.every(item=>item.generation===2&&item.status==='reserved'));
+  await assert.rejects(f.bindings.reserve(-100,6),/CAPACITY EXHAUSTED/);
+  await f.lifecycle.bootstrapPool();assert.deepEqual(f.provisioned,[1,2,3,4]);assert.equal((await f.bindings.list()).length,4);
 });
 
-test('limited bootstrap keeps four ready slots and New Chat claims them without filling the fifth slot',async()=>{
- const f=await fixture();f.setFail(5);
- await assert.rejects(f.lifecycle.bootstrapPool(5),error=>error===f.failure);
+test('limited bootstrap keeps verified capacity and never allocates a fifth Worker',async()=>{
+ const f=await fixture();f.setFail(4);
+ await assert.rejects(f.lifecycle.bootstrapPool(4),error=>error===f.failure);
  const before=await f.bindings.list();
- assert.deepEqual(before.map(binding=>binding.status),['available','available','available','available','pool-provisioning']);
- for(let index=0;index<4;index++){
+ assert.deepEqual(before.map(binding=>binding.status),['available','available','available','pool-provisioning']);
+ for(let index=0;index<3;index++){
   const claimed=await f.bindings.reserve(-100,index+2);
   assert.equal(claimed.nodeId,before[index]!.nodeId);
   assert.equal(claimed.serviceId,before[index]!.serviceId);
   assert.equal(claimed.volumeId,before[index]!.volumeId);
   assert.equal(claimed.generation,2);
  }
- assert.deepEqual(f.provisioned,[1,2,3,4,5]);
- assert.equal((await f.bindings.list())[4]!.status,'pool-provisioning');
+ await assert.rejects(f.bindings.reserve(-100,9),/CAPACITY EXHAUSTED/);
+ assert.deepEqual(f.provisioned,[1,2,3,4]);
+ assert.equal((await f.bindings.list()).length,4);
 });
 
-
-test('New Chat with no verified capacity never creates a Telegram Topic',async()=>{
- let creations=0;const reachedCreate=new Error('Telegram creation reached');
- const api={raw:{createForumTopic:async()=>{creations++;throw reachedCreate;}}} as unknown as Api;
- await assert.rejects(createRemoteTopicSession(api,-100,'/topic'),/CAPACITY EXHAUSTED/);
- assert.equal(creations,0);
-});
-
-test('administrative warm capacity can exceed four without changing default lazy allocation',async()=>{
- const f=await fixture();const slots=await f.lifecycle.bootstrapPool(5);
- assert.equal(slots.length,5);assert.deepEqual(f.provisioned,[1,2,3,4,5]);
+test('Worker pool bootstrap rejects capacity above the Railway free-plan ceiling',async()=>{
+ const f=await fixture();
+ await assert.rejects(f.lifecycle.bootstrapPool(5),/four|capacity|warm Worker policy/i);
+ await assert.rejects(f.bindings.ensurePoolSlots(5),/four|capacity|warm Worker policy/i);
+ assert.equal((await f.bindings.list()).length,4);
 });
 
 test('concurrent duplicate New Chat operation reaches Telegram create only once',async()=>{
