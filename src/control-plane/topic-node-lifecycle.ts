@@ -93,7 +93,7 @@ export class TopicNodeLifecycle {
         binding=claimed;
         try{
           const reconciled=await this.dependencies.infrastructure('reconcile',binding.nodeId,binding.generation);
-          await this.waitReady(binding,'pool-provisioning',reconciled,reconciled.imageUpdated===true);
+          await this.waitReady(binding,'pool-provisioning',reconciled,true);
           const observed=await this.dependencies.infrastructure('inspect',binding.nodeId,binding.generation);
           if(observed.nodeId!==binding.nodeId||observed.generation!==binding.generation||!observed.serviceId||!observed.volumeId||!observed.endpoint||observed.serviceId!==binding.serviceId||observed.volumeId!==binding.volumeId||observed.projectId!==binding.projectId||observed.endpoint!==binding.endpoint)throw new WorkerProvisioningError("reconciliation_required");
           binding=await this.syncGlobal(binding);
@@ -123,7 +123,7 @@ export class TopicNodeLifecycle {
         if(reconciled.nodeId!==binding.nodeId||reconciled.generation!==generation||!reconciled.endpoint||!reconciled.serviceId||!reconciled.volumeId)throw new Error("Incomplete provisioned node identity");
         if(hasResources&&(reconciled.serviceId!==binding.serviceId||reconciled.volumeId!==binding.volumeId||reconciled.projectId!==binding.projectId||reconciled.endpoint!==binding.endpoint))throw new Error("Reconciled Worker resource identity mismatch");
         binding=await this.dependencies.bindings.update(binding.nodeId,generation,{projectId:reconciled.projectId,serviceId:reconciled.serviceId,volumeId:reconciled.volumeId,endpoint:reconciled.endpoint});
-        await this.waitReady(binding,'pool-provisioning',reconciled,reconciled.imageUpdated===true);
+        await this.waitReady(binding,'pool-provisioning',reconciled,true);
         binding=await this.syncGlobal(binding);
         const observed=await this.dependencies.infrastructure('inspect',binding.nodeId,generation);
         if(observed.nodeId!==binding.nodeId||observed.generation!==generation||observed.projectId!==binding.projectId||observed.serviceId!==binding.serviceId||observed.volumeId!==binding.volumeId||observed.endpoint!==binding.endpoint)throw new WorkerProvisioningError("reconciliation_required");
@@ -160,7 +160,7 @@ export class TopicNodeLifecycle {
       const binding=claimed;
       try{
         const reconciled=await this.dependencies.infrastructure('reconcile',binding.nodeId,binding.generation);
-        await this.waitReady(binding,'pool-provisioning',reconciled,reconciled.imageUpdated===true);
+        await this.waitReady(binding,'pool-provisioning',reconciled,true);
         const observed=await this.dependencies.infrastructure('inspect',binding.nodeId,binding.generation);
         if(observed.nodeId!==binding.nodeId||observed.generation!==binding.generation||!observed.serviceId||!observed.volumeId||!observed.endpoint||observed.serviceId!==binding.serviceId||observed.volumeId!==binding.volumeId||observed.projectId!==binding.projectId||observed.endpoint!==binding.endpoint)throw new WorkerProvisioningError("reconciliation_required");
         const synced=await this.syncGlobal(binding);
