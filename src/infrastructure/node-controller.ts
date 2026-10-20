@@ -211,6 +211,16 @@ export class InfrastructureController {
      }));
      if(current.every(Boolean)){await this.options.onClusterVerified?.();this.clusterVerified=true;}
     }
+    // Root's authenticated identity may be marked available after its canaries
+    // pass. Canonical Topic allocation remains fenced as pool-provisioning until
+    // the calling lifecycle atomically commits the matching durable state.
+    const canonical=await this.lookup(nodeId);
+    const registered=await this.options.registry.resolve(nodeId);
+    if(!canonical||canonical.generation!==generation||canonical.chatId!==0||canonical.threadId!==0||!['available','pool-provisioning'].includes(canonical.status)||!registered||registered.binding.generation!==generation||registered.binding.chatId!==0||registered.binding.threadId!==0)throw Error('Canonical Worker changed after boundary verification');
+    if(canonical.status==='pool-provisioning'){
+     this.options.registry.install({...registered,binding:{...registered.binding,status:'available'}});
+     await this.options.registry.persist(path.join(this.options.stateDirectory,'nodes.json'));
+    }
    }
    return {nodeId,generation,projectId:binding.projectId??'',environmentId:'',endpoint:identity.endpoint,serviceId:binding.serviceId,volumeId:binding.volumeId,phase:'deploying' as const};
   });this.queue=task.catch(()=>undefined);return task;
