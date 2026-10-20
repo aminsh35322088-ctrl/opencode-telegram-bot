@@ -337,7 +337,7 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       // an inbound Worker request wakes it before lifecycle readiness is confirmed.
       // Existing attached volumes retain their region; discovery defaults must never move their service.
       const desiredSleep=binding.chatId===0&&binding.threadId===0;
-      const sleepPolicyChanged=record.sleepApplication!==desiredSleep;
+      const sleepPolicyChanged=desiredSleep?record.sleepApplication!==true:record.sleepApplication===true;
       await this.mutate(`mutation WorkerConfig($environmentId:String!,$serviceId:String!,$input:ServiceInstanceUpdateInput!){serviceInstanceUpdate(environmentId:$environmentId,serviceId:$serviceId,input:$input)}`, {environmentId:pool.environmentId,serviceId:record.serviceId,input:{numReplicas:1,sleepApplication:desiredSleep,healthcheckPath:"/health",healthcheckTimeout:30,...(instances.length===0?{multiRegionConfig:{[pool.region]:{numReplicas:1}}}:{}),tracingEnabled:false,autoInstrumentationEnabled:false,restartPolicyType:"ON_FAILURE",restartPolicyMaxRetries:3}});
       record.sleepApplication=desiredSleep;
       await this.save(journal);
