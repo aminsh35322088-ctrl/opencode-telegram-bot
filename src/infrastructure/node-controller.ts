@@ -170,13 +170,13 @@ export class InfrastructureController {
     if(imageUpdateStarted){
      this.verifiedUnbound.delete(nodeId);
      process.stdout.write(`[InfrastructureBoundary] worker_image_update_started node=${nodeId} generation=${generation} version=${reconciled.runtimeVersion??"unknown"}\n`);
-     return reconciled;
+     return {...reconciled,imageUpdated:true};
     }
    }
    const identity=await this.options.registry.resolve(nodeId);if(!identity||identity.binding.generation!==generation||identity.binding.chatId!==binding.chatId||identity.binding.threadId!==binding.threadId)throw Error('Infrastructure identity mismatch');
    if(binding.status==='ready' && (!binding.sessionId||binding.sessionId!==identity.binding.sessionId))throw Error('Infrastructure session mismatch');
    this.options.registry.install({...identity,binding:{...identity.binding,status:binding.status}});await this.options.registry.persist(path.join(this.options.stateDirectory,'nodes.json'));
-   if(binding.status==='available'&&binding.chatId===0&&binding.threadId===0&&this.options.probeUnbound){
+   if(['available','pool-provisioning'].includes(binding.status)&&binding.chatId===0&&binding.threadId===0&&this.options.probeUnbound){
     try{await this.options.probeUnbound(nodeId,generation);}catch(error){
      this.verifiedUnbound.delete(nodeId);
      this.options.registry.install({...identity,binding:{...identity.binding,status:'provisioning'}});
