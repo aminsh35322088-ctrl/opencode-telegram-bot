@@ -18,6 +18,16 @@ test("shared model routing formatter includes reasoning and every Topic capabili
   const route = (capability: string) => ({ capability, model: { providerID: "p", modelID: "m" }, routeSource: "primary-native", primarySupportsCapability: true });
   const routes = new Map(["vision", "voiceInput", "imageGenerate", "textToSpeech"].map((capability) => [capability, route(capability)]));
   const text = format!({ providerID: "p", modelID: "m", name: "Model" }, catalog, routes);
-  assert.match(text, /🧠 Model · Provider/);
-  for (const line of ["💬 Chat ✅", "👁️ Vision ✅", "🧠 Reasoning ✅", "🎙️ Voice → Text ✅", "🎨 Image AI ✅", "🔊 Text → Voice ✅", "🛠️ Tool Call ✅", "🤖 Agent Mode ✅"]) assert.ok(text.includes(line), `missing ${line}`);
+  assert.match(text, /🧠 Active Model: Model · Provider/);
+  for (const line of [
+    "✅ Chat / Text → Model · Provider · Primary native",
+    "✅ Vision → Model · Provider · Primary native",
+    "🧠 Reasoning ✅ · Primary model",
+    "✅ Voice → Text → Model · Provider · Primary native",
+    "✅ Image AI → Model · Provider · Primary native",
+    "✅ Text → Voice → Model · Provider · Primary native",
+    "🛠️ Tool Calling ✅ · Primary model",
+    "🤖 Agent Mode ✅",
+    "✅ Primary native  ⚙️ Topic Override  ↪️ Main Default  ❌ Unavailable  ❔ Unconfirmed",
+  ]) assert.ok(text.includes(line), `missing ${line}`);
 });
