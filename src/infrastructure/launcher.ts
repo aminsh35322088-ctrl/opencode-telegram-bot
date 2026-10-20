@@ -75,7 +75,7 @@ async function main(): Promise<void> {
       try{
         const {verifyWorkerRuntimeCanary}=await import("./worker-runtime-canary.js");
         await verifyWorkerRuntimeCanary({journalPath:"/data/.infrastructure/provisioning.json",selftest:(nodeId,generation,profile)=>retirementTransport.runtimeSelftest(nodeId,generation,profile),log:message=>{process.stdout.write(message);},afterVerified:async(nodeId,generation)=>{
-          await controller.cleanupRuntimeCanaryVariables(nodeId,generation,(id,epoch,profile)=>retirementTransport.runtimeSelftest(id,epoch,profile));
+          await controller.cleanupRuntimeCanaryVariables(nodeId,generation,(id,epoch,profile)=>retirementTransport.runtimeSelftest(id,epoch,profile),true);
           process.stdout.write(`[InfrastructureBoundary] worker_variables_reconciled node=${nodeId} generation=${generation} contract=identity-v1 restartVerification=pending\n`);
         }});
       }catch{
