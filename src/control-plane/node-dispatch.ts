@@ -28,6 +28,10 @@ export async function dispatchAuthenticatedNodeControl(envelope: NodeEnvelope): 
       if(envelope.operation==="credential.release")return await integrationCredentialLeaseBroker.release(data,owner);
       return await integrationCredentialLeaseBroker.authorize(data,owner);
     }
+    if (envelope.operation==="railway.tool") {
+      const {requestInfrastructureSetup}=await import("./application-transport.js");
+      return await requestInfrastructureSetup("railway.tool",data);
+    }
     if (envelope.operation==="credential.get") {
       if(data.purpose==="mcp.request"){
         const {leaseMcpCredential}=await import("./mcp-credential-lease.js");
