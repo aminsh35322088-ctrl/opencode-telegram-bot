@@ -12,7 +12,7 @@ export async function requestInfrastructure(operation:"provision"|"rebind"|"recy
  return await callInfrastructure("infrastructure-request",{operation,nodeId,generation},timeout) as ProvisionedNode;
 }
 
-export type InfrastructureSetupOperation="status"|"credential.begin"|"workspace.select"|"settings.get"|"settings.update";
+export type InfrastructureSetupOperation="status"|"credential.begin"|"workspace.select"|"settings.get"|"settings.update"|"railway.tool";
 export async function requestInfrastructureSetup(operation:InfrastructureSetupOperation,payload:Record<string,unknown>={}):Promise<unknown>{
  if(!callInfrastructure)throw new Error("Infrastructure channel unavailable");
  return await callInfrastructure("infrastructure-configure",{operation,payload},30_000);
