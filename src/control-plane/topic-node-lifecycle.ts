@@ -32,9 +32,9 @@ export class TopicNodeLifecycle {
     return response.result as T;
   }
   /** Reconcile existing unbound Workers; New Chat allocates additional capacity lazily. */
-  bootstrapPool(warmCapacity?:number,repairOnly=false,continueOnError=false):Promise<NodeBinding[]> {
+  bootstrapPool(warmCapacity?:number,repairOnly=false,continueOnError=false,rolloutBoundIdle=false):Promise<NodeBinding[]> {
     if(this.poolFlight)return this.poolFlight;
-    const operation=this.preparePool(warmCapacity,repairOnly,continueOnError).finally(()=>{if(this.poolFlight===operation)this.poolFlight=undefined;});
+    const operation=this.preparePool(warmCapacity,repairOnly,continueOnError,rolloutBoundIdle).finally(()=>{if(this.poolFlight===operation)this.poolFlight=undefined;});
     this.poolFlight=operation;return operation;
   }
   private async waitReady(binding:NodeBinding,status:'provisioning'|'pool-provisioning'|'available'|'retiring',expected?:ProvisionedNode,allowRuntimeTransition=false):Promise<void> {
@@ -87,7 +87,7 @@ export class TopicNodeLifecycle {
     }
     throw new Error("Global state changed repeatedly during bootstrap; retry Topic readiness");
   }
-  private async preparePool(warmCapacity?:number,repairOnly=false,continueOnError=false):Promise<NodeBinding[]> {
+  private async preparePool(warmCapacity?:number,repairOnly=false,continueOnError=false,rolloutBoundIdle=false):Promise<NodeBinding[]> {
     const slots=await this.dependencies.bindings.ensurePoolSlots(warmCapacity??0);
     let firstError:unknown;
     for(let binding of slots) {
@@ -95,7 +95,7 @@ export class TopicNodeLifecycle {
       // Worker may be updated in place if its exact session proves idle; busy or
       // unverifiable sessions are left untouched. /data, session identity and binding stay.
       if(binding.chatId!==0||binding.threadId!==0){
-        if(continueOnError&&!repairOnly&&binding.status==="ready"&&binding.sessionId){
+        if(rolloutBoundIdle&&continueOnError&&!repairOnly&&binding.status==="ready"&&binding.sessionId){
           try{
             const current=await this.dependencies.infrastructure("inspect",binding.nodeId,binding.generation);
             const imageDrift=Boolean(current.image&&(current.image!==WORKER_RUNTIME_IMAGE||current.runtimeCommit!==WORKER_CORE_COMMIT||current.runtimeVersion!==WORKER_CORE_VERSION));
