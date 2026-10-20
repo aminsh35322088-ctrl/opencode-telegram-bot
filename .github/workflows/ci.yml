@@ -4,12 +4,15 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: '17 */6 * * *'
 
 permissions:
   contents: read
 
 jobs:
   validate:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -60,3 +63,137 @@ jobs:
       - name: Cleanup CI-only files
         if: always()
         run: rm -rf tests node_modules/vitest node_modules/@vitest
+
+  core-release-sync:
+    if: github.event_name == 'schedule' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: core-release-sync-main
+      cancel-in-progress: false
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.14.0
+
+      - name: Avoid duplicate updater pull requests
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          number="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --json number,headRefName \
+            --jq '[.[] | select(.headRefName | startswith("automation/core-release-sync-"))] | .[0].number // empty')"
+          if [[ -n "$number" ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "An OpenCode Core update PR (#$number) is already waiting for review."
+            echo "- Existing Core updater PR: #$number; duplicate update skipped." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Discover and verify the newest Core prerelease
+        id: sync
+        if: steps.existing.outputs.skip != 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/sync-core-release.mjs
+
+      - name: Install dependencies for the candidate pin
+        if: steps.sync.outputs.changed == 'true'
+        run: npm ci
+
+      - name: Materialize and verify the candidate Core runtime
+        if: steps.sync.outputs.changed == 'true'
+        run: |
+          node scripts/materialize-core-release.mjs
+          node scripts/verify-core-install.mjs --runtime
+
+      - name: Install CI test runner
+        if: steps.sync.outputs.changed == 'true'
+        run: npm install --no-save --package-lock=false vitest@3.2.4
+
+      - name: Run Telegram lifecycle regression gate
+        if: steps.sync.outputs.changed == 'true'
+        run: >-
+          node --import tsx --test
+          tests/main-reply-keyboard.test.ts
+
+      - name: Run Core routing and release-sync tests
+        if: steps.sync.outputs.changed == 'true'
+        run: node --import tsx --test tests/*.test.ts
+
+      - name: Materialize CI-only tests
+        if: steps.sync.outputs.changed == 'true'
+        run: |
+          rm -rf tests
+          mkdir -p tests
+          cp -R .github/ci-tests/tests/. tests/
+
+      - name: Lint
+        if: steps.sync.outputs.changed == 'true'
+        run: npm run lint
+
+      - name: Typecheck
+        if: steps.sync.outputs.changed == 'true'
+        run: npm run typecheck
+
+      - name: Build
+        if: steps.sync.outputs.changed == 'true'
+        run: npm run build
+
+      - name: Run test suite
+        if: steps.sync.outputs.changed == 'true'
+        run: ./node_modules/.bin/vitest run --config .github/ci-tests/vitest.config.ts
+
+      - name: Cleanup CI-only files
+        if: always() && steps.sync.outputs.changed == 'true'
+        run: rm -rf tests node_modules/vitest node_modules/@vitest
+
+      - name: Propose the fully tested Core pin
+        if: success() && steps.existing.outputs.skip != 'true' && steps.sync.outputs.changed == 'true'
+        env:
+          CORE_VERSION: ${{ steps.sync.outputs.version }}
+          CORE_TAG: ${{ steps.sync.outputs.tag }}
+          CORE_COMMIT: ${{ steps.sync.outputs.commit }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          branch="automation/core-release-sync-${CORE_VERSION}-${GITHUB_RUN_ID}"
+          git switch -c "$branch"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add core-release.lock.json package.json package-lock.json src/infrastructure/worker-core-release.ts
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo "Verified pin matched main; nothing to propose."
+            exit 0
+          fi
+          git commit -m "chore: sync OpenCode Telegram Core ${CORE_VERSION}"
+          git push origin "$branch"
+          body_file="$RUNNER_TEMP/core-release-sync-pr.md"
+          cat > "$body_file" <<EOF
+          ## Verified Core release update
+
+          - Core release: ${CORE_TAG}
+          - Verified Core source commit: ${CORE_COMMIT}
+          - Complete Bot CI, routing/lifecycle tests, typecheck, lint, build, and Vitest suite passed in [this run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID).
+          - Runtime, SDK, native-runtime assets, npm package integrity, immutable Worker image digest, and embedded image source revision were verified before changing the release pins.
+          - Existing Topic-bound Workers are never force-replaced; only unbound slots are drained, reconciled, health-verified, and released back to allocation.
+
+          This is intentionally a pull request: production main is not updated automatically without review.
+          EOF
+          gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$branch" \
+            --title "chore: sync OpenCode Telegram Core ${CORE_VERSION}" --body-file "$body_file"
+          echo "- Opened reviewed Core pin PR for ${CORE_TAG} after the full Bot test gate passed." >> "$GITHUB_STEP_SUMMARY"

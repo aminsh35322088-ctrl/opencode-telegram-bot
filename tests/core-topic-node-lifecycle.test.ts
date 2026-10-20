@@ -14,12 +14,19 @@ async function fixture(mode='normal') {
       calls.push(operation);if(mode==='recycle-failure'&&operation==='recycle')throw new Error('recycle failure');if(operation==='provision'){provisionCalls++;if(mode==='capacity')throw new Error('NO WORKER AVAILABLE / CAPACITY EXHAUSTED');}
       const result:ProvisionedNode={nodeId,generation,projectId:'workers',environmentId:'production',serviceId:'service-'+nodeId,volumeId:'volume-'+nodeId,endpoint:'https://worker.up.railway.app',phase:operation==='retire'?'retired':operation==='recycle'||operation==='rebind'?'recycled':'deploying'};
       if(mode==='image-mismatch')Object.assign(result,{runtimeCommit:'a'.repeat(40),runtimeVersion:'1.18.33-bot.13-pre.17',image:'ghcr.io/example/core@sha256:'+'b'.repeat(64)});
-      if(operation==='reconcile'){const all=await bindings.list();assert.equal(all.some(item=>item.status==='ready'||item.status==='available'),true);}
+      if(operation==='reconcile'){const all=await bindings.list();assert.equal(all.some(item=>item.status==='ready'||item.status==='available'||item.status==='pool-provisioning'),true);}
+      if(mode==='rolling-image-upgrade'&&operation==='reconcile'){
+        Object.assign(result,{image:'ghcr.io/example/worker@sha256:'+'e'.repeat(64),runtimeCommit:'d'.repeat(40),runtimeVersion:'1.18.33-bot.13-pre.39'});
+        if(calls.filter(item=>item==='reconcile').length===1)Object.assign(result,{imageUpdated:true});
+      }
+      if(mode==='rolling-image-upgrade'&&operation==='inspect'){
+        Object.assign(result,{image:'ghcr.io/example/worker@sha256:'+'e'.repeat(64),runtimeCommit:'d'.repeat(40),runtimeVersion:'1.18.33-bot.13-pre.39'});
+      }
       return result;
     },
     node:async(binding,operation)=>{
       calls.push(operation);
-      if(operation==='health'){if(mode==='legacy-ready')return {ok:true,result:{ready:true}};healthCalls++;const readiness=mode==='timeout'?'warming':mode==='warming-once'&&healthCalls===1?'warming':binding.chatId===0?'ready-unbound':'ready';return {ok:true,result:{ready:readiness==='ready'||readiness==='ready-unbound',readiness,...(mode==='image-mismatch'?{runtime:{telegramCoreCommit:'c'.repeat(40),telegramCoreVersion:'1.18.33-bot.13-pre.17'}}:{})}};}
+      if(operation==='health'){if(mode==='legacy-ready')return {ok:true,result:{ready:true}};healthCalls++;const readiness=mode==='timeout'?'warming':mode==='warming-once'&&healthCalls===1?'warming':binding.chatId===0?'ready-unbound':'ready';const runtime=mode==='image-mismatch'?{telegramCoreCommit:'c'.repeat(40),telegramCoreVersion:'1.18.33-bot.13-pre.17'}:mode==='rolling-image-upgrade'?{telegramCoreCommit:healthCalls===1?'a'.repeat(40):'d'.repeat(40),telegramCoreVersion:healthCalls===1?'1.18.33-bot.13-pre.38':'1.18.33-bot.13-pre.39'}:undefined;return {ok:true,result:{ready:readiness==='ready'||readiness==='ready-unbound',readiness,...(runtime?{runtime}:{})}};}
       if(operation==='sync-global')return {ok:true,result:{revision:7,hash:mode==='corrupt'?'wrong':'hash7'}};
       if(operation==='session.create')return {ok:true,result:{sessionId:'session'}};
       if(operation==='session.get'){assert.equal(binding.sessionId,'session');return {ok:true,result:{id:'session',title:'Worker session',directory:'/data/topic'}};}
@@ -105,4 +112,18 @@ test('failed recycle quarantines the Worker and never deletes its service or vol
 test('a legacy ready boolean without explicit bound readiness cannot admit a session',async()=>{
  const f=await fixture('legacy-ready');await assert.rejects(f.lifecycle.ensureReady(-100,2,'/topic'),/timed out/);
  assert.equal(f.calls.includes('session.create'),false);
+});
+
+
+test('New Chat waits for the verified image while the previous healthy Worker replica drains',async()=>{
+ const f=await fixture('rolling-image-upgrade');
+ const [slot]=await f.bindings.ensurePoolSlots(1);
+ await f.bindings.update(slot!.nodeId,slot!.generation,{status:'available',projectId:'workers',serviceId:'service-'+slot!.nodeId,volumeId:'volume-'+slot!.nodeId,endpoint:'https://worker.up.railway.app'});
+ const worker=await f.lifecycle.verifyAvailableWorker();
+ assert.equal(worker.status,'available');
+ assert.equal(worker.chatId,0);assert.equal(worker.threadId,0);
+ assert.ok(f.getTime()>0,'old runtime health must not be mistaken for successful image rollout');
+ assert.ok(f.calls.includes('inspect'),'the provisioned resource identity must be verified');
+ assert.ok(f.calls.includes('sync-global'),'the newest global snapshot must be applied before allocation');
+ assert.equal((await f.bindings.list()).find(item=>item.nodeId===slot!.nodeId)?.status,'available');
 });

@@ -8,7 +8,8 @@ import {installSecureNodeTransport} from "./topic-node-client.js";
 let callInfrastructure:((channel:string,payload:Record<string,unknown>,timeout:number)=>Promise<unknown>)|undefined;
 export async function requestInfrastructure(operation:"provision"|"rebind"|"recycle"|"retire"|"reconcile"|"inspect",nodeId:string,generation:number):Promise<ProvisionedNode>{
  if(!callInfrastructure)throw new Error("Infrastructure channel unavailable");
- return await callInfrastructure("infrastructure-request",{operation,nodeId,generation},300_000) as ProvisionedNode;
+ const timeout=operation==="reconcile"?1_800_000:300_000;
+ return await callInfrastructure("infrastructure-request",{operation,nodeId,generation},timeout) as ProvisionedNode;
 }
 
 export type InfrastructureSetupOperation="status"|"credential.begin"|"workspace.select"|"settings.get"|"settings.update";

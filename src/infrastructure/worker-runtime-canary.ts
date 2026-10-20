@@ -16,7 +16,7 @@ export async function verifyWorkerRuntimeCanary(options:{
  const candidates=journal.nodes.filter(node=>node.slot===1&&node.phase!=="retired");
  if(candidates.length!==1)throw new Error("Runtime canary ownership unavailable");
  const node=candidates[0];
- if(!node||!/^[A-Za-z0-9_-]{1,128}$/.test(node.nodeId)||!Number.isSafeInteger(node.generation)||node.generation<1||node.unbound!==true||node.phase!=="deploying"||!node.serviceId||!node.volumeId)throw new Error("Runtime canary must be an unbound provisioned slot");
+ if(!node||!/^[A-Za-z0-9_-]{1,128}$/.test(node.nodeId)||!Number.isSafeInteger(node.generation)||node.generation<1||node.unbound!==true||!["deploying","recycled"].includes(node.phase)||!node.serviceId||!node.volumeId)throw new Error("Runtime canary must be an unbound provisioned slot");
  for(const profile of ["baseline","browser","network"] as const){
   await options.selftest(node.nodeId,node.generation,profile);
   options.log(`[InfrastructureBoundary] worker_runtime_verified node=${node.nodeId} generation=${node.generation} profile=${profile} joined=true\n`);

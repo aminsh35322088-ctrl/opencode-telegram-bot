@@ -21,9 +21,13 @@ async function fixture() {
       if(operation==='provision'){
         assert.equal(binding.status,'pool-provisioning');provisioned.push(binding.slot!);
         if(binding.slot===failSlot)throw failure;
+      }else if(operation==='inspect'){
+        assert.equal(binding.status,'pool-provisioning');
+        return {nodeId,generation,projectId:'workers',environmentId:'production',serviceId:'service-'+nodeId,volumeId:'volume-'+nodeId,endpoint:'https://worker.up.railway.app',phase:'deploying'} as ProvisionedNode;
       }else if(operation==='reconcile'){
-        assert.equal(binding.status,'available');reconciled.push(binding.slot!);
-      }else assert.fail('bootstrap must not retire Workers');
+        assert.ok(['pool-provisioning','available'].includes(binding.status));
+        reconciled.push(binding.slot!);
+      }else assert.fail('unexpected Worker lifecycle operation '+operation);
       return {nodeId,generation,projectId:'workers',environmentId:'production',serviceId:'service-'+nodeId,volumeId:'volume-'+nodeId,endpoint:'https://worker.up.railway.app',phase:'deploying'} as ProvisionedNode;
     },node:async(binding,operation)=>{
       assert.equal(binding.chatId,0);assert.equal(binding.threadId,0);assert.equal(binding.sessionId,undefined);
@@ -39,8 +43,12 @@ async function fixture() {
 test('bootstrap prepares the configured unbound Workers and preserves identity on retries',async()=>{
   const f=await fixture();const first=f.lifecycle.bootstrapPool();assert.equal(first,f.lifecycle.bootstrapPool());
   const slots=await first;assert.deepEqual(f.provisioned,[1,2,3,4]);assert.deepEqual(f.reconciled,[1,2,3,4]);
+  assert.equal(f.reconciled.length,4,"each new Worker completes root verification before becoming available");
   assert.equal(slots.length,4);assert.ok(slots.every(item=>item.status==='available'&&item.chatId===0&&item.threadId===0&&item.generation===1&&item.currentRevision===7&&!item.sessionId));
-  const again=await f.lifecycle.bootstrapPool();assert.deepEqual(again,slots);assert.deepEqual(f.provisioned,[1,2,3,4]);
+  const again=await f.lifecycle.bootstrapPool();
+  const identity=(items:typeof slots)=>items.map(item=>[item.nodeId,item.clusterId,item.slot,item.generation,item.status,item.currentRevision,item.projectId,item.serviceId,item.volumeId,item.endpoint]);
+  assert.deepEqual(identity(again),identity(slots),"reconciliation may advance updatedAt but must preserve Worker identity and resources");
+  assert.deepEqual(f.provisioned,[1,2,3,4]);
   assert.deepEqual(new Set(f.operations),new Set(['health','sync-global']));
 });
 
@@ -81,7 +89,7 @@ test('explicit reconciliation withdraws cached availability on corrupt sync and 
  await assert.rejects(f.lifecycle.bootstrapPool(),/verification/);
  const after=await f.bindings.list();assert.equal(after[0]!.status,'pool-provisioning');
  assert.equal(after[0]!.nodeId,before[0]!.nodeId);assert.equal(after[0]!.serviceId,before[0]!.serviceId);assert.equal(after[0]!.volumeId,before[0]!.volumeId);assert.equal(after[0]!.currentRevision,7);
- assert.deepEqual(f.provisioned,[1,2,3,4]);assert.equal(after.slice(1).every(binding=>binding.status==='available'),true);
+ assert.deepEqual(f.provisioned,[1,2,3,4]);assert.deepEqual(f.reconciled,[1,2,3,4,1]);assert.equal(after.slice(1).every(binding=>binding.status==='available'),true);
 });
 
 test('claiming reuses prepared Workers then reserves lazy capacity',async()=>{
@@ -131,6 +139,39 @@ test('concurrent duplicate New Chat operation reaches Telegram create only once'
  // The same request identity survives a caller workspace change on retry.
  const second=createRemoteTopicSession(api,-100,'/duplicate-other',key);
  try{await Promise.allSettled([first,second]);assert.equal(creations,1);}finally{topicNodeLifecycle.verifyAvailableWorker=verify;}
+});
+
+
+test('root boundary canary failure keeps a newly provisioned Worker out of allocation',async()=>{
+ const bindings=new NodeBindingStore(path.join(await mkdtemp(path.join(tmpdir(),'pool-canary-fail-')),'bindings.json'));
+ await bindings.ensurePoolSlots(1);
+ const failure=new Error('root boundary canary failed');
+ let canaryCalls=0;
+ const lifecycle=new TopicNodeLifecycle({
+  bindings,now:()=>0,wait:async()=>{},snapshot:async()=>({revision:1,hash:'snapshot'}),
+  infrastructure:async(operation,nodeId,generation)=>{
+   const binding=(await bindings.list()).find(item=>item.nodeId===nodeId)!;
+   assert.equal(binding.chatId,0);assert.equal(binding.threadId,0);
+   if(operation==='provision'||operation==='inspect')return {nodeId,generation,projectId:'p',environmentId:'e',serviceId:'s',volumeId:'v',endpoint:'https://worker.up.railway.app',phase:'deploying'} as ProvisionedNode;
+   if(operation==='reconcile'){
+    assert.equal(binding.status,'pool-provisioning','Root proof must run before allocation is restored');
+    canaryCalls++;
+    throw failure;
+   }
+   assert.fail('unexpected infrastructure operation '+operation);
+  },
+  node:async(_binding,operation)=>{
+   if(operation==='health')return {ok:true,result:{ready:true,readiness:'ready-unbound'}};
+   if(operation==='sync-global')return {ok:true,result:{revision:1,hash:'snapshot'}};
+   throw new Error('unexpected Worker operation '+operation);
+  },
+ });
+ await assert.rejects(lifecycle.bootstrapPool(1),error=>error===failure);
+ const [slot]=await bindings.list();
+ assert.equal(canaryCalls,1);
+ assert.equal(slot?.status,'pool-provisioning');
+ assert.equal(slot?.chatId,0);assert.equal(slot?.threadId,0);
+ assert.equal((await bindings.list()).filter(item=>item.status==='available').length,0);
 });
 
 test('reducing explicit warm target fences and retires only unused pending reservations',async()=>{

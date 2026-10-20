@@ -130,3 +130,33 @@ test('Root rotates unbound-bound-unbound generations in place with fresh secrets
  let bound=await store.reserve(-100,22);bound=await store.update(bound.nodeId,bound.generation,{status:'provisioning'});const rebound=await controller.request('rebind',bound.nodeId,bound.generation);assert.equal(rebound.phase,'recycled');assert.notEqual((await registry.resolve(bound.nodeId))?.secret,oldSecret);assert.equal((await registry.resolve(bound.nodeId))?.binding.chatId,-100);
  let unbound=await store.beginRecycle(bound.nodeId,bound.generation);const recycled=await controller.request('recycle',unbound.nodeId,unbound.generation);assert.equal(recycled.phase,'recycled');assert.equal((await registry.resolve(unbound.nodeId))?.binding.chatId,0);assert.deepEqual(handoffs,[2,3]);assert.deepEqual(events.map(item=>item.split(':')[0]),['retire','grant','rotate','retire','grant','rotate']);
 });
+
+test('cluster canary does not hold the Root infrastructure queue and keeps the canonical slot fenced',async()=>{
+ const {WORKER_CORE_COMMIT,WORKER_CORE_VERSION,WORKER_RUNTIME_IMAGE}=await import('../src/infrastructure/worker-core-release.js');
+ const home=await mkdtemp(path.join(tmpdir(),'root-canary-queue-'));const filename=path.join(home,'bindings.json');
+ const binding={nodeId:'slot-one',generation:1,chatId:0,threadId:0,slot:1,clusterId:'cluster',projectId:'project',serviceId:'service',volumeId:'volume',endpoint:'https://worker.up.railway.app',status:'pool-provisioning',currentRevision:0,createdAt:'now',updatedAt:'now'};
+ await writeFile(filename,JSON.stringify({version:1,clusterId:'cluster',bindings:[binding]}));
+ const registry=captureNodeRegistry({});
+ registry.install({binding:{nodeId:binding.nodeId,generation:1,chatId:0,threadId:0,status:'pool-provisioning'},endpoint:binding.endpoint,secret:'s'.repeat(64)});
+ let releaseCanary!:()=>void;let startedCanary!:()=>void;
+ const canaryStarted=new Promise<void>(resolve=>{startedCanary=resolve;});
+ const canaryGate=new Promise<void>(resolve=>{releaseCanary=resolve;});
+ const worker={...binding,unbound:true,image:WORKER_RUNTIME_IMAGE,runtimeCommit:WORKER_CORE_COMMIT,runtimeVersion:WORKER_CORE_VERSION,phase:'recycled' as const};
+ const provisioner={listWorkers:async()=>[worker],inspectWorker:async()=>worker};
+ const controller=new InfrastructureController({
+  registry,stateDirectory:home,bindingFilename:filename,request:async()=>{throw Error('unexpected Railway mutation');},
+  probeUnbound:async()=>{},
+  onClusterVerified:async()=>{startedCanary();await canaryGate;},
+ });
+ (controller as unknown as {provisioner:typeof provisioner}).provisioner=provisioner;
+ const reconcile=controller.request('reconcile',binding.nodeId,binding.generation);
+ await canaryStarted;
+ const otherRequest=controller.request('inspect',binding.nodeId,binding.generation).then(()=>true);
+ const inspectionContinued=await Promise.race([otherRequest,new Promise<boolean>(resolve=>setTimeout(()=>resolve(false),250))]);
+ assert.equal(inspectionContinued,true,'another Root infrastructure request must pass while the cluster canary is waiting');
+ const stillFenced=JSON.parse(await readFile(filename,'utf8')).bindings[0];
+ assert.equal(stillFenced.status,'pool-provisioning','the canonical Worker cannot be allocated before cluster canary success');
+ releaseCanary();
+ const result=await reconcile;
+ assert.equal(result.nodeId,binding.nodeId);
+});

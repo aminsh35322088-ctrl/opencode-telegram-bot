@@ -136,11 +136,11 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
         if (!stat.isFile() || stat.isSymbolicLink() || !isOwnUser(stat.uid) || !isRestrictiveMode(stat.mode) || stat.size > 1024 * 1024) throw new Error("Invalid journal");
         const journal = await this.read();
         const record = journal.nodes.find(node => node.nodeId === nodeId && node.generation === generation);
-        if (!record || !record.unbound || record.slot !== 1 || record.phase !== "deploying" || !record.serviceId || !record.volumeId) throw new Error("Invalid Worker ownership");
+        if (!record || !record.unbound || record.slot !== 1 || !["deploying","recycled"].includes(record.phase) || !record.serviceId || !record.volumeId) throw new Error("Invalid Worker ownership");
         const pool = this.options.pools.find(item => item.projectId === record.projectId && item.environmentId === record.environmentId)!;
         const fence = async () => {
           const binding = await this.binding(nodeId, generation);
-          if (binding.status !== "available" || binding.chatId !== 0 || binding.threadId !== 0 || binding.sessionId !== undefined || binding.slot !== record.slot || binding.clusterId !== record.clusterId || binding.projectId !== record.projectId || binding.serviceId !== record.serviceId || binding.volumeId !== record.volumeId) throw new Error("Canonical Worker fence changed");
+          if (!(["available","pool-provisioning"].includes(binding.status)) || binding.chatId !== 0 || binding.threadId !== 0 || binding.sessionId !== undefined || binding.slot !== record.slot || binding.clusterId !== record.clusterId || binding.projectId !== record.projectId || binding.serviceId !== record.serviceId || binding.volumeId !== record.volumeId) throw new Error("Canonical Worker fence changed");
           const inventory = await this.inventory(pool);
           const services = inventory.project.services.edges.filter(({node}) => node.id === record.serviceId || node.name === `topic-node-${nodeId}`);
           const volumes = inventory.project.volumes.edges.filter(({node}) => node.id === record.volumeId || node.volumeInstances.edges.some(({node: instance}) => instance.serviceId === record.serviceId));
@@ -148,7 +148,7 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
           const volume = volumes[0]!.node.volumeInstances.edges[0]!.node;
           if (volume.volumeId !== record.volumeId || volume.serviceId !== record.serviceId || volume.environmentId !== record.environmentId || volume.mountPath !== "/data" || volume.sizeMB !== 500 || volume.isPendingDeletion) throw new Error("Worker Volume ownership changed");
           const current = await this.binding(nodeId, generation);
-          if (current.status !== "available" || current.chatId !== 0 || current.threadId !== 0 || current.sessionId !== undefined || current.slot !== record.slot || current.clusterId !== record.clusterId || current.projectId !== record.projectId || current.serviceId !== record.serviceId || current.volumeId !== record.volumeId) throw new Error("Canonical Worker fence changed");
+          if (!(["available","pool-provisioning"].includes(current.status)) || current.chatId !== 0 || current.threadId !== 0 || current.sessionId !== undefined || current.slot !== record.slot || current.clusterId !== record.clusterId || current.projectId !== record.projectId || current.serviceId !== record.serviceId || current.volumeId !== record.volumeId) throw new Error("Canonical Worker fence changed");
         };
         await fence();
         for (const profile of ["baseline", "browser", "network"] as const) {
@@ -332,10 +332,7 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       const desiredCommit=this.options.coreCommit??WORKER_CORE_COMMIT;
       const desiredVersion=this.options.workerVersion??WORKER_CORE_VERSION;
       const managedImageDrift=Boolean(record.image&&desiredImage&&(record.image!==desiredImage||record.runtimeCommit!==desiredCommit||record.runtimeVersion!==desiredVersion));
-      if(managedImageDrift){
-        if(binding.chatId!==0||binding.threadId!==0)throw new WorkerProvisioningError("image_mismatch");
-        record.image=desiredImage;record.runtimeCommit=desiredCommit;record.runtimeVersion=desiredVersion;await this.save(journal);
-      }
+      if(managedImageDrift&&(binding.chatId!==0||binding.threadId!==0))throw new WorkerProvisioningError("image_mismatch");
       if (record.phase === "deploying" && record.endpoint && !managedImageDrift) {
         const knownDomains = inventory.environment.serviceInstances.edges.find(entry => entry.node.serviceId === record!.serviceId)?.node.domains.serviceDomains ?? [];
         if (knownDomains.length !== 1 || `https://${knownDomains[0]?.domain}` !== record.endpoint || knownDomains[0]?.id !== record.domainId) throw new Error("Worker domain ownership mismatch");
@@ -360,9 +357,14 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       await this.binding(nodeId,generation);
       // Existing image-less Workers retain their legacy source during authenticated
       // identity handoff. Only new allocations require the immutable image contract.
-      const source=record.image?{image:record.image}:{repo:"aminsh35322088-ctrl/opencode-telegram-core",branch:"main",commitSha:"9a188586a660967227a044a3224280e6923e3067"};
+      const source=record.image&&desiredImage?{image:desiredImage}:record.image?{image:record.image}:{repo:"aminsh35322088-ctrl/opencode-telegram-core",branch:"main",commitSha:"9a188586a660967227a044a3224280e6923e3067"};
       record.everDeployed=true;await this.save(journal);
       await this.mutate(`mutation WorkerSource($environmentId:String!,$patch:EnvironmentConfig!){environmentPatchCommit(environmentId:$environmentId,patch:$patch,commitMessage:"Deploy fenced Worker runtime")}`, {environmentId:pool.environmentId,patch:{services:{[record.serviceId!]:{source}}}});
+      // Record the new immutable identity only after Railway accepts the source
+      // change. If the mutation response is lost, retrying retains the old pin
+      // and re-applies the identical, idempotent source patch instead of
+      // falsely treating an old running image as current.
+      if(record.image&&desiredImage){record.image=desiredImage;record.runtimeCommit=desiredCommit;record.runtimeVersion=desiredVersion;}
       record.phase = "deploying"; await this.save(journal);
       inventory = await this.inventory(pool);
       record.deploymentId = inventory.environment.serviceInstances.edges.find(entry => entry.node.serviceId === record!.serviceId)?.node.latestDeployment?.id;

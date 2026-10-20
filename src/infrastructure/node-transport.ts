@@ -22,7 +22,7 @@ export class InfrastructureNodeTransport {
   let abort!:()=>void;
   const expired=new Promise<never>((_resolve,reject)=>{abort=()=>reject(controller.signal.reason);controller.signal.addEventListener("abort",abort,{once:true});});
   const requireScope=(identity:Readonly<InfrastructureNodeIdentity>|null,original?:Readonly<InfrastructureNodeIdentity>)=>{
-   if(!identity||identity.binding.nodeId!==nodeId||identity.binding.generation!==generation||identity.binding.status!=="available"||identity.binding.chatId!==0||identity.binding.threadId!==0||identity.binding.sessionId!==undefined||(original&&(identity.endpoint!==original.endpoint||identity.secret!==original.secret)))throw new Error("Runtime selftest scope denied");
+   if(!identity||identity.binding.nodeId!==nodeId||identity.binding.generation!==generation||!["available","pool-provisioning"].includes(identity.binding.status)||identity.binding.chatId!==0||identity.binding.threadId!==0||identity.binding.sessionId!==undefined||(original&&(identity.endpoint!==original.endpoint||identity.secret!==original.secret)))throw new Error("Runtime selftest scope denied");
    return identity;
   };
   try{
@@ -52,11 +52,11 @@ export class InfrastructureNodeTransport {
  /** Bounded reconciliation evidence only. Never admits execution or exposes signing material. */
  async probeUnboundBoundary(nodeId:string,generation:number):Promise<{health:true;replayRejected:true;foreignTopicRejected:true;staleGenerationRejected:true}>{
   const identity=await this.registry.resolve(nodeId);
-  if(!identity||identity.binding.generation!==generation||identity.binding.chatId!==0||identity.binding.threadId!==0||identity.binding.status!=="available")throw new Error("Unbound boundary probe scope denied");
+  if(!identity||identity.binding.generation!==generation||identity.binding.chatId!==0||identity.binding.threadId!==0||!["available","pool-provisioning"].includes(identity.binding.status))throw new Error("Unbound boundary probe scope denied");
   const envelope:NodeEnvelope={version:1,nodeId,generation,chatId:0,threadId:0,operation:"health",payload:{},timestamp:Date.now(),nonce:randomUUID().replaceAll("-","")};
   const send=async(signed:{body:string;signature:string})=>{
    const current=await this.registry.resolve(nodeId);
-   if(!current||current.binding.generation!==generation||current.binding.status!=="available"||current.binding.chatId!==0||current.binding.threadId!==0)throw new Error("Unbound boundary probe scope changed");
+   if(!current||current.binding.generation!==generation||!["available","pool-provisioning"].includes(current.binding.status)||current.binding.chatId!==0||current.binding.threadId!==0)throw new Error("Unbound boundary probe scope changed");
    try{
     return await this.fetcher(new URL("/rpc",identity.endpoint),{method:"POST",body:signed.body,headers:{"content-type":"application/json","x-node-signature":signed.signature},redirect:"error",signal:AbortSignal.timeout(45_000)});
    }catch{throw new WorkerProvisioningError("provisioning_pending");}

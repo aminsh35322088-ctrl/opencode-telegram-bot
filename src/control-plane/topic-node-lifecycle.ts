@@ -37,7 +37,7 @@ export class TopicNodeLifecycle {
     const operation=this.preparePool(warmCapacity,repairOnly).finally(()=>{if(this.poolFlight===operation)this.poolFlight=undefined;});
     this.poolFlight=operation;return operation;
   }
-  private async waitReady(binding:NodeBinding,status:'provisioning'|'pool-provisioning'|'available'|'retiring',expected?:ProvisionedNode):Promise<void> {
+  private async waitReady(binding:NodeBinding,status:'provisioning'|'pool-provisioning'|'available'|'retiring',expected?:ProvisionedNode,allowRuntimeTransition=false):Promise<void> {
     const deadline=this.dependencies.now()+300_000;
     let delay=50;
     const expectedReadiness=binding.chatId===0&&binding.threadId===0?'ready-unbound':'ready';
@@ -46,9 +46,15 @@ export class TopicNodeLifecycle {
       try {health=await this.rpc(binding,'health');} catch { /* deployment/wake may still be underway */ }
       const explicitlyReady=health?.ready===true&&health?.readiness===expectedReadiness;
       if(health&&explicitlyReady){
-        if(expected?.image&&(health.runtime?.telegramCoreCommit!==expected.runtimeCommit||health.runtime?.telegramCoreVersion!==expected.runtimeVersion))throw new WorkerProvisioningError("image_mismatch");
-        if(health.runtime)logger.info(`[WorkerImage] node=${binding.nodeId} generation=${binding.generation} image=${expected?.image??"legacy-contract"} actualCommit=${health.runtime!.telegramCoreCommit} actualVersion=${health.runtime!.telegramCoreVersion}`);
-        break;
+        const runtimeMatches=!expected?.image||(health.runtime?.telegramCoreCommit===expected.runtimeCommit&&health.runtime?.telegramCoreVersion===expected.runtimeVersion);
+        if(runtimeMatches){
+          if(health.runtime)logger.info(`[WorkerImage] node=${binding.nodeId} generation=${binding.generation} image=${expected?.image??"legacy-contract"} actualCommit=${health.runtime.telegramCoreCommit} actualVersion=${health.runtime.telegramCoreVersion}`);
+          break;
+        }
+        // Railway's old replica can still answer health while an immutable image
+        // deployment is rolling out. Only an explicitly reported image transition
+        // gets a bounded chance to converge; all other mismatches fail closed.
+        if(!allowRuntimeTransition)throw new WorkerProvisioningError("image_mismatch");
       }
       if(this.dependencies.now()>=deadline)throw new Error("Topic node readiness timed out");
       await this.dependencies.wait(Math.min(delay,Math.max(0,deadline-this.dependencies.now())));delay=Math.min(delay*2,1_000);
@@ -69,77 +75,110 @@ export class TopicNodeLifecycle {
   private async preparePool(warmCapacity?:number,repairOnly=false):Promise<NodeBinding[]> {
     const slots=await this.dependencies.bindings.ensurePoolSlots(warmCapacity??0);
     for(let binding of slots) {
-      // Previously prepared or already claimed slots keep their identity/resources.
+      // A claimed Topic owns its Worker. Release reconciliation never enters that path.
       if(binding.chatId!==0||binding.threadId!==0)continue;
-      // New Chat recovery must not allocate a new Railway service/project just to
-      // repair availability. Reconcile only slots whose owned runtime resources
-      // are already recorded; leave empty reservations for the normal pool manager.
+      // Recovery is deliberately limited to already-existing complete resources.
       if(repairOnly&&['pool-reserved','pool-provisioning'].includes(binding.status)&&(!binding.serviceId||!binding.volumeId||!binding.endpoint))continue;
-      // Explicitly reducing an administrative warm target cancels unused pending
-      // reservations after fencing; it never retires a ready or claimed Worker.
       if(warmCapacity!==undefined&&binding.slot!>warmCapacity&&['pool-reserved','pool-provisioning','retiring'].includes(binding.status)){
         if(binding.status!=='retiring')binding=await this.dependencies.bindings.fence(binding.nodeId,binding.generation);
         const retired=await this.dependencies.infrastructure('retire',binding.nodeId,binding.generation);
         if(retired.nodeId!==binding.nodeId||retired.phase!=='retired')throw new Error("Warm Worker retirement not confirmed");
         await this.dependencies.bindings.update(binding.nodeId,binding.generation,{status:'retired'});continue;
       }
+      if(binding.status==='retiring')continue;
       if(binding.status==='available'){
+        // Compare-and-set the slot out of allocation before touching its image.
+        const claimed=await this.dependencies.bindings.beginAvailableReconciliation(binding.nodeId,binding.generation);
+        if(!claimed)continue;
+        binding=claimed;
         try{
-          await this.waitReady(binding,'available');
+          const reconciled=await this.dependencies.infrastructure('reconcile',binding.nodeId,binding.generation);
+          await this.waitReady(binding,'pool-provisioning',reconciled,true);
+          const observed=await this.dependencies.infrastructure('inspect',binding.nodeId,binding.generation);
+          if(observed.nodeId!==binding.nodeId||observed.generation!==binding.generation||!observed.serviceId||!observed.volumeId||!observed.endpoint||observed.serviceId!==binding.serviceId||observed.volumeId!==binding.volumeId||observed.projectId!==binding.projectId||observed.endpoint!==binding.endpoint)throw new WorkerProvisioningError("reconciliation_required");
           binding=await this.syncGlobal(binding);
-          await this.dependencies.infrastructure('reconcile',binding.nodeId,binding.generation);
+          // An image-changing reconcile returns before the canary; verify the new
+          // runtime boundary while still fenced, then expose the slot as available.
+          if(reconciled.imageUpdated)await this.dependencies.infrastructure('reconcile',binding.nodeId,binding.generation);
+          // Both per-Worker boundary checks and any required cluster-level canary
+          // have completed while this slot remained pool-provisioning.
+          binding=await this.dependencies.bindings.update(binding.nodeId,binding.generation,{status:'available'});
+          logger.info("[WorkerCluster] idle Worker reconciled and verified: node="+binding.nodeId+" generation="+binding.generation);
         }catch(error){
-          const current=(await this.dependencies.bindings.list()).find(item=>item.nodeId===binding.nodeId);
-          if(current?.generation===binding.generation&&current.chatId===0&&current.threadId===0&&current.status==='available')await this.dependencies.bindings.update(binding.nodeId,binding.generation,{status:'pool-provisioning'});
-          throw error;
+          logger.warn("[WorkerCluster] idle Worker reconciliation failed; slot remains fenced: node="+binding.nodeId+" generation="+binding.generation,error);
+          if(!repairOnly)throw error;
         }
         continue;
       }
       if(!['pool-reserved','pool-provisioning'].includes(binding.status))throw new Error("Invalid unbound Worker bootstrap state");
       const generation=binding.generation;
-      binding=await this.dependencies.bindings.update(binding.nodeId,generation,{status:'pool-provisioning'});
+      if(binding.status!=='pool-provisioning')binding=await this.dependencies.bindings.update(binding.nodeId,generation,{status:'pool-provisioning'});
       try {
-        const provisioned=await this.dependencies.infrastructure('provision',binding.nodeId,generation);
-        if(provisioned.nodeId!==binding.nodeId||provisioned.generation!==generation||!provisioned.endpoint||!provisioned.serviceId||!provisioned.volumeId)throw new Error("Incomplete provisioned node identity");
-        binding=await this.dependencies.bindings.update(binding.nodeId,generation,{projectId:provisioned.projectId,serviceId:provisioned.serviceId,volumeId:provisioned.volumeId,endpoint:provisioned.endpoint});
-        await this.waitReady(binding,'pool-provisioning',provisioned);
+        // Existing provisioned slots must go through reconcile so stale immutable
+        // image metadata is detected and the rollout is explicitly reported.
+        const hasResources=Boolean(binding.serviceId&&binding.volumeId&&binding.endpoint);
+        const reconciled=hasResources
+          ? await this.dependencies.infrastructure('reconcile',binding.nodeId,generation)
+          : await this.dependencies.infrastructure('provision',binding.nodeId,generation);
+        if(reconciled.nodeId!==binding.nodeId||reconciled.generation!==generation||!reconciled.endpoint||!reconciled.serviceId||!reconciled.volumeId)throw new Error("Incomplete provisioned node identity");
+        if(hasResources&&(reconciled.serviceId!==binding.serviceId||reconciled.volumeId!==binding.volumeId||reconciled.projectId!==binding.projectId||reconciled.endpoint!==binding.endpoint))throw new Error("Reconciled Worker resource identity mismatch");
+        binding=await this.dependencies.bindings.update(binding.nodeId,generation,{projectId:reconciled.projectId,serviceId:reconciled.serviceId,volumeId:reconciled.volumeId,endpoint:reconciled.endpoint});
+        await this.waitReady(binding,'pool-provisioning',reconciled,true);
         binding=await this.syncGlobal(binding);
+        const observed=await this.dependencies.infrastructure('inspect',binding.nodeId,generation);
+        if(observed.nodeId!==binding.nodeId||observed.generation!==generation||observed.projectId!==binding.projectId||observed.serviceId!==binding.serviceId||observed.volumeId!==binding.volumeId||observed.endpoint!==binding.endpoint)throw new WorkerProvisioningError("reconciliation_required");
+        // The live runtime was checked against the reconciled immutable identity above;
+        // inspect supplies a separate infrastructure ownership check, not another health poll.
+        // New provisioning and an image-changing reconcile both return before the
+        // root-only replay/foreign-topic/stale-generation canary can be complete.
+        if(!hasResources||reconciled.imageUpdated)await this.dependencies.infrastructure('reconcile',binding.nodeId,generation);
+        // Availability is committed only after the root boundary and cluster-level
+        // runtime canaries have completed with this slot still fenced.
         binding=await this.dependencies.bindings.update(binding.nodeId,generation,{status:'available'});
-        await this.dependencies.infrastructure('reconcile',binding.nodeId,generation);
       }catch(error){
+        logger.warn("[WorkerCluster] Worker bootstrap failed; slot remains fenced: node="+binding.nodeId+" generation="+generation,error);
         const current=(await this.dependencies.bindings.list()).find(item=>item.nodeId===binding.nodeId);
-        if(current?.generation===generation&&current.chatId===0&&current.threadId===0&&current.status==='available')await this.dependencies.bindings.update(binding.nodeId,generation,{status:'pool-provisioning'});
-        throw error;
+        if(current?.generation===generation&&current.chatId===0&&current.threadId===0&&current.status==='available'){
+          binding=await this.dependencies.bindings.update(binding.nodeId,generation,{status:'pool-provisioning'});
+        }
+        if(!repairOnly)throw error;
       }
     }
     return (await this.dependencies.bindings.list()).filter(binding=>binding.status!=='retired').sort((a,b)=>a.slot!-b.slot!);
   }
   async verifyAvailableWorker():Promise<NodeBinding>{
-    let binding=(await this.dependencies.bindings.list()).find(item=>item.status==='available'&&item.chatId===0&&item.threadId===0);
-    if(!binding){
-      // A previous warm-pool bootstrap can fail while provisioning an extra slot
-      // (for example when Railway rejects creating another project). Reconcile the
-      // existing slots before reporting exhaustion, then re-read durable state:
-      // successful available Workers must remain usable even if another slot failed.
-      try{await this.bootstrapPool(undefined,true);}catch{ /* Partial pool recovery is allowed; re-check available bindings below. */ }
-      binding=(await this.dependencies.bindings.list()).find(item=>item.status==='available'&&item.chatId===0&&item.threadId===0);
+    let available=(await this.dependencies.bindings.list()).filter(item=>item.status==='available'&&item.chatId===0&&item.threadId===0);
+    if(!available.length){
+      // A failed overflow allocation must not hide already-existing Workers.
+      try{await this.bootstrapPool(undefined,true);}catch{ /* Continue with any other healthy unbound slot. */ }
+      available=(await this.dependencies.bindings.list()).filter(item=>item.status==='available'&&item.chatId===0&&item.threadId===0);
     }
-    if(!binding)throw new WorkerProvisioningError("capacity_exhausted");
-    try{
-      // Reconcile the immutable runtime contract before comparing live health metadata.
-      // Otherwise a valid Worker upgraded to a newer pinned image is rejected against
-      // stale image metadata in the durable infrastructure journal.
-      await this.dependencies.infrastructure('reconcile',binding.nodeId,binding.generation);
-      const observed=await this.dependencies.infrastructure('inspect',binding.nodeId,binding.generation);
-      if(observed.nodeId!==binding.nodeId||observed.generation!==binding.generation||!observed.serviceId||!observed.volumeId||!observed.endpoint||observed.serviceId!==binding.serviceId||observed.volumeId!==binding.volumeId||observed.projectId!==binding.projectId||observed.endpoint!==binding.endpoint)throw new WorkerProvisioningError("reconciliation_required");
-      await this.waitReady(binding,'available',observed);
-      const synced=await this.syncGlobal(binding);
-      return synced;
-    }catch(error){
-      const current=(await this.dependencies.bindings.list()).find(item=>item.nodeId===binding.nodeId);
-      if(current?.generation===binding.generation&&current.status==='available'&&current.chatId===0&&current.threadId===0)await this.dependencies.bindings.update(binding.nodeId,binding.generation,{status:'pool-provisioning'});
-      throw error;
+    let lastError:unknown;
+    for(const candidate of available){
+      const claimed=await this.dependencies.bindings.beginAvailableReconciliation(candidate.nodeId,candidate.generation);
+      if(!claimed)continue;
+      const binding=claimed;
+      try{
+        const reconciled=await this.dependencies.infrastructure('reconcile',binding.nodeId,binding.generation);
+        await this.waitReady(binding,'pool-provisioning',reconciled,true);
+        const observed=await this.dependencies.infrastructure('inspect',binding.nodeId,binding.generation);
+        if(observed.nodeId!==binding.nodeId||observed.generation!==binding.generation||!observed.serviceId||!observed.volumeId||!observed.endpoint||observed.serviceId!==binding.serviceId||observed.volumeId!==binding.volumeId||observed.projectId!==binding.projectId||observed.endpoint!==binding.endpoint)throw new WorkerProvisioningError("reconciliation_required");
+        const synced=await this.syncGlobal(binding);
+        if(reconciled.imageUpdated)await this.dependencies.infrastructure('reconcile',synced.nodeId,synced.generation);
+        // The reconcile immediately above performed root verification while the
+        // binding was fenced; do not expose capacity before that proof completes.
+        return await this.dependencies.bindings.update(synced.nodeId,synced.generation,{status:'available'});
+      }catch(error){
+        lastError=error;
+        const current=(await this.dependencies.bindings.list()).find(item=>item.nodeId===binding.nodeId);
+        if(current?.generation===binding.generation&&current.chatId===0&&current.threadId===0&&current.status==='available'){
+          await this.dependencies.bindings.update(binding.nodeId,binding.generation,{status:'pool-provisioning'});
+        }
+        logger.warn("[WorkerCluster] New Chat candidate failed runtime reconciliation; slot remains fenced: node="+binding.nodeId+" generation="+binding.generation,error);
+      }
     }
+    if(lastError)throw lastError;
+    throw new WorkerProvisioningError("capacity_exhausted");
   }
   ensureReady(chatId:number,threadId:number,directory:string,prepared?:NodeBinding):Promise<{binding:NodeBinding;session:Session}> {
     const key=`${chatId}:${threadId}`;const existing=this.flights.get(key);if(existing)return existing;

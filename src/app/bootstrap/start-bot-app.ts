@@ -29,6 +29,7 @@ import { requestInfrastructureSetup } from "../../control-plane/application-tran
 import { normalizeRailwayWorkerSettings } from "../../infrastructure/railway-worker-settings.js";
 import { isDistributedControl } from "../../infrastructure/control-runtime-config.js";
 import { setTopicNodeCreationEnabled } from "../../control-plane/topic-node-lifecycle.js";
+import { WORKER_CORE_VERSION } from "../../infrastructure/worker-core-release.js";
 
 const SHUTDOWN_TIMEOUT_MS = 5000;
 const SETTINGS_FLUSH_TIMEOUT_MS = 1000;
@@ -254,6 +255,19 @@ export async function startBotApp(): Promise<void> {
     const workerSettings=normalizeRailwayWorkerSettings(await requestInfrastructureSetup("settings.get"));
     setTopicNodeCreationEnabled(workerSettings.workerCreationEnabled);
     logger.info(`[WorkerCluster] Railway policy loaded; onboarding owns initial warm bootstrap capacity=${workerSettings.warmCapacity}`);
+    // Reconcile only existing unbound slots after every Bot deploy. This never
+    // allocates extra Railway resources and never touches a Worker owned by a Topic.
+    safeBackgroundTask({
+      taskName: "app.workerPoolReleaseReconcile",
+      task: async () => {
+        const { topicNodeLifecycle } = await import("../../control-plane/topic-node-lifecycle.js");
+        const nodes = await topicNodeLifecycle.bootstrapPool(undefined, true);
+        const available = nodes.filter((node) => node.status === "available" && node.chatId === 0 && node.threadId === 0).length;
+        logger.info(
+          `[WorkerCluster] startup release reconciliation complete: nodes=${nodes.length} available=${available} target=${WORKER_CORE_VERSION}`,
+        );
+      },
+    });
   }
   const runtimeObservabilityWatchdog = new RuntimeObservabilityWatchdog({ probeOpenCode: !distributedControlPlane });
   runtimeObservabilityWatchdog.start();

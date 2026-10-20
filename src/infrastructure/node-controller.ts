@@ -1,4 +1,5 @@
 import {randomBytes,randomUUID} from 'node:crypto';
+import {WORKER_CORE_COMMIT,WORKER_CORE_VERSION,WORKER_RUNTIME_IMAGE} from './worker-core-release.js';
 import {lstat,mkdir,open,readFile,rename} from 'node:fs/promises';
 import path from 'node:path';
 import {syncDirectory} from '../utils/sync-directory.js';
@@ -28,6 +29,7 @@ export class InfrastructureController {
  private queue:Promise<unknown>=Promise.resolve();
  private verifiedUnbound=new Map<string,number>();
  private clusterVerified=false;
+ private clusterCanaryFlight?:Promise<void>;
  constructor(private readonly options:Options){
   if(options.pools && options.controlUrl)this.configurePools(options.pools,options.controlUrl);
  }
@@ -72,7 +74,9 @@ export class InfrastructureController {
   const inventory=await this.provisioner.bootstrapInventory();
   const workers=await Promise.all(inventory.workers.map(async worker=>{
    const identity=await this.options.registry.resolve(worker.nodeId);
-   return {...worker,verified:this.verifiedUnbound.get(worker.nodeId)===worker.generation&&identity?.binding.generation===worker.generation&&identity.binding.status==='available'};
+   const canonical=await this.lookup(worker.nodeId);
+   const canonicalAvailable=canonical?.nodeId===worker.nodeId&&canonical.generation===worker.generation&&canonical.status==='available'&&canonical.chatId===0&&canonical.threadId===0&&canonical.projectId===worker.projectId&&canonical.serviceId===worker.serviceId&&canonical.volumeId===worker.volumeId&&canonical.endpoint===worker.endpoint;
+   return {...worker,verified:this.verifiedUnbound.get(worker.nodeId)===worker.generation&&identity?.binding.generation===worker.generation&&identity.binding.status==='available'&&canonicalAvailable};
   }));
   return {...inventory,workers};
  }
@@ -118,21 +122,27 @@ export class InfrastructureController {
   await mkdir(this.options.stateDirectory,{recursive:true,mode:0o700});const temporary=`${filename}.${randomUUID()}.tmp`;const file=await open(temporary,'wx',0o600);try{await file.writeFile(JSON.stringify(seeds));await file.sync();}finally{await file.close();}await rename(temporary,filename);await syncDirectory(this.options.stateDirectory);return replacement;
  }
  /** Root startup maintenance only; never exposed through request() or inherited application IPC. */
- cleanupRuntimeCanaryVariables(nodeId:string,generation:number,selftest:(nodeId:string,generation:number,profile:"baseline"|"browser"|"network")=>Promise<unknown>):Promise<void>{
-  const task=this.queue.then(async()=>{
+ cleanupRuntimeCanaryVariables(nodeId:string,generation:number,selftest:(nodeId:string,generation:number,profile:"baseline"|"browser"|"network")=>Promise<unknown>,alreadySerialized=false):Promise<void>{
+  const run=async()=>{
    try{
     if(this.poolConfiguration)await this.poolConfiguration;
     if(!this.provisioner||typeof nodeId!=="string"||nodeId.length>128||!Number.isSafeInteger(generation)||generation<1)throw Error("Worker cleanup unavailable");
     const before=await this.lookup(nodeId);
-    const available=(binding:NodeBinding|undefined)=>binding?.nodeId===nodeId&&binding.generation===generation&&binding.slot===1&&binding.chatId===0&&binding.threadId===0&&binding.status==="available"&&binding.sessionId===undefined&&!!binding.projectId&&!!binding.serviceId&&!!binding.volumeId;
+    const available=(binding:NodeBinding|undefined)=>binding?.nodeId===nodeId&&binding.generation===generation&&binding.slot===1&&binding.chatId===0&&binding.threadId===0&&["available","pool-provisioning"].includes(binding.status)&&binding.sessionId===undefined&&!!binding.projectId&&!!binding.serviceId&&!!binding.volumeId;
     if(!available(before))throw Error("Worker cleanup fence changed");
     await this.provisioner.cleanupDeprecatedWorkerVariables(nodeId,generation,selftest);
     const after=await this.lookup(nodeId);
     if(!available(after)||after!.projectId!==before!.projectId||after!.serviceId!==before!.serviceId||after!.volumeId!==before!.volumeId||after!.clusterId!==before!.clusterId||after!.endpoint!==before!.endpoint)throw Error("Worker cleanup fence changed");
    }catch{throw Error("Worker runtime canary cleanup failed");}
-  });this.queue=task.catch(()=>undefined);return task;
+  };
+  if(alreadySerialized)return run();
+  const task=this.queue.then(run);this.queue=task.catch(()=>undefined);return task;
  }
  request(operation:string,nodeId:string,generation:number):Promise<ProvisionedNode>{
+  // Long-running cluster canaries are awaited by the initiating lifecycle call,
+  // but they must not hold the global infrastructure mutation queue while doing
+  // bounded network selftests. Canonical pool-provisioning status fences capacity.
+  let verification:Promise<void>|undefined;
   const task=this.queue.then(async()=>{
    if(!['provision','rebind','recycle','retire','reconcile','inspect'].includes(operation)||typeof nodeId!=='string'||nodeId.length>128||!Number.isSafeInteger(generation)||generation<1)throw Error('Infrastructure operation denied');
    const binding=await this.lookup(nodeId);if(!binding||binding.generation!==generation)throw Error('Infrastructure binding denied');
@@ -153,27 +163,98 @@ export class InfrastructureController {
     return this.provisioner.handoff(nodeId,generation);
    }
    if(operation==='retire'){if(!this.provisioner)throw Error('Worker pools not configured');return this.provisioner.retire(nodeId,generation);}
+   // Reconcile the configured immutable image only for an unbound, already
+   // provisioned Worker. A Topic-bound generation never enters this path.
+   if(operation==='reconcile'&&binding.chatId===0&&binding.threadId===0&&['available','pool-provisioning'].includes(binding.status)&&binding.projectId&&binding.serviceId&&binding.volumeId&&binding.endpoint&&binding.slot){
+    if(this.poolConfiguration)await this.poolConfiguration;
+    const provisioner=this.provisioner;if(!provisioner)throw Error('Worker pools not configured');
+    const before=(await provisioner.listWorkers()).find(item=>item.nodeId===nodeId&&item.generation===generation);
+    const desiredImage=this.options.workerImage??WORKER_RUNTIME_IMAGE;
+    const desiredCommit=this.options.coreCommit??WORKER_CORE_COMMIT;
+    const desiredVersion=WORKER_CORE_VERSION;
+    const imageDrift=Boolean(before?.image&&desiredImage&&(before.image!==desiredImage||before.runtimeCommit!==desiredCommit||before.runtimeVersion!==desiredVersion));
+    // "recycled" is the normal durable state of an idle Worker after a Topic is
+    // retired. Inspect it without deployment churn when its immutable release is
+    // already current; only image drift or an incomplete provisioning phase calls
+    // provision(), which may apply a new source and initiate a Railway deployment.
+    const needsProvision=!before||imageDrift||!["deploying","recycled"].includes(before.phase);
+    const reconciled=needsProvision
+      ? await provisioner.provision(nodeId,generation)
+      : await provisioner.inspectWorker(nodeId,generation);
+    const imageUpdateStarted=Boolean(reconciled.image&&(!before||before.image!==reconciled.image||before.runtimeCommit!==reconciled.runtimeCommit||before.runtimeVersion!==reconciled.runtimeVersion));
+    const currentBinding=await this.lookup(nodeId);
+    if(!currentBinding||currentBinding.generation!==generation||currentBinding.chatId!==0||currentBinding.threadId!==0||currentBinding.status!==binding.status||currentBinding.serviceId!==binding.serviceId||currentBinding.volumeId!==binding.volumeId||currentBinding.endpoint!==binding.endpoint)throw Error('Canonical Worker binding changed during runtime reconciliation');
+    const registered=await this.options.registry.resolve(nodeId);
+    if(!registered||registered.binding.generation!==generation||registered.binding.chatId!==0||registered.binding.threadId!==0||registered.endpoint!==binding.endpoint)throw Error('Worker registry changed during runtime reconciliation');
+    this.options.registry.install({...registered,binding:{...registered.binding,status:binding.status}});
+    await this.options.registry.persist(path.join(this.options.stateDirectory,'nodes.json'));
+    if(imageUpdateStarted){
+     this.verifiedUnbound.delete(nodeId);
+     this.clusterVerified=false;
+     process.stdout.write(`[InfrastructureBoundary] worker_image_update_started node=${nodeId} generation=${generation} version=${reconciled.runtimeVersion??"unknown"}\n`);
+     return {...reconciled,imageUpdated:true};
+    }
+   }
    const identity=await this.options.registry.resolve(nodeId);if(!identity||identity.binding.generation!==generation||identity.binding.chatId!==binding.chatId||identity.binding.threadId!==binding.threadId)throw Error('Infrastructure identity mismatch');
    if(binding.status==='ready' && (!binding.sessionId||binding.sessionId!==identity.binding.sessionId))throw Error('Infrastructure session mismatch');
    this.options.registry.install({...identity,binding:{...identity.binding,status:binding.status}});await this.options.registry.persist(path.join(this.options.stateDirectory,'nodes.json'));
-   if(binding.status==='available'&&binding.chatId===0&&binding.threadId===0&&this.options.probeUnbound){
-    try{await this.options.probeUnbound(nodeId,generation);}catch(error){
-     this.verifiedUnbound.delete(nodeId);
-     this.options.registry.install({...identity,binding:{...identity.binding,status:'provisioning'}});
-     await this.options.registry.persist(path.join(this.options.stateDirectory,'nodes.json'));
-     throw error;
+   if(['available','pool-provisioning'].includes(binding.status)&&binding.chatId===0&&binding.threadId===0&&this.options.probeUnbound){
+    if(this.verifiedUnbound.get(nodeId)!==generation){
+     try{await this.options.probeUnbound(nodeId,generation);}catch(error){
+      this.verifiedUnbound.delete(nodeId);
+      this.options.registry.install({...identity,binding:{...identity.binding,status:'provisioning'}});
+      await this.options.registry.persist(path.join(this.options.stateDirectory,'nodes.json'));
+      throw error;
+     }
+     process.stdout.write("[InfrastructureBoundary] worker_boundary_verified node="+nodeId+" generation="+generation+" health=true replayRejected=true foreignTopicRejected=true staleGenerationRejected=true\n");
+     this.verifiedUnbound.set(nodeId,generation);
     }
-    process.stdout.write(`[InfrastructureBoundary] worker_boundary_verified node=${nodeId} generation=${generation} health=true replayRejected=true foreignTopicRejected=true staleGenerationRejected=true\n`);
-    this.verifiedUnbound.set(nodeId,generation);
-    if(!this.clusterVerified&&this.verifiedUnbound.size>0&&this.options.registry.metadata().filter(b=>b.chatId===0&&b.threadId===0&&b.status!=='retired').every(b=>this.verifiedUnbound.get(b.nodeId)===b.generation)&&this.options.onClusterVerified){
-     const current=await Promise.all([...this.verifiedUnbound].map(async([id,verifiedGeneration])=>{
-      const canonical=await this.lookup(id);const registered=await this.options.registry.resolve(id);
-      return canonical?.generation===verifiedGeneration&&canonical.status==='available'&&canonical.chatId===0&&canonical.threadId===0&&registered?.binding.generation===verifiedGeneration&&registered.binding.status==='available';
+    // Keep a newly verified Worker fenced until the cluster-level runtime
+    // canary and startup cleanup also pass. Lifecycle marks it available only
+    // after this request returns successfully.
+    const unbound=this.options.registry.metadata().filter(b=>b.chatId===0&&b.threadId===0&&b.status!=='retired');
+    if(!this.clusterVerified&&unbound.length>0&&unbound.every(b=>this.verifiedUnbound.get(b.nodeId)===b.generation)){
+     const current=await Promise.all(unbound.map(async entry=>{
+      const canonical=await this.lookup(entry.nodeId);const registered=await this.options.registry.resolve(entry.nodeId);
+      const valid=canonical?.generation===entry.generation&&["available","pool-provisioning"].includes(canonical.status)&&canonical.chatId===0&&canonical.threadId===0&&registered?.binding.generation===entry.generation&&["available","pool-provisioning"].includes(registered.binding.status);
+      return {valid,slotOne:valid&&canonical?.slot===1};
      }));
-     if(current.every(Boolean)){await this.options.onClusterVerified();this.clusterVerified=true;}
+     // The legacy extended runtime canary also performs a narrowly-scoped cleanup
+     // that is permitted only on slot 1. If slot 1 is bound to a live Topic, do
+     // not fail or block other free Workers; defer the cluster canary until slot 1
+     // has been recycled and independently boundary-verified again.
+     if(current.every(item=>item.valid)&&current.some(item=>item.slotOne)&&!this.clusterCanaryFlight){
+      const flight=task.then(()=>this.options.onClusterVerified?.()).then(()=>{
+       this.clusterVerified=true;
+      }).finally(()=>{
+       if(this.clusterCanaryFlight===flight)this.clusterCanaryFlight=undefined;
+      });
+      this.clusterCanaryFlight=flight;
+      // A later failure in the enclosing infrastructure reconciliation is already
+      // returned to its caller; also mark the shared flight as observed so a
+      // failed queue task cannot leave an unhandled rejection behind.
+      void flight.catch(()=>undefined);
+      verification=flight;
+     }
+    }
+    // Root's authenticated identity may be marked available after its canaries
+    // pass. Canonical Topic allocation remains fenced as pool-provisioning until
+    // the calling lifecycle atomically commits the matching durable state.
+    const canonical=await this.lookup(nodeId);
+    const registered=await this.options.registry.resolve(nodeId);
+    if(!canonical||canonical.generation!==generation||canonical.chatId!==0||canonical.threadId!==0||!['available','pool-provisioning'].includes(canonical.status)||!registered||registered.binding.generation!==generation||registered.binding.chatId!==0||registered.binding.threadId!==0)throw Error('Canonical Worker changed after boundary verification');
+    if(canonical.status==='pool-provisioning'){
+     this.options.registry.install({...registered,binding:{...registered.binding,status:'available'}});
+     await this.options.registry.persist(path.join(this.options.stateDirectory,'nodes.json'));
     }
    }
+   if(operation==='reconcile'&&this.clusterCanaryFlight)verification??=this.clusterCanaryFlight;
    return {nodeId,generation,projectId:binding.projectId??'',environmentId:'',endpoint:identity.endpoint,serviceId:binding.serviceId,volumeId:binding.volumeId,phase:'deploying' as const};
-  });this.queue=task.catch(()=>undefined);return task;
+  });this.queue=task.catch(()=>undefined);
+  return task.then(async result=>{
+   if(operation==='reconcile'&&this.clusterCanaryFlight)verification??=this.clusterCanaryFlight;
+   if(verification)await verification;
+   return result;
+  });
  }
 }

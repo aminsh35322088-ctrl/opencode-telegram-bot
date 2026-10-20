@@ -119,3 +119,21 @@ test('prepared Worker claim is atomic and never falls back to another Worker',as
  assert.equal((await store.list()).filter(b=>b.status==='available').length,1);
  assert.equal((await store.list()).length,2);
 });
+
+
+test('idle Worker release reconciliation atomically fences the slot from concurrent allocation',async()=>{
+ const store=new NodeBindingStore(path.join(await mkdtemp(path.join(tmpdir(),'release-fence-')),'bindings.json'));
+ const [slot]=await store.ensurePoolSlots(1);
+ await store.update(slot!.nodeId,slot!.generation,{status:'available',projectId:'project',serviceId:'service',volumeId:'volume',endpoint:'https://worker.up.railway.app'});
+ const claims=await Promise.all([
+  store.beginAvailableReconciliation(slot!.nodeId,slot!.generation),
+  store.beginAvailableReconciliation(slot!.nodeId,slot!.generation),
+ ]);
+ assert.equal(claims.filter(Boolean).length,1);
+ const fenced=(await store.list()).find(item=>item.nodeId===slot!.nodeId)!;
+ assert.equal(fenced.status,'pool-provisioning');
+ assert.equal(fenced.chatId,0);assert.equal(fenced.threadId,0);assert.equal(fenced.sessionId,undefined);
+ assert.equal(fenced.endpoint,'https://worker.up.railway.app');
+ const allocation=await store.reserve(-100,42);
+ assert.notEqual(allocation.nodeId,slot!.nodeId,'a fenced Worker must not be allocated during its image rollout');
+});
