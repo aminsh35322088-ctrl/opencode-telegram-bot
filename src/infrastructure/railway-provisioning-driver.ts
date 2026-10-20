@@ -321,6 +321,14 @@ export class RailwayProvisioningDriver implements WorkerProvisioningDriver {
       if (!record.serviceId) {
         record.serviceId = candidates[0]?.node.id;
         if (!record.serviceId) {
+          // Count actual services across every configured Railway project, not just
+          // the selected pool. Pool-quota fallback must never create Worker five.
+          const pools=[...this.options.pools];
+          if(!pools.some(candidate=>candidate.projectId===pool.projectId))pools.push(pool);
+          const inventories=await Promise.all(pools.map(candidate=>candidate.projectId===pool.projectId?Promise.resolve(inventory):this.inventory(candidate)));
+          const actualWorkers=inventories.reduce((total,current)=>total+current.project.services.edges.filter(entry=>entry.node.name.startsWith("topic-node-")&&!entry.node.deletedAt).length,0);
+          const journalWorkers=journal.nodes.filter(item=>item.phase!=="retired"&&!!item.serviceId).length;
+          if(Math.max(actualWorkers,journalWorkers)>=4)throw new WorkerProvisioningError("capacity_exhausted");
           // An ambiguous create is never blindly retried: next invocation reconciles the fixed name first.
           this.options.onStage?.("WorkerServiceCreate");
           const created = await this.options.request<{serviceCreate: {id: string}}>(`mutation WorkerService($input:ServiceCreateInput!){serviceCreate(input:$input){id}}`, {input:{projectId:pool.projectId,environmentId:pool.environmentId,name:serviceName}});
