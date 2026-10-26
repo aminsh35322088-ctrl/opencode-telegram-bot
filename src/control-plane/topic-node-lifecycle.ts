@@ -270,10 +270,10 @@ export class TopicNodeLifecycle {
         if(retired.nodeId!==binding.nodeId||retired.phase!=='retired')throw new Error("Overflow Worker retirement not confirmed");
         await this.dependencies.bindings.update(binding.nodeId,binding.generation,{status:'retired'});
       }else{
-        // Recycle keeps the same service and persistent volume. Reconcile applies
-        // Railway Serverless sleepApplication=true while the slot is unbound.
-        // Do not report retirement complete until Railway confirms that exact
-        // sleep-policy deployment; a failed/pending rollout keeps this slot fenced.
+        // Recycle keeps the same service and persistent volume. Only the now-unbound
+        // slot may enter Railway Serverless sleep; Topic-owned Workers are never
+        // slept merely because the model is idle. Do not report recycle complete
+        // until the exact sleep-policy deployment is confirmed.
         const sleeping=await this.dependencies.infrastructure('reconcile',binding.nodeId,binding.generation);
         await this.waitReady(binding,'available',sleeping);
       }

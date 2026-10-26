@@ -158,8 +158,8 @@ alias for compatibility. Topic/control code does not choose Railway resources.
 
 Worker fleet policy is managed from **Main Settings → Railway**, not environment
 variables. The Control Plane persists this root-owned policy under
-`/data/.infrastructure`. The UI controls Worker creation, warm capacity, and the
-per-project Worker limit (default 5). The allocator discovers the Control project
+`/data/.infrastructure`. The UI controls Worker creation and warm capacity, but the runtime enforces a hard
+four-Worker ceiling across the selected workspace and a maximum of four per project. The allocator discovers the Control project
 and existing `opencode-topic-*` projects in the selected workspace. When every
 eligible pool reaches its configured per-project limit or a definitive Railway
 resource limit, the allocator creates the next deterministic `opencode-topic-NN`
@@ -177,8 +177,17 @@ signed Worker health before snapshot activation and session creation.
 Previously deployed image-less Workers retain their source and volume on a
 fenced identity handoff until an explicit image canary migrates them. New Worker
 allocations always use an image. Existing persisted slot IDs are legacy identity
-metadata, not capacity or placement policy. Startup reconciles persisted Workers and does not manufacture fixed warm reservations.
-Warm capacity is controlled from **Main Settings → Railway** and defaults to zero.
+metadata, not placement policy. Startup reconciles the durable registry against a
+hard target of four Worker slots and migrates older persisted capacity settings down
+to four. Warm capacity is controlled from **Main Settings → Railway**, but cannot
+exceed the four-Worker fleet ceiling.
+
+Unbound Workers enter Railway Serverless sleep mode only after the Control Plane
+has fenced the old Topic generation, completed recycle/sanitization, and verified
+the sleep-policy deployment. The same Railway Service and `/data` Volume are kept
+for reuse; a slot is not reported available until the exact deployment succeeds.
+Topic-bound Workers are not forcibly redeployed just because their model run is
+idle, so active Topic/session ownership is not disrupted by startup reconciliation.
 
 Capacity exhaustion is `capacity_exhausted` (`NO WORKER AVAILABLE / CAPACITY
 EXHAUSTED`). Definitive Railway resource-limit rejections roll over only unused
@@ -189,9 +198,9 @@ create and prevents claiming retirement until ownership is recovered. Known
 service/volume partial provisioning resumes from the journal on retry/restart.
 
 The remaining four-stream and four-inflight-IPC bounds are simultaneous request
-budgets; they do not limit the number of Topics, Workers or Railway projects.
-The old four-slot tests now use an explicit warm-capacity fixture to retain
-migration/security regression coverage.
+budgets; they do not limit the number of Topics or Railway projects. The four-Worker
+fleet ceiling is enforced separately by durable slot admission and live Railway
+service inventory.
 
 New Chat uses a durable request receipt keyed by the Telegram update identity.
 Concurrent duplicate calls share one flight. Restart retries reuse a recorded
