@@ -6,6 +6,7 @@ import path from "node:path";
 import { NodeBindingStore } from "../src/control-plane/node-bindings.js";
 import { TopicNodeLifecycle } from "../src/control-plane/topic-node-lifecycle.js";
 import type { ProvisionedNode } from "../src/infrastructure/node-provisioner.js";
+import { WORKER_CORE_COMMIT, WORKER_CORE_VERSION, WORKER_RUNTIME_IMAGE } from "../src/infrastructure/worker-core-release.js";
 async function fixture(mode='normal') {
   const bindings=new NodeBindingStore(path.join(await mkdtemp(path.join(tmpdir(),'lifecycle-')),'bindings.json'));
   let time=0;let provisionCalls=0;let healthCalls=0;const calls:string[]=[];
@@ -23,6 +24,13 @@ async function fixture(mode='normal') {
       if(mode==='rolling-image-upgrade'&&operation==='inspect'){
         Object.assign(result,{image:'ghcr.io/example/worker@sha256:'+'e'.repeat(64),runtimeCommit:'d'.repeat(40),runtimeVersion:'1.18.33-bot.13-pre.39'});
       }
+      if((mode==='idle-bound-rollout'||mode==='busy-bound-rollout')&&operation==='inspect'){
+        Object.assign(result,{image:'ghcr.io/example/old@sha256:'+'b'.repeat(64),runtimeCommit:'a'.repeat(40),runtimeVersion:'1.18.33-bot.13-pre.39'});
+      }
+      if(mode==='idle-bound-rollout'&&operation==='reconcile'){
+        Object.assign(result,{image:WORKER_RUNTIME_IMAGE,runtimeCommit:WORKER_CORE_COMMIT,runtimeVersion:WORKER_CORE_VERSION,imageUpdated:true});
+      }
+
       if(mode==='sleep-rollout'&&operation==='reconcile'&&currentBinding?.status==='available'){
         Object.assign(result,{sleepPolicyUpdated:true,deploymentId:'sleep-deploy'});
       }
@@ -33,7 +41,11 @@ async function fixture(mode='normal') {
     },
     node:async(binding,operation)=>{
       calls.push(operation);
-      if(operation==='health'){if(mode==='legacy-ready')return {ok:true,result:{ready:true}};healthCalls++;const readiness=mode==='timeout'?'warming':mode==='warming-once'&&healthCalls===1?'warming':binding.chatId===0?'ready-unbound':'ready';const runtime=mode==='image-mismatch'?{telegramCoreCommit:'c'.repeat(40),telegramCoreVersion:'1.18.33-bot.13-pre.17'}:mode==='rolling-image-upgrade'?{telegramCoreCommit:healthCalls===1?'a'.repeat(40):'d'.repeat(40),telegramCoreVersion:healthCalls===1?'1.18.33-bot.13-pre.38':'1.18.33-bot.13-pre.39'}:undefined;return {ok:true,result:{ready:readiness==='ready'||readiness==='ready-unbound',readiness,...(runtime?{runtime}:{})}};}
+      if(operation==='status'){
+        if(mode==='idle-bound-rollout')return {ok:true,result:{continuation:'idle',externalRunId:null}};
+        if(mode==='busy-bound-rollout')return {ok:true,result:{continuation:'pending',externalRunId:'run-active'}};
+      }
+      if(operation==='health'){if(mode==='legacy-ready')return {ok:true,result:{ready:true}};healthCalls++;const readiness=mode==='timeout'?'warming':mode==='warming-once'&&healthCalls===1?'warming':binding.chatId===0?'ready-unbound':'ready';const runtime=mode==='image-mismatch'?{telegramCoreCommit:'c'.repeat(40),telegramCoreVersion:'1.18.33-bot.13-pre.17'}:mode==='rolling-image-upgrade'?{telegramCoreCommit:healthCalls===1?'a'.repeat(40):'d'.repeat(40),telegramCoreVersion:healthCalls===1?'1.18.33-bot.13-pre.38':'1.18.33-bot.13-pre.39'}:mode==='idle-bound-rollout'?{telegramCoreCommit:WORKER_CORE_COMMIT,telegramCoreVersion:WORKER_CORE_VERSION}:undefined;return {ok:true,result:{ready:readiness==='ready'||readiness==='ready-unbound',readiness,...(runtime?{runtime}:{})}};}
       if(operation==='sync-global')return {ok:true,result:{revision:7,hash:mode==='corrupt'?'wrong':'hash7'}};
       if(operation==='session.create')return {ok:true,result:{sessionId:'session'}};
       if(operation==='session.get'){assert.equal(binding.sessionId,'session');return {ok:true,result:{id:'session',title:'Worker session',directory:'/data/topic'}};}
@@ -178,4 +190,33 @@ test('New Chat waits for the verified image while the previous healthy Worker re
  assert.ok(f.calls.includes('inspect'),'the provisioned resource identity must be verified');
  assert.ok(f.calls.includes('sync-global'),'the newest global snapshot must be applied before allocation');
  assert.equal((await f.bindings.list()).find(item=>item.nodeId===slot!.nodeId)?.status,'available');
+});
+
+test('startup release reconciliation rolls a bound Worker only after exact session reports idle',async()=>{
+  const f=await fixture('idle-bound-rollout');
+  const ready=await f.lifecycle.ensureReady(-100,2,'/logical/topic');
+  const slot=ready.binding;
+  await f.lifecycle.bootstrapPool(undefined,false,true,true);
+  const binding=(await f.bindings.list())[0]!;
+  assert.ok(f.calls.includes('status'));
+  assert.ok(f.calls.filter(call=>call==='reconcile').length>=2);
+  assert.equal(binding.status,'ready');
+  assert.equal(binding.chatId,-100);
+  assert.equal(binding.threadId,2);
+  assert.equal(binding.sessionId,'session');
+  assert.equal(binding.serviceId,'service-'+slot!.nodeId);
+  assert.equal(binding.volumeId,'volume-'+slot!.nodeId);
+});
+test('startup release reconciliation leaves a busy bound Worker untouched',async()=>{
+  const f=await fixture('busy-bound-rollout');
+  const ready=await f.lifecycle.ensureReady(-100,2,'/logical/topic');
+  const slot=ready.binding;
+  await f.lifecycle.bootstrapPool(undefined,false,true,true);
+  const binding=(await f.bindings.list())[0]!;
+  assert.ok(f.calls.includes('status'));
+  assert.equal(f.calls.includes('reconcile'),false);
+  assert.equal(binding.status,'ready');
+  assert.equal(binding.chatId,-100);
+  assert.equal(binding.threadId,2);
+  assert.equal(binding.sessionId,'session');
 });

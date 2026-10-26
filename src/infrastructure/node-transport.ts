@@ -1,5 +1,6 @@
 import {randomUUID,createHmac,timingSafeEqual} from "node:crypto";
 import type {NodeEnvelope,NodeIdentity} from "../control-plane/node-protocol.js";
+import type {NodeBinding} from "../control-plane/node-bindings.js";
 import {NodeProtocol} from "../control-plane/node-protocol.js";
 import type {captureNodeRegistry} from "./node-registry.js";
 import type {InfrastructureNodeIdentity} from "./node-registry.js";
@@ -105,6 +106,15 @@ export class InfrastructureNodeTransport {
   const payload=reply.payload as {ok?:boolean;result?:{rotated?:boolean;identity?:NodeIdentity}};
   const rotated=payload.result?.identity;
   if(reply.operation!=="binding.rotate"||reply.sessionId!==undefined||payload.ok!==true||payload.result?.rotated!==true||!rotated||rotated.nodeId!==target.nodeId||rotated.generation!==target.generation||rotated.chatId!==target.chatId||rotated.threadId!==target.threadId)throw new Error("Fenced binding rotation denied");
+ }
+ /** Exact-session idle probe used only for safe Worker image rollout; uncertainty always means busy. */
+ async probeIdle(binding:Readonly<NodeBinding>):Promise<boolean>{
+  if(binding.status!=="ready"||binding.chatId===0||binding.threadId<=1||!binding.sessionId)return false;
+  try{
+   const response=await this.request({version:1,nodeId:binding.nodeId,generation:binding.generation,chatId:binding.chatId,threadId:binding.threadId,sessionId:binding.sessionId,operation:"status",payload:{},timestamp:Date.now(),nonce:randomUUID().replaceAll("-","")},AbortSignal.timeout(10_000));
+   const payload=response as {ok?:unknown;result?:{continuation?:unknown;externalRunId?:unknown}}|null;
+   return payload?.ok===true&&payload.result?.continuation==="idle"&&payload.result.externalRunId===null;
+  }catch{return false;}
  }
  private async prepare(envelope:NodeEnvelope){
   const identity=await this.registry.resolve(envelope.nodeId);
