@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detectModelCapabilities } from "../../../src/app/services/model-capability-detection-service.js";
+import { detectModelCapabilities, inferModelModalitiesFromIdentity, parseModalityTransition } from "../../../src/app/services/model-capability-detection-service.js";
 
 describe("model capability detection", () => {
   it("keeps absent metadata unknown instead of converting it to false", () => {
@@ -31,6 +31,37 @@ describe("model capability detection", () => {
     const result = detectModelCapabilities({ modalities: { input: ["audio"], output: ["text"] } }, { source: "adapter", confidence: "high", forceSpeechToText: true });
     expect(result.capabilities.operations.speechToText).toBe(true);
     expect(result.detection.source).toBe("adapter");
+  });
+
+
+  it("classifies sparse /models records using recognizable media model IDs", () => {
+    const image = detectModelCapabilities({ id: "black-forest-labs/flux.1-schnell", name: "FLUX.1 Schnell" });
+    expect(image.capabilities.operations.imageGenerate).toBe(true);
+    expect(image.capabilities.operations.chat).toBe(false);
+
+    const video = detectModelCapabilities({ id: "google/veo-3.1", name: "Veo 3.1" });
+    expect(video.capabilities.operations.videoGenerate).toBe(true);
+    expect(video.capabilities.operations.chat).toBe(false);
+
+    const stt = detectModelCapabilities({ id: "whisper-large-v3", name: "Whisper Large V3" });
+    expect(stt.capabilities.operations.speechToText).toBe(true);
+    expect(stt.capabilities.operations.chat).toBe(false);
+
+    const tts = detectModelCapabilities({ id: "hexgrad/Kokoro-82M", name: "Kokoro TTS" });
+    expect(tts.capabilities.operations.textToSpeech).toBe(true);
+    expect(tts.capabilities.operations.chat).toBe(false);
+  });
+
+  it("does not confuse an audio-chat model with a dedicated transcription model", () => {
+    const result = detectModelCapabilities({ modalities: { input: ["audio"], output: ["text"] } });
+    expect(result.capabilities.operations.speechToText).toBe("unknown");
+  });
+
+  it("supports directional modality strings from provider catalogs", () => {
+    expect(parseModalityTransition("text -> text + image")).toEqual({ input: ["text"], output: ["text", "image"] });
+    const result = detectModelCapabilities({ architecture: { modality: "text->video" } });
+    expect(result.capabilities.operations.videoGenerate).toBe(true);
+    expect(result.capabilities.operations.chat).toBe(false);
   });
 
   it("reads verified custom-provider camelCase tool metadata", () => {

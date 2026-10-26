@@ -37,6 +37,22 @@ describe("custom-provider model capability normalization", () => {
     expect(model?.attachment).toBe(true);
   });
 
+  it("classifies image, video and transcription models whose /models rows only have IDs", () => {
+    const image = normalizeDiscoveredModel({ id: "black-forest-labs/flux.1-schnell" });
+    expect(image?.modalities).toEqual({ input: ["text"], output: ["image"] });
+
+    const video = normalizeDiscoveredModel({ id: "minimax/video-01" });
+    expect(video?.modalities).toEqual({ input: ["text"], output: ["video"] });
+
+    const transcription = normalizeDiscoveredModel({ id: "whisper-large-v3" });
+    expect(transcription?.modalities).toEqual({ input: ["audio"], output: ["text"] });
+  });
+
+  it("accepts modality transitions when a provider returns a single modality string", () => {
+    const model = normalizeDiscoveredModel({ id: "example/multimodal", architecture: { modality: "text->text+image" } });
+    expect(model?.modalities).toEqual({ input: ["text"], output: ["text", "image"] });
+  });
+
   it("preserves an explicit text-only declaration", () => {
     const model = normalizeDiscoveredModel({
       id: "text-model",

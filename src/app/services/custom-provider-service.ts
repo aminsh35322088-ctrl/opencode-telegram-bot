@@ -1,4 +1,5 @@
 import { fetchProviderCatalog } from "./provider-catalog-service.js";
+import { inferModelModalitiesFromIdentity, parseModalityTransition } from "./model-capability-detection-service.js";
 import { buildFreeLlmOpenCodeProviders } from "./free-llm-catalog-service.js";
 import { isChatModelMetadata } from "./model-eligibility-service.js";
 import fs from "node:fs/promises";
@@ -118,14 +119,16 @@ function readModalities(raw: DiscoveredModelRecord): CustomProviderModelModaliti
     normalizeModalityList(raw.input_modalities) ??
     normalizeModalityList(raw.inputModality) ??
     normalizeModalityList(architectureObject?.input_modalities) ??
-    normalizeModalityList(capabilitiesObject?.input_modalities);
+    normalizeModalityList(capabilitiesObject?.input_modalities) ??
+    parseModalityTransition(architectureObject?.modality ?? raw.modality)?.input;
 
   const output =
     normalizeModalityList(directObject?.output) ??
     normalizeModalityList(raw.output_modalities) ??
     normalizeModalityList(raw.outputModality) ??
     normalizeModalityList(architectureObject?.output_modalities) ??
-    normalizeModalityList(capabilitiesObject?.output_modalities);
+    normalizeModalityList(capabilitiesObject?.output_modalities) ??
+    parseModalityTransition(architectureObject?.modality ?? raw.modality)?.output;
 
   return input || output ? { ...(input ? { input } : {}), ...(output ? { output } : {}) } : undefined;
 }
@@ -178,7 +181,22 @@ export function normalizeDiscoveredModel(raw: DiscoveredModelRecord): CustomProv
 
   const id = idValue.trim();
   const name = typeof raw.name === "string" && raw.name.trim() ? raw.name.trim() : id;
-  const modalities = readModalities(raw);
+  const advertisedModalities = readModalities(raw);
+  const inferredModalities = inferModelModalitiesFromIdentity(id, name);
+  const modalities = advertisedModalities || inferredModalities
+    ? {
+        ...(advertisedModalities?.input?.length
+          ? { input: advertisedModalities.input }
+          : inferredModalities?.input
+            ? { input: inferredModalities.input }
+            : {}),
+        ...(advertisedModalities?.output?.length
+          ? { output: advertisedModalities.output }
+          : inferredModalities?.output
+            ? { output: inferredModalities.output }
+            : {}),
+      }
+    : undefined;
   const attachment = readAttachmentFlag(raw, modalities);
   const toolCall = readToolCallFlag(raw);
 

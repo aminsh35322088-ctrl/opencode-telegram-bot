@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   killServerProcess: vi.fn(),
   startLocalOpencodeServer: vi.fn(),
   waitForOpencodeReadyAndRefresh: vi.fn(),
+  getModelCapabilityCategories: vi.fn(),
 }));
 
 vi.mock("../../../src/app/services/custom-provider-service.js", () => ({
@@ -35,6 +36,11 @@ vi.mock("../../../src/app/services/image-ai-provider-service.js", () => ({
 
 vi.mock("../../../src/app/services/model-selection-service.js", () => ({
   reconcileStoredModelSelection: vi.fn(),
+}));
+
+vi.mock("../../../src/app/services/model-capability-categories-service.js", () => ({
+  MODEL_CAPABILITY_CATEGORIES: ["codingAI", "imageAI", "voiceToText", "videoAI"],
+  getModelCapabilityCategories: mocks.getModelCapabilityCategories,
 }));
 
 vi.mock("../../../src/config.js", () => ({
@@ -135,6 +141,7 @@ describe("provider wizard General panel contract", () => {
     mocks.killServerProcess.mockReset().mockResolvedValue(true);
     mocks.startLocalOpencodeServer.mockReset().mockReturnValue({ unref: vi.fn() });
     mocks.waitForOpencodeReadyAndRefresh.mockReset().mockResolvedValue(true);
+    mocks.getModelCapabilityCategories.mockReset().mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -163,6 +170,25 @@ describe("provider wizard General panel contract", () => {
       expect.stringContaining("Setup expired"),
       expect.objectContaining({ reply_markup: expect.any(Object) }),
     );
+  });
+
+  it("shows the four automatically detected model categories from one catalog", async () => {
+    mocks.getModelCapabilityCategories.mockResolvedValue([
+      { category: "codingAI", label: "Coding AI", models: [{ modelID: "coder" }], description: "Chat" },
+      { category: "imageAI", label: "Image AI", models: [{ modelID: "image" }], description: "Image output" },
+      { category: "voiceToText", label: "Voice → Text", models: [{ modelID: "whisper" }], description: "Transcription" },
+      { category: "videoAI", label: "Video AI", models: [{ modelID: "video" }], description: "Video output" },
+    ]);
+    const ctx = callbackContext("provider:catalog", 500);
+    expect(await handleProviderCallback(ctx)).toBe(true);
+    const call = (ctx.api.editMessageText as any).mock.calls.at(-1);
+    expect(call?.[2]).toContain("Auto-detected Model Catalog");
+    const callbacks = call?.[3]?.reply_markup.inline_keyboard.flat()
+      .map((button: { callback_data?: string }) => button.callback_data);
+    expect(callbacks).toContain("provider:catalog:codingAI:0");
+    expect(callbacks).toContain("provider:catalog:imageAI:0");
+    expect(callbacks).toContain("provider:catalog:voiceToText:0");
+    expect(callbacks).toContain("provider:catalog:videoAI:0");
   });
 
   it("renders provider wizards with Cancel as the only inline action", async () => {

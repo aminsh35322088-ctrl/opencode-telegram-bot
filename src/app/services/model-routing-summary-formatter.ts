@@ -25,6 +25,13 @@ function capabilityBadge(state: true | false | "unknown" | undefined): string {
   return "❔";
 }
 
+function modalityList(values: Record<string, true | false | "unknown"> | undefined): string {
+  if (!values) return "unconfirmed";
+  const supported = Object.entries(values).filter(([, state]) => state === true).map(([name]) => name);
+  if (supported.length) return supported.join(", ");
+  return Object.values(values).every((state) => state === false) ? "none advertised" : "unconfirmed";
+}
+
 export function formatModelRoutingSummary(
   primary: ModelInfo,
   catalog: UnifiedModelCatalogEntry[],
@@ -48,9 +55,15 @@ export function formatModelRoutingSummary(
     chatLine,
     routeLine("Vision", routes.get("vision"), catalog),
     `🧠 Reasoning ${capabilityBadge(entry?.capabilities.agent.reasoning)} · Primary model`,
+    `📥 Input modalities: ${modalityList(entry?.capabilities.modalities?.input)}`,
+    `📤 Output modalities: ${modalityList(entry?.capabilities.modalities?.output)}`,
     routeLine("Voice → Text", routes.get("voiceInput"), catalog),
     routeLine("Image AI", routes.get("imageGenerate"), catalog),
+    `🎬 Video AI generation ${capabilityBadge(entry?.capabilities.operations.videoGenerate)} · Primary model metadata`,
     routeLine("Text → Voice", routes.get("textToSpeech"), catalog),
+    `🧮 Embeddings ${capabilityBadge(entry?.capabilities.operations.embeddings)}`,
+    `🧾 Structured Output ${capabilityBadge(entry?.capabilities.agent.structuredOutput)}`,
+    `💻 Coding Optimized ${capabilityBadge(entry?.capabilities.traits?.codingOptimized)}`,
     `🛠️ Tool Calling ${capabilityBadge(toolCalling)} · Primary model`,
     `🤖 Agent Mode ${agentMode}`,
     "",
