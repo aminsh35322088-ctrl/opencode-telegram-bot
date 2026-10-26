@@ -22,7 +22,7 @@ function claims(overrides: Record<string, unknown> = {}) {
 describe("Topic Worker integration credential leases", () => {
   it("leases only the active GitHub account for its exact repository capability", async () => {
     let token = "github-token-current";
-    let now = 1_000;
+    const now = 1_000;
     let nextId = 0;
     const broker = new IntegrationCredentialLeaseBroker({
       githubCredential: async (accountId) => accountId === "amin" ? token : null,

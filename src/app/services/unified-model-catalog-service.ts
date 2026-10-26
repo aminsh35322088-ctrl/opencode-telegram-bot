@@ -124,6 +124,7 @@ function customReadiness(
 
 function customMetadata(model: CustomProviderModel): Record<string, unknown> {
   return {
+    id: model.id,
     name: model.name,
     attachment: model.attachment,
     modalities: model.modalities,
@@ -142,7 +143,11 @@ function makeRuntimeEntry(
   metadata: unknown,
   customProvider?: CustomProvider,
 ): UnifiedModelCatalogEntry {
-  const detected = detectModelCapabilities(metadata, { source: "provider-metadata" });
+  const detected = detectModelCapabilities(metadata, {
+    source: "provider-metadata",
+    modelID,
+    modelName: advertisedName(metadata, modelID),
+  });
   const execution = detectModelExecutionCapabilities(metadata);
   const customModel = customProvider?.models.find((model) => model.id === modelID);
   return {
@@ -167,6 +172,8 @@ function makeCustomOnlyEntry(
 ): UnifiedModelCatalogEntry {
   const detected = detectModelCapabilities(customMetadata(model), {
     source: "provider-metadata",
+    modelID: model.id,
+    modelName: model.name || model.id,
   });
   if (model.toolCallVerified !== true) {
     detected.capabilities.agent.toolCalling = "unknown";

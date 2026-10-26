@@ -13,6 +13,11 @@ import { buildSettingsMenuView } from "../menus/settings-menu.js";
 import { appendHomeNavigation } from "../menus/inline-menu.js";
 import { TopicScopedValue } from "../../app/services/topic-scoped-value.js";
 import { setAiRoleSelection } from "../../app/services/ai-role-selection-service.js";
+import {
+  getModelCapabilityCategories,
+  MODEL_CAPABILITY_CATEGORIES,
+  type ModelCapabilityCategory,
+} from "../../app/services/model-capability-categories-service.js";
 import { getMainNavigationMessageId, setDefaultCapabilityModel } from "../../app/stores/settings-store.js";
 import { deleteInputMessage } from "./panel-render.js";
 
@@ -126,6 +131,86 @@ async function renderSlot(ctx: Context, capability: AiCapability, id?: number, n
   ].filter(Boolean).join("\n"), keyboard, id);
 }
 
+const CATEGORY_PAGE_SIZE = 10;
+const CATEGORY_LABELS: Record<ModelCapabilityCategory, string> = {
+  codingAI: "Coding AI",
+  imageAI: "Image AI",
+  voiceToText: "Voice → Text",
+  videoAI: "Video AI",
+};
+
+function isModelCapabilityCategory(value: string): value is ModelCapabilityCategory {
+  return (MODEL_CAPABILITY_CATEGORIES as readonly string[]).includes(value);
+}
+
+async function renderModelCategories(ctx: Context, id?: number, notice = "") {
+  const categories = await getModelCapabilityCategories();
+  const keyboard = new InlineKeyboard();
+  for (const category of categories) {
+    keyboard.text(
+      compactButtonLabel(`${category.category === "codingAI" ? "💻" : category.category === "imageAI" ? "🎨" : category.category === "voiceToText" ? "🎙" : "🎬"} ${category.label} · ${category.models.length}`),
+      `provider:catalog:${category.category}:0`,
+    ).row();
+  }
+  keyboard.text("← API Connections", "provider:menu");
+  const description = categories.map((category) => `${category.label} · ${category.models.length} model${category.models.length === 1 ? "" : "s"}`).join("\n");
+  await render(ctx, [
+    notice,
+    "🧭 Auto-detected Model Catalog",
+    "",
+    "Every saved API connection contributes its models to these capability groups. A single model may appear in more than one group when it genuinely supports multiple capabilities.",
+    "",
+    description,
+    "",
+    "Detection uses provider metadata first, then conservative model-ID/name heuristics when a /models endpoint omits modality metadata.",
+  ].filter(Boolean).join("\n"), keyboard, id);
+}
+
+async function renderModelCategory(ctx: Context, category: ModelCapabilityCategory, rawPage: number, id?: number) {
+  const current = (await getModelCapabilityCategories()).find((item) => item.category === category);
+  if (!current) {
+    await renderModelCategories(ctx, id, "⚠️ This category is no longer available.\n\n");
+    return;
+  }
+  const totalPages = Math.max(1, Math.ceil(current.models.length / CATEGORY_PAGE_SIZE));
+  const page = Math.max(0, Math.min(Number.isFinite(rawPage) ? Math.trunc(rawPage) : 0, totalPages - 1));
+  const models = current.models.slice(page * CATEGORY_PAGE_SIZE, (page + 1) * CATEGORY_PAGE_SIZE);
+  const keyboard = new InlineKeyboard();
+  if (page > 0) keyboard.text("‹ Previous", `provider:catalog:${category}:${page - 1}`);
+  if (page < totalPages - 1) keyboard.text("Next ›", `provider:catalog:${category}:${page + 1}`);
+  if (page > 0 || page < totalPages - 1) keyboard.row();
+  keyboard.text("↻ Refresh catalog", `provider:catalog:${category}:${page}`).row();
+  keyboard.text("← Model Types", "provider:catalog").text("API Connections →", "provider:menu");
+  const lines = models.map((model, index) => {
+    const offset = page * CATEGORY_PAGE_SIZE + index + 1;
+    const name = model.modelName || model.modelID;
+    const detail = category === "codingAI"
+      ? `tools ${model.capabilities.agent.toolCalling === true ? "✓" : model.capabilities.agent.toolCalling === false ? "no" : "?"}${model.capabilities.agent.reasoning === true ? " · reasoning ✓" : ""}`
+      : category === "imageAI"
+        ? `generate ${model.capabilities.operations.imageGenerate === true ? "✓" : "?"} · edit ${model.capabilities.operations.imageEdit === true ? "✓" : model.capabilities.operations.imageEdit === false ? "no" : "?"}`
+        : category === "voiceToText"
+          ? `audio → text · ${model.capabilityDetection.confidence} confidence`
+          : `video generation · ${model.capabilityDetection.confidence} confidence`;
+    return `${offset}. ${model.providerName} · ${name}\n   ${model.modelID}\n   ${detail}`;
+  });
+  await render(ctx, [
+    `🧭 ${CATEGORY_LABELS[category]}`,
+    "",
+    current.description,
+    `Models · ${current.models.length} · page ${page + 1}/${totalPages}`,
+    "",
+    ...(lines.length ? lines : ["No models with this capability were detected yet."]),
+    "",
+    category === "videoAI"
+      ? "Catalog only: detection does not claim a Video AI execution route is configured. The existing video action prepares incoming videos for analysis; it is not a video generator."
+      : category === "voiceToText"
+        ? "These models are candidates for the Voice → Text selector. Configure a Main Default or Topic override under Model Center settings."
+        : category === "imageAI"
+          ? "These models are candidates for Image AI. Choose the Main Default or a Topic override under Model Center settings."
+          : "Coding AI models remain selectable in Model Center; agent/tool use still requires verified tool-calling support.",
+  ].join("\n"), keyboard, id);
+}
+
 async function renderProviders(ctx: Context, id?: number, notice = "") {
   const [providers, legacy, groq] = await Promise.all([listCustomProviders(), listImageAiProviders(), isGroqSttConfigured()]);
   const general = providers.filter((provider) => provider.capability !== "stt");
@@ -138,6 +223,7 @@ async function renderProviders(ctx: Context, id?: number, notice = "") {
   }
 
   keyboard.text("➕ Add Provider", "provider:add:general").row();
+  keyboard.text("🧭 Model Catalog · Auto-detected types", "provider:catalog").row();
   keyboard.text("🎙 Transcription · " + (transcription ? "Configured" : "Not set"), "provider:slot:stt").row();
   keyboard.text("🎨 Image APIs · " + (imageAdapters ? imageAdapters + " connected" : "Optional"), "provider:image:engines").row();
   keyboard.text("← Settings", "provider:settings");
@@ -146,8 +232,8 @@ async function renderProviders(ctx: Context, id?: number, notice = "") {
     notice,
     "🔌 API Connections",
     "",
-    "Connect and manage model APIs in one place.",
-    "Model selection stays separate under Settings → Default Model Center.",
+    "Connect an API once; its available models are automatically classified as Coding AI, Image AI, Voice → Text, and Video AI where supported.",
+    "Model selection stays in the relevant Model Center settings.",
     "",
     general.length + " AI provider" + (general.length === 1 ? "" : "s") + " connected",
     "Transcription · " + (transcription ? "Configured" : "Not configured"),
@@ -163,6 +249,18 @@ export async function handleProviderCallback(ctx: Context): Promise<boolean> {
   const id = messageId(ctx);
   if (["provider:menu", "provider:cancel", "provider:add"].includes(data)) { await renderProviders(ctx, id); return true; }
   if (data === "provider:connections") { await renderProviders(ctx, id); return true; }
+  if (data === "provider:catalog") { await renderModelCategories(ctx, id); return true; }
+  if (data.startsWith("provider:catalog:")) {
+    const parts = data.split(":");
+    const category = parts[2] ?? "";
+    const page = Number(parts[3] ?? "0");
+    if (isModelCapabilityCategory(category) && Number.isSafeInteger(page) && page >= 0) {
+      await renderModelCategory(ctx, category, page, id);
+    } else {
+      await renderModelCategories(ctx, id, "⚠️ Invalid category selection.\n\n");
+    }
+    return true;
+  }
   if (["provider:settings", "provider:advanced", "provider:close"].includes(data)) {
     const view = buildSettingsMenuView(); await render(ctx, view.text.replace(/<[^>]*>/g, ""), view.keyboard, id); return true;
   }
@@ -213,10 +311,13 @@ export async function handleProviderCallback(ctx: Context): Promise<boolean> {
     if (p) {
       const chat = p.models.filter(isChatModelMetadata).length;
       const image = p.models.filter(isImageModelMetadata).length;
+      const video = p.models.filter((model) => model.modalities?.output?.includes("video")).length;
+      const stt = p.models.filter((model) => model.modalities?.input?.includes("audio") && model.modalities?.output?.includes("text")).length;
       const text = "🔌 " + p.name + "\n\nConnected\nEndpoint · " + p.baseURL
         + "\nModels · " + p.models.length
-        + "\nChat / Coding · " + chat + "\nImage-capable · " + image
-        + "\n\nChoose defaults under Settings → Default Model Center.";
+        + "\nCoding / Chat candidates · " + chat + "\nImage AI candidates · " + image
+        + "\nVoice → Text candidates · " + stt + "\nVideo AI candidates · " + video
+        + "\n\nSee API Connections → Model Catalog for auto-classified models. Choose available defaults under Model Center settings.";
       await render(ctx, text, new InlineKeyboard().text("🗑 Remove Provider", "provider:delete:" + p.id).row().text("← API Connections", "provider:menu"), id);
     }
     return true;
